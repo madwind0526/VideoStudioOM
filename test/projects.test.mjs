@@ -37,6 +37,26 @@ test("lists old and new style projects, skips invalid names, finds poster and fi
   }
 });
 
+test("stages follow the files in the project folder", async () => {
+  const { root, store, cleanup } = await setup();
+  try {
+    const { id } = await store.create("demo");
+    const done = async () => (await store.get(id)).stages.filter((s) => s.done).map((s) => s.id);
+    assert.deepEqual(await done(), []);
+    await store.writeText(id, "studio/synopsis.md", "story", null);
+    await store.writeText(id, "artifacts/scene_plan.json", "{}", null);
+    await writeFile(path.join(root, id, "assets", "images", "a.png"), "x");
+    await writeFile(path.join(root, id, "assets", "video", "a.mp4"), "x");
+    await writeFile(path.join(root, id, "renders", "final.mp4"), "x");
+    assert.deepEqual(await done(), ["synopsis", "scenario", "images", "video", "final"]);
+    // An empty file does not count as done.
+    await store.writeText(id, "artifacts/script.json", "", null);
+    assert.equal((await done()).includes("script"), false);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("create makes the folder layout and unique ids", async () => {
   const { root, store, cleanup } = await setup();
   try {
@@ -96,20 +116,33 @@ test("project settings: validate, merge, unset back to the global value", async 
     const { id } = await store.create("demo");
     assert.deepEqual(await store.getSettings(id), {});
 
-    await store.updateSettings(id, { set: { defaults: { aspect: "9:16" }, video: { finalFps: 30 } } });
+    await store.updateSettings(id, { set: { defaults: { sizeId: "s916-1080" }, video: { finalFps: 30 } } });
     await store.updateSettings(id, { set: { llm: { provider: "codex-cli" } } });
     assert.deepEqual(await store.getSettings(id), {
-      defaults: { aspect: "9:16" },
+      defaults: { sizeId: "s916-1080" },
       video: { finalFps: 30 },
       llm: { provider: "codex-cli" },
     });
 
-    await assert.rejects(store.updateSettings(id, { set: { defaults: { aspect: "4:3" } } }), { status: 400 });
+    await assert.rejects(store.updateSettings(id, { set: { defaults: { sizeId: "bad" } } }), { status: 400 });
     await assert.rejects(store.updateSettings(id, { set: { nope: 1 } }), { status: 400 });
-    assert.equal((await store.getSettings(id)).defaults.aspect, "9:16");
+    assert.equal((await store.getSettings(id)).defaults.sizeId, "s916-1080");
 
     const after = await store.updateSettings(id, { unset: ["video.finalFps", "llm.provider"] });
-    assert.deepEqual(after, { defaults: { aspect: "9:16" } });
+    assert.deepEqual(after, { defaults: { sizeId: "s916-1080" } });
+  } finally {
+    await cleanup();
+  }
+});
+
+test("project settings written by an older version do not hide the project", async () => {
+  const { root, store, cleanup } = await setup();
+  try {
+    const { id } = await store.create("demo");
+    await writeFile(path.join(root, id, "studio", "settings.json"), JSON.stringify({ defaults: { aspect: "16:9", durationSeconds: 30 } }));
+    assert.deepEqual(await store.getSettings(id), { defaults: { durationSeconds: 30 } });
+    // The next save rewrites the file without the stale key.
+    assert.deepEqual(await store.updateSettings(id, { set: { video: { finalFps: 30 } } }), { defaults: { durationSeconds: 30 }, video: { finalFps: 30 } });
   } finally {
     await cleanup();
   }

@@ -9,7 +9,7 @@ import { startServer } from "../server/index.mjs";
 
 async function withServer(run) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-api-"));
-  const { port, token, stop } = await startServer({ port: 0, dataDir: path.join(dir, "data"), projectsRoot: path.join(dir, "projects") });
+  const { port, token, stop } = await startServer({ port: 0, dataDir: path.join(dir, "data"), projectsRoot: path.join(dir, "projects"), appRoot: dir });
   const base = `http://127.0.0.1:${port}`;
   const call = async (method, url, body, { auth = true } = {}) => {
     const res = await fetch(base + url, {
@@ -31,16 +31,16 @@ test("global settings: defaults, partial update, validation errors leave the fil
   withServer(async (call) => {
     const initial = await call("GET", "/api/settings");
     assert.equal(initial.status, 200);
-    assert.equal(initial.body.settings.defaults.aspect, "16:9");
+    assert.equal(initial.body.settings.defaults.sizeId, "s169-1080");
 
     const updated = await call("PUT", "/api/settings", { video: { finalFps: 30 } });
     assert.equal(updated.status, 200);
     assert.equal(updated.body.settings.video.finalFps, 30);
     assert.equal(updated.body.settings.video.upscale, "rtx-2pass");
 
-    const bad = await call("PUT", "/api/settings", { presets: { "16:9": { generate: [740, 416] } } });
+    const bad = await call("PUT", "/api/settings", { defaults: { customSize: { generate: [740, 416] } } });
     assert.equal(bad.status, 400);
-    assert.equal(bad.body.errors[0].path, "presets.16:9.generate");
+    assert.equal(bad.body.errors[0].path, "defaults.customSize.generate");
     assert.equal((await call("GET", "/api/settings")).body.settings.video.finalFps, 30);
 
     assert.equal((await call("PUT", "/api/settings", [1])).status, 400);
@@ -76,14 +76,14 @@ test("project flow: create, save with conflict check, settings overrides", () =>
     assert.equal((await call("GET", "/api/projects/%E0%A4%A")).status, 400);
 
     await call("PUT", "/api/settings", { video: { finalFps: 30 } });
-    const view = await call("PUT", `/api/projects/${id}/settings`, { set: { defaults: { aspect: "9:16" } } });
+    const view = await call("PUT", `/api/projects/${id}/settings`, { set: { defaults: { sizeId: "s916-1080" } } });
     assert.equal(view.status, 200);
-    assert.equal(view.body.effective.defaults.aspect, "9:16");
+    assert.equal(view.body.effective.defaults.sizeId, "s916-1080");
     assert.equal(view.body.effective.video.finalFps, 30);
-    assert.deepEqual(view.body.overridden, ["defaults.aspect"]);
+    assert.deepEqual(view.body.overridden, ["defaults.sizeId"]);
 
-    const reset = await call("PUT", `/api/projects/${id}/settings`, { unset: ["defaults.aspect"] });
-    assert.equal(reset.body.effective.defaults.aspect, "16:9");
+    const reset = await call("PUT", `/api/projects/${id}/settings`, { unset: ["defaults.sizeId"] });
+    assert.equal(reset.body.effective.defaults.sizeId, "s169-1080");
     assert.deepEqual(reset.body.overridden, []);
 
     const list = await call("GET", "/api/projects");

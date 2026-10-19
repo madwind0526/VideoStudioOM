@@ -3,6 +3,9 @@ import { pipeline } from "node:stream/promises";
 
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
+import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
+import { folderStatus } from "./folders.mjs";
+import { llmStatus } from "./llm-status.mjs";
 
 function decodeId(raw) {
   try {
@@ -36,7 +39,7 @@ async function streamMedia(req, res, file) {
 }
 
 /** Handles /api/* requests. Returns false when no route matches. */
-export async function handleApi(req, res, url, { settings, projects, events }) {
+export async function handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot }) {
   const { pathname } = url;
   const method = req.method;
   const methodNotAllowed = () => {
@@ -54,6 +57,53 @@ export async function handleApi(req, res, url, { settings, projects, events }) {
     return true;
   }
 
+  if (pathname === "/api/folders") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, { folders: await folderStatus(await settings.get(), appRoot) });
+    return true;
+  }
+
+  if (pathname === "/api/llm/status") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, await llmStatus({ ollamaEndpoint: (await settings.get()).llm.ollama.endpoint }));
+    return true;
+  }
+
+  if (pathname === "/api/system/stats") {
+    if (method !== "GET") methodNotAllowed();
+    const { lock, songyueBusy, current } = await jobs.gpu();
+    // "What is the GPU doing": our own job first, then any other holder of the lock, then SongYUE2.
+    const tool = current?.tool ?? (lock.busy ? lock.holder?.tool : null) ?? null;
+    sendJson(res, 200, { ...(await systemStats()), activity: { tool, songyueBusy } });
+    return true;
+  }
+
+  if (pathname === "/api/gpu") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, await jobs.gpu());
+    return true;
+  }
+
+  if (pathname === "/api/jobs") {
+    if (method === "GET") {
+      sendJson(res, 200, await jobs.list());
+    } else if (method === "POST") {
+      const body = requireObject(await readJsonBody(req));
+      if (!ALLOWED_TOOLS.has(body.tool)) throw new HttpError(400, "지원하지 않는 도구입니다.");
+      const dir = await projects.dir(body.project);
+      const inputs = await prepareInputs(dir, body.inputs);
+      sendJson(res, 202, { job: await jobs.start({ tool: body.tool, inputs, allowRoot: dir, meta: { project: body.project } }) });
+    } else methodNotAllowed();
+    return true;
+  }
+
+  const cancel = /^\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname);
+  if (cancel) {
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, { job: await jobs.cancel(cancel[1]) });
+    return true;
+  }
+
   if (pathname === "/api/settings") {
     if (method === "GET") sendJson(res, 200, { settings: await settings.get() });
     else if (method === "PUT") sendJson(res, 200, { settings: await settings.update(requireObject(await readJsonBody(req))) });
@@ -68,19 +118,22 @@ export async function handleApi(req, res, url, { settings, projects, events }) {
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
   if (!match[2]) {
     if (method !== "GET") methodNotAllowed();
     sendJson(res, 200, { project: await projects.get(id) });
+  } else if (match[2] === "meta") {
+    if (method !== "PUT") methodNotAllowed();
+    sendJson(res, 200, { meta: await projects.updateMeta(id, await readJsonBody(req)) });
   } else if (match[2] === "media") {
     if (method !== "GET") methodNotAllowed();
     await streamMedia(req, res, await projects.statMedia(id, url.searchParams.get("path")));
   } else if (match[2] === "file") {
     if (method === "GET") {
-      sendJson(res, 200, await projects.readText(id, url.searchParams.get("path")));
+      sendJson(res, 200, await projects.readText(id, url.searchParams.get("path"), { optional: url.searchParams.get("optional") === "1" }));
     } else if (method === "PUT") {
       const body = requireObject(await readJsonBody(req));
       sendJson(res, 200, await projects.writeText(id, body.path, body.content, body.expectedMtimeMs ?? null));

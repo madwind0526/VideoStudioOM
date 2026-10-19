@@ -1,61 +1,34 @@
-import { useEffect, useState } from "react";
-import { api, mediaUrl, type ProjectDetail, type ProjectSummary } from "../api";
-import ProjectList from "../components/ProjectList";
+import { Plus } from "lucide-react";
+import type { ProjectSummary } from "../api";
+import ProjectBoard from "../components/ProjectBoard";
 
 interface Props {
   projects: ProjectSummary[];
   currentId: string | null;
-  onSelect: (id: string) => void;
-  refreshKey: number;
+  onWork: (id: string) => void;
+  onOpenDetail: (id: string) => void;
+  onFavorite: (id: string, favorite: boolean) => void;
+  onNew: () => void;
 }
 
-export default function LibraryPage({ projects, currentId, onSelect, refreshKey }: Props) {
-  const [detail, setDetail] = useState<ProjectDetail | null>(null);
-
-  useEffect(() => {
-    if (!currentId) {
-      setDetail(null);
-      return;
-    }
-    let stale = false;
-    api<{ project: ProjectDetail }>("GET", `/api/projects/${encodeURIComponent(currentId)}`)
-      .then((data) => !stale && setDetail(data.project))
-      .catch(() => !stale && setDetail(null));
-    return () => {
-      stale = true;
-    };
-  }, [currentId, refreshKey]);
-
+export default function LibraryPage({ projects, currentId, onWork, onOpenDetail, onFavorite, onNew }: Props) {
   return (
-    <>
-      <h1>라이브러리</h1>
-      <ProjectList projects={projects} selectedId={currentId} onSelect={onSelect} />
-      {detail && (
-        <section className="detail">
-          <h2 style={{ marginTop: 0 }}>{detail.title}</h2>
-          {detail.hasFinal ? (
-            <video
-              key={detail.id}
-              controls
-              preload="metadata"
-              poster={detail.poster ? mediaUrl(detail.id, detail.poster) : undefined}
-              src={mediaUrl(detail.id, "renders/final.mp4")}
-            />
-          ) : (
-            <p className="muted">아직 완성된 영상이 없습니다.</p>
-          )}
-          <h2>작업 파일</h2>
-          {detail.files.length === 0 ? (
-            <p className="muted">studio/, artifacts/ 폴더에 파일이 없습니다.</p>
-          ) : (
-            <ul className="files">
-              {detail.files.map((file) => (
-                <li key={file.path}>{file.path}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-    </>
+    <div className="page">
+      <ProjectBoard
+        kicker="나의 영상을 한곳에"
+        title="내 라이브러리"
+        subtitle="주제부터 시나리오, 이미지, 영상까지 함께 보관하는 나만의 컬렉션."
+        action={
+          <button className="btn primary" type="button" onClick={onNew}>
+            <Plus size={15} /> 새 영상 만들기
+          </button>
+        }
+        projects={projects}
+        currentId={currentId}
+        onWork={onWork}
+        onOpenDetail={onOpenDetail}
+        onFavorite={onFavorite}
+      />
+    </div>
   );
 }

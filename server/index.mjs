@@ -4,11 +4,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createEventHub, watchProjects } from "./events.mjs";
+import { ensureWorkFolders, folderPaths } from "./folders.mjs";
 import { createGuard } from "./guard.mjs";
 import { HttpError, sendJson } from "./http.mjs";
+import { createJobQueue } from "./jobs.mjs";
+import { pythonFor } from "./om-bridge.mjs";
+import { createDurationProbe, ffprobeFor } from "./probe.mjs";
 import { createProjectStore } from "./projects.mjs";
 import { handleApi } from "./routes.mjs";
 import { createSettingsStore } from "./settings-store.mjs";
+import { createSystemStats } from "./system-stats.mjs";
 
 // Ports are allocated in C:\Claude\PORTS.md (backend 4314, Vite dev 5184).
 export const API_PORT = 4314;
@@ -53,17 +58,38 @@ async function serveStatic(url, res) {
  * because the allowed Host values depend on the real port.
  * `dataDir` holds settings.json; `projectsRoot` overrides the projects folder (tests).
  */
-export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.join(ROOT_DIR, "data"), projectsRoot } = {}) {
-  const settings = createSettingsStore({ dir: dataDir });
+export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.join(ROOT_DIR, "data"), projectsRoot, bridge = {}, readGpu, appRoot = ROOT_DIR } = {}) {
+  // Saving settings creates the input/output folders (SongYUE2 does the same for its folders).
+  // Relative folder settings resolve against `appRoot` (tests pass a temp folder).
+  const settings = createSettingsStore({ dir: dataDir, onSaved: (effective) => ensureWorkFolders(effective, appRoot) });
+  const systemStats = createSystemStats({ readGpu });
+  const events = createEventHub();
+  const jobs = createJobQueue({
+    dir: path.join(dataDir, "runtime"),
+    events,
+    // `bridge` overrides the defaults (tests point it at a fake OpenMontage).
+    getConfig: async () => {
+      const { connections } = await settings.get();
+      return {
+        omDir: connections.openmontageDir,
+        python: pythonFor(connections.openmontageDir),
+        bridgePath: path.join(ROOT_DIR, "bridge", "om_tool.py"),
+        lockFile: path.join(dataDir, "runtime", "gpu.lock"),
+        songyueUrl: connections.songyueUrl,
+        timeoutMs: 3_600_000,
+        ...bridge,
+      };
+    },
+  });
+  const probeDuration = createDurationProbe({ getFfprobe: async () => ffprobeFor((await settings.get()).connections.ffmpegPath) });
   const projects = createProjectStore({
+    probeDuration,
     getRoot: async () => {
       if (projectsRoot) return projectsRoot;
-      const { storage, connections } = await settings.get();
-      return storage.projectsDir || path.join(connections.openmontageDir, "projects");
+      return folderPaths(await settings.get(), appRoot).projects;
     },
   });
 
-  const events = createEventHub();
   let guard;
   const server = createServer(async (req, res) => {
     try {
@@ -73,7 +99,7 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname === "/api/session") return sendJson(res, 200, { token: guard.token });
       if (url.pathname.startsWith("/api/")) {
-        if (await handleApi(req, res, url, { settings, projects, events })) return;
+        if (await handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot })) return;
         return sendJson(res, 404, { error: "없는 API입니다." });
       }
       if (req.method !== "GET" && req.method !== "HEAD") return sendJson(res, 405, { error: "허용되지 않은 메서드입니다." });

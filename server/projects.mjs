@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { deepMerge, validateSettings } from "../shared/settings.mjs";
+import { deepMerge, sanitizeSettings, validateSettings } from "../shared/settings.mjs";
 import { createMutex, writeFileAtomic } from "./fs-util.mjs";
 import { HttpError } from "./http.mjs";
 import { isValidProjectId, resolveInside } from "./paths.mjs";
@@ -56,7 +56,7 @@ function unsetPath(object, dotted) {
 }
 
 /** Projects live as folders under the OpenMontage projects directory (`getRoot()`). */
-export function createProjectStore({ getRoot }) {
+export function createProjectStore({ getRoot, probeDuration = async () => null }) {
   const mutex = createMutex();
 
   async function projectDir(id) {
@@ -89,7 +89,65 @@ export function createProjectStore({ getRoot }) {
       updatedAt: info.mtimeMs,
       hasFinal: await exists(path.join(dir, "renders", "final.mp4")),
       poster: poster ? `assets/images/${poster}` : null,
+      stages: await stagesOf(dir, images.some((name) => IMAGE_PATTERN.test(name))),
+      description: await describe(dir),
+      favorite: (await readMeta(dir)).favorite === true,
+      durationSeconds: (await exists(path.join(dir, "renders", "final.mp4"))) ? await probeDuration(path.join(dir, "renders", "final.mp4")) : null,
     };
+  }
+
+  /** One line for the card: the first line of the topic, else of the synopsis. */
+  async function describe(dir) {
+    for (const rel of ["studio/topic.md", "studio/synopsis.md"]) {
+      const text = await readFile(path.join(dir, rel), "utf8").catch(() => "");
+      const line = text.split(/\r?\n/).map((item) => item.replace(/^#+\s*/, "").trim()).find(Boolean);
+      if (line) return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+    }
+    return "";
+  }
+
+  async function readMeta(dir) {
+    try {
+      const meta = JSON.parse(await readFile(path.join(dir, "studio", "meta.json"), "utf8"));
+      return meta !== null && typeof meta === "object" ? meta : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Media files of a project for the detail window (relative paths, at most 200 per kind). */
+  async function mediaOf(dir) {
+    const list = async (sub, pattern) => {
+      const names = await readdir(path.join(dir, sub)).catch(() => []);
+      const picked = [];
+      for (const name of names.filter((item) => pattern.test(item)).sort().slice(0, 200)) {
+        const info = await stat(path.join(dir, sub, name)).catch(() => null);
+        if (info?.isFile()) picked.push({ path: `${sub}/${name}`, size: info.size });
+      }
+      return picked;
+    };
+    return {
+      images: await list("assets/images", IMAGE_PATTERN),
+      videos: [...(await list("renders", /\.(mp4|webm)$/i)), ...(await list("assets/video", /\.(mp4|webm)$/i))],
+      audio: [...(await list("assets/audio", /\.(wav|mp3|flac|ogg)$/i)), ...(await list("assets/music", /\.(wav|mp3|flac|ogg)$/i))],
+    };
+  }
+
+  /** Which of the six work steps already have their output file, read straight from the project folder. */
+  async function stagesOf(dir, hasImages) {
+    const filled = async (rel) => {
+      const info = await stat(path.join(dir, rel)).catch(() => null);
+      return Boolean(info?.isFile() && info.size > 0);
+    };
+    const videos = await readdir(path.join(dir, "assets", "video")).catch(() => []);
+    return [
+      { id: "synopsis", done: await filled("studio/synopsis.md") },
+      { id: "scenario", done: await filled("artifacts/scene_plan.json") },
+      { id: "script", done: await filled("artifacts/script.json") },
+      { id: "images", done: hasImages },
+      { id: "video", done: videos.some((name) => /\.(mp4|webm)$/i.test(name)) },
+      { id: "final", done: await filled("renders/final.mp4") },
+    ];
   }
 
   async function listFiles(dir, sub) {
@@ -128,9 +186,8 @@ export function createProjectStore({ getRoot }) {
     const target = await resolveInside(dir, PROJECT_SETTINGS_FILE);
     try {
       const raw = JSON.parse(await readFile(target, "utf8"));
-      const checked = validateSettings(raw);
-      if (!checked.ok) throw new HttpError(500, "studio/settings.json의 값이 올바르지 않습니다.", { errors: checked.errors });
-      return { target, stored: checked.value };
+      // Keys from an older version are ignored instead of hiding the whole project's settings.
+      return { target, stored: sanitizeSettings(raw).value };
     } catch (error) {
       if (error.code === "ENOENT") return { target, stored: {} };
       if (error instanceof HttpError) throw error;
@@ -140,6 +197,7 @@ export function createProjectStore({ getRoot }) {
 
   return {
     root: getRoot,
+    dir: projectDir,
 
     async list() {
       const root = await getRoot();
@@ -157,7 +215,11 @@ export function createProjectStore({ getRoot }) {
 
     async get(id) {
       const dir = await projectDir(id);
-      return { ...(await summarize(dir, id)), files: [...(await listFiles(dir, "studio")), ...(await listFiles(dir, "artifacts"))] };
+      return {
+        ...(await summarize(dir, id)),
+        files: [...(await listFiles(dir, "studio")), ...(await listFiles(dir, "artifacts"))],
+        media: await mediaOf(dir),
+      };
     },
 
     async create(title) {
@@ -186,12 +248,16 @@ export function createProjectStore({ getRoot }) {
       });
     },
 
-    async readText(id, rel) {
+    /** With `optional`, a missing file answers { content: null } instead of 404 (no error noise in the browser). */
+    async readText(id, rel, { optional = false } = {}) {
       const dir = await projectDir(id);
       const target = await resolveInside(dir, rel);
       if (!READ_EXTENSIONS.has(path.extname(target).toLowerCase())) throw new HttpError(400, "텍스트 파일만 읽을 수 있습니다.");
       const info = await stat(target).catch(() => null);
-      if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+      if (!info?.isFile()) {
+        if (optional) return { content: null, mtimeMs: null };
+        throw new HttpError(404, "파일을 찾을 수 없습니다.");
+      }
       if (info.size > MAX_TEXT_BYTES) throw new HttpError(413, "파일이 너무 큽니다.");
       return { content: await readFile(target, "utf8"), mtimeMs: info.mtimeMs };
     },
@@ -209,6 +275,22 @@ export function createProjectStore({ getRoot }) {
 
     async writeText(id, rel, content, expectedMtimeMs) {
       return writeChecked(await projectDir(id), rel, content, expectedMtimeMs);
+    },
+
+    /** Per-project flags kept in studio/meta.json (only `favorite` for now). */
+    async updateMeta(id, patch) {
+      if (patch === null || typeof patch !== "object" || Array.isArray(patch)) throw new HttpError(400, "요청 본문이 올바르지 않습니다.");
+      for (const [key, value] of Object.entries(patch)) {
+        if (key !== "favorite" || typeof value !== "boolean") throw new HttpError(400, "지원하지 않는 항목입니다.");
+      }
+      const dir = await projectDir(id);
+      const target = await resolveInside(dir, "studio/meta.json");
+      return mutex(target, async () => {
+        const meta = { ...(await readMeta(dir)), ...patch };
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFileAtomic(target, `${JSON.stringify(meta, null, 2)}\n`);
+        return meta;
+      });
     },
 
     /** Stored project overrides plus the effective view is assembled by the caller. */

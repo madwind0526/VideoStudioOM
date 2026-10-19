@@ -2,16 +2,53 @@ import type { DEFAULTS } from "../shared/settings.mjs";
 
 export type Settings = typeof DEFAULTS;
 
+export interface Stage {
+  id: "synopsis" | "scenario" | "script" | "images" | "video" | "final";
+  done: boolean;
+}
+
 export interface ProjectSummary {
   id: string;
   title: string;
   updatedAt: number;
   hasFinal: boolean;
   poster: string | null;
+  stages: Stage[];
+  description: string;
+  favorite: boolean;
+  durationSeconds: number | null;
+}
+
+export interface SystemStats {
+  gpu: { name: string; utilization: number | null; vramUsedMb: number | null; vramTotalMb: number } | null;
+  cpuPercent: number | null;
+  ramUsedMb: number;
+  ramTotalMb: number;
+  activity: { tool: string | null; songyueBusy: boolean };
+}
+
+export interface MediaFile {
+  path: string;
+  size: number;
 }
 
 export interface ProjectDetail extends ProjectSummary {
   files: { path: string; size: number; mtimeMs: number }[];
+  media: { images: MediaFile[]; videos: MediaFile[]; audio: MediaFile[] };
+}
+
+export interface LlmProviderStatus {
+  id: string;
+  kind: "cli" | "local";
+  ready: boolean;
+  command?: string;
+  models?: string[];
+}
+
+export interface FolderInfo {
+  path: string;
+  exists: boolean;
+  isFile: boolean;
 }
 
 export interface ProjectSettingsView {

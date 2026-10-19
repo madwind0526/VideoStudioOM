@@ -4,3 +4,7 @@ data/
 *.log
 .env
 .playwright-mcp/
+
+# Default input/output folders for user media (Settings > folders)
+input/
+output/
