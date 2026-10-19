@@ -2,7 +2,8 @@
 
 ## Current Focus
 
-- 프로젝트 초기 설정 완료, Wave 1 시작 대기 (docs/design.md 검토 후 P1 골격부터)
+- 프로젝트 이름 VideoStudioOM, 위치 E:\Claude\VideoStudioOM 로 이동 완료. 구현 계획 작성(docs/plan.md)
+- 다음: Wave 1 스파이크(에이전트 CLI 비대화형 승인 지점 검증) 시작 전 사용자 확인, P1 골격은 병행 가능
 
 <!--
 규칙:

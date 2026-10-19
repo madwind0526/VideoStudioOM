@@ -9,7 +9,7 @@ OpenMontage(영상 제작 엔진)와 SongYUE2(음악) 위에 얹는 **영상 제
 - **창작 판단(대본/장면 구성)은 에이전트 CLI(Claude/Codex/OpenCode)가 OpenMontage 지침대로 수행한다.** VideoStudioOM는 에이전트를 조종하고 결과를 검토/수정하는 GUI다 (`memory-bank/knowledge/RULES.md` P-01).
 - 엔진: `E:\Claude\OpenMontage` (도구는 그 폴더의 `.venv`로 실행, 프로젝트 데이터는 `projects/<id>/`)
 - 음악: SongYUE2 백엔드 `http://127.0.0.1:4311`
-- 설계: `docs/design.md`
+- 설계: `docs/design.md`, 구현 계획: `docs/plan.md`
 - UI 참고: `C:\Claude\SongYUE2\app` (미니멀, 아이콘 중심, 좌측 메뉴 / 상단 메뉴 / 하단 시스템 메시지), LLM 선택 참고: `C:\Claude\MusicAutomation\server\services\llm.mjs`, `llm-cli.mjs`, 자동 주제: `auto-song.mjs`
 - 포트(`C:\Claude\PORTS.md`): 백엔드 4314, Vite dev 5184
 
