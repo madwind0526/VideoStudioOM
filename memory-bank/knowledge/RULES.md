@@ -18,16 +18,16 @@
 
 -->
 
-## P-01: 창작 판단은 에이전트가, GUI는 조종/검토/수정만 (MANDATORY)
+## P-01: 창작 텍스트는 LLM 텍스트 호출로, OpenMontage는 제작 도구로 (MANDATORY)
 
-**규칙:** 대본, 장면 구성 등 창작 판단은 OpenMontage 지침을 따르는 에이전트 CLI(Claude/Codex/OpenCode)가 한다. VideoStudioOM 백엔드는 자체 LLM 로직으로 창작을 대신하지 않는다.
-**이유:** 사용자 결정(2026-10-19). OpenMontage의 파이프라인과 승인 지점(gate)을 그대로 쓰기 위함.
-**적용 시점:** 시나리오/스토리보드/영상 단계를 구현할 때 항상. Ollama는 도구 사용이 없어 주제 제안 같은 단순 텍스트 작업에만 쓴다.
+**규칙:** 줄거리, 시나리오(scene_plan), 대본(script)은 MusicAutomation 방식의 LLM 텍스트 호출(claude-cli → codex-cli → opencode-cli → ollama 체인)로 만든다. 단계마다 사람이 검토/수정/승인하고, 수정본이 다음 단계의 입력이 된다. OpenMontage는 이미지/영상/음성/음악/합성 도구로만 쓴다. 도구 권한을 가진 에이전트가 파이프라인을 돌리게 하지 않는다.
+**이유:** 사용자 결정(2026-10-19, 개정). 이전 규칙(에이전트 CLI가 OpenMontage 파이프라인을 수행)은 스파이크(docs/spike-agent.md)에서 허용 목록으로 임의 코드 실행을 막지 못하는 것이 확인되어 폐기. 텍스트 호출은 권한이 필요 없고 MusicAutomation에서 검증됨.
+**적용 시점:** 시나리오/스토리보드/영상 단계를 구현할 때 항상.
 
-## P-02: 에이전트 CLI 실행 시 cwd 규칙
+## P-02: LLM 호출 규칙
 
-**규칙:** 파이프라인 작업은 cwd를 OpenMontage 폴더로 해서 실행한다(그 폴더의 CLAUDE.md/AGENTS.md가 적용되어야 함). 반대로 주제 제안 같은 가벼운 텍스트 호출은 중립 디렉터리(os.tmpdir())에서 실행하고 프롬프트는 stdin으로 전달한다.
-**이유:** 전역 KB `claude-cli-subprocess-context-bleed.md` - 프로젝트 CLAUDE.md의 페르소나가 답변을 오염시킴.
+**규칙:** 텍스트 호출은 중립 디렉터리(os.tmpdir())에서 실행하고 프롬프트는 stdin으로 전달한다. 모델 지시는 영어로, 생성 결과(줄거리/대본)는 한국어로 요청한다. 구조화 출력(scene_plan, script)은 OpenMontage 스키마로 검증하고, 실패하면 이유를 알려 최대 3번 다시 요청한다.
+**이유:** 전역 KB `claude-cli-subprocess-context-bleed.md` - 프로젝트 CLAUDE.md의 페르소나가 답변을 오염시킴. MusicAutomation에서 LLM이 필드를 비우거나 형식을 어기는 일이 확인됨(금지 규칙은 LLM이 지키지 않으므로 검증과 재요청으로 처리).
 
 ## P-03: Node가 Python을 spawn할 때
 

@@ -6,7 +6,7 @@
 
 OpenMontage(영상 제작 엔진)와 SongYUE2(음악) 위에 얹는 **영상 제작 GUI**. 주제/줄거리 → 시나리오 → 대본 → 장면 이미지 → 영상(+오디오/노래) → 라이브러리까지를 화면에서 조종하고, 중간 산출물(시나리오, 대본, 이미지, 오디오, 영상)을 폴더에 저장해 읽고 수정한다.
 
-- **창작 판단(대본/장면 구성)은 에이전트 CLI(Claude/Codex/OpenCode)가 OpenMontage 지침대로 수행한다.** VideoStudioOM는 에이전트를 조종하고 결과를 검토/수정하는 GUI다 (`memory-bank/knowledge/RULES.md` P-01).
+- **줄거리/시나리오/대본은 LLM 텍스트 호출(MusicAutomation 방식)로 만들고, 단계마다 사람이 검토/수정/승인한다.** OpenMontage는 이미지/영상/음성/음악/합성 도구로만 쓴다. 도구 권한을 가진 에이전트는 쓰지 않는다 (`memory-bank/knowledge/RULES.md` P-01, 근거 `docs/spike-agent.md`).
 - 엔진: `E:\Claude\OpenMontage` (도구는 그 폴더의 `.venv`로 실행, 프로젝트 데이터는 `projects/<id>/`)
 - 음악: SongYUE2 백엔드 `http://127.0.0.1:4311`
 - 설계: `docs/design.md`, 구현 계획: `docs/plan.md`
@@ -16,7 +16,7 @@ OpenMontage(영상 제작 엔진)와 SongYUE2(음악) 위에 얹는 **영상 제
 ## Project Structure
 
 - `src/`: React + TypeScript UI (Vite)
-- `server/`: Node 백엔드 (REST + SSE, 에이전트 실행, OpenMontage/SongYUE2 브릿지)
+- `server/`: Node 백엔드 (REST + SSE, LLM 텍스트 호출, OpenMontage/SongYUE2 브릿지)
 - `shared/`: 서버/클라이언트 공용 로직 (스키마, 설정 기본값)
 - `docs/`: 설계 문서
 - `data/`: 사용자 설정(커밋 금지)
@@ -26,7 +26,7 @@ OpenMontage(영상 제작 엔진)와 SongYUE2(음악) 위에 얹는 **영상 제
 
 - UI: React + TypeScript + Vite, 한국어 UI, 아이콘은 lucide-react
 - 백엔드: Node (웹 프레임워크 없이), `cross-spawn`으로 CLI 실행
-- 에이전트/LLM: claude-cli, codex-cli, opencode-cli (OpenMontage 폴더에서 실행), ollama (단순 텍스트용)
+- LLM: claude-cli(기본) → codex-cli → opencode-cli → ollama 폴백 체인, 텍스트 호출만(중립 폴더, stdin). MusicAutomation의 `llm.mjs`, `llm-cli.mjs` 참고
 - 엔진 호출: OpenMontage Python 도구(`tools.tool_registry`)를 얇은 Python 브릿지로 실행
 
 ## Commands
@@ -39,7 +39,7 @@ npm test           # backend tests
 npm run build      # typecheck + production build
 ```
 
-(P1 골격 구현 전에는 `npm` 스크립트가 아직 없다.)
+자동화에서 실행할 때는 끝의 `pause`를 건너뛰는 `start.bat prod nopause`, `start.bat dev nopause`, `stop.bat nopause`를 쓴다(출력은 파일로 리다이렉트하고 `< nul`).
 
 ## Rules
 
