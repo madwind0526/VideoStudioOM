@@ -221,7 +221,7 @@ export default function StartPage({ projects, currentId, view, onWork, onOpenDet
             </>
           ) : (
             <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-              프로젝트를 새로 만들거나 오른쪽 카드에서 &ldquo;이 프로젝트로 작업하기&rdquo;를 누르면 주제와 영상 설정이 여기에 나타납니다.
+              프로젝트를 새로 만들거나 오른쪽 카드의 이름을 누르면 주제와 영상 설정이 여기에 나타납니다. 줄거리, 시나리오, 이미지 등은 &lsquo;프로젝트&rsquo; 메뉴에서 열어 볼 수 있어요.
             </p>
           )}
         </div>
@@ -236,7 +236,7 @@ export default function StartPage({ projects, currentId, view, onWork, onOpenDet
         <ProjectBoard
           kicker="나의 영상을 한곳에"
           title="내 작업"
-          subtitle="오늘의 아이디어가 다음 영상이 되는 곳"
+          subtitle="카드의 이름을 누르면 왼쪽에서 설정하고, 화살표를 누르면 프로젝트를 엽니다."
           projects={projects}
           currentId={currentId}
           onWork={onWork}

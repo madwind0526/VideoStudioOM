@@ -51,6 +51,19 @@ export interface FolderInfo {
   isFile: boolean;
 }
 
+export interface Job {
+  id: string;
+  tool: string;
+  status: "running" | "done" | "failed" | "cancelled" | "interrupted";
+  startedAt: number;
+  finishedAt?: number;
+  artifacts?: string[];
+  error?: string | null;
+  code?: string | null;
+  durationSeconds?: number | null;
+  meta: { project?: string; output?: string; label?: string };
+}
+
 export interface ProjectSettingsView {
   stored: Record<string, unknown>;
   effective: Settings;

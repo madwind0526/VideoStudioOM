@@ -7,7 +7,22 @@
 |---|---|---|---|---|
 | 2026-10-19 | 57c1382 | `CLAUDE.md`, `open.bat`, `stop-services.bat` | 로컬 도구 지침과 실행/중지 스크립트(기존 작업) | 소 |
 | 2026-10-19 | 57c1382 | `tools/_comfyui/local_stack.py`, `tools/graphics/comfyui_krea_image.py`, `tools/video/h3_local_video.py`, `tools/audio/qwen3_tts.py`, `tools/audio/songyue_music.py` | 무료 로컬 도구(Krea, H3, Qwen3-TTS, SongYUE2) 추가(기존 작업, 새 파일) | 중 |
+| 2026-10-20 | 768589b | `tools/video/h3_local_video.py` | FL2V(`last_frame_path`), 오디오 고정 S2V(Sound2Video, 립싱크)(`audio_path`, `mux_audio`), 입력 프레임 비율 보정(`fit_images`) | 중(+67/-9줄, 기존 파일 한 곳) |
+| 2026-10-20 | 80dc980 | `tools/video/h3_reference_video.py` (새 파일) | R2V와 참조 영상 수정(v2v): 코어 노드 `MiniMaxH3ReferenceToVideo`에 참조 이미지/영상/오디오를 넣는다 | 중(새 파일 약 230줄, 기존 파일은 그대로) |
 
 `backlot/__init__.py`는 작업 트리에 줄바꿈(CRLF)만 다른 상태여서 커밋하지 않았다.
 
-예정(`docs/plan.md` 2.4): `h3_local_video` 확장(FL2V, R2V, 오디오 고정, 첫 프레임 비율 보정), GPU 락.
+실측(RTX 5070 12GB, ComfyUI 0.39.1, 736×416 확대 없음): FL2V 57초(마지막 프레임이 입력 이미지와 일치, 중간은 자연스럽게 전환), S2V 56초(입 모양이 음성에 따라 계속 바뀜). 얼굴 이미지는 Krea 25초, 한국어 음성은 Qwen3-TTS 5초(33글자 → 5.04초, 초당 약 6.5글자).
+
+알려진 사항
+- 오디오를 고정하면 결과가 요청보다 짧게 나온다(요청 5.04초 → 117프레임 4.875초, 오디오 없이는 124프레임). 원인은 확인하지 않았다. P5에서 클립 길이를 보정해야 한다.
+- R2V와 영상 수정은 `h3_reference_video`로 지원한다(사용자의 ComfyUI 워크플로 `Documents/ComfyUI/user/default/workflows/MiniMaxH3/`와 공식 템플릿 `video_minimax_h3_r2v`를 분석해 만듦). 가변 입력의 API 이름은 `ref_images.ref_image_N`, `ref_videos.ref_video_0`, `ref_video_audios.ref_video_audio_0`, `ref_audios.ref_audio_0`이다. 모델은 이 PC에 있는 `10Eros_Max_h3_TURBO_ref2va_beta2_int8_convrot`(터보, euler 8단계, 기본)와 공식 `minimax_h3_ref2va_pruned_int8_convrot`(20단계). 실측: 이미지 2장 R2V 66초(1번 그림의 벌이 2번 그림의 벌집 장면으로 이어짐), 5초 참조 영상 수정 126초(구도와 움직임은 원본을 따르고 수채화 스타일 변화는 약했음).
+- 사용자의 Deno 워크플로(`Deno minimax 8 step turbo R2V`)는 커스텀 노드와 `MiniMax-H3-Ref2VA-Acc-8Step` LoRA가 필요한데, 이 PC의 `D:\sd-lib`에는 그 LoRA가 없어 쓰지 않았다. 터보 R2V LoRA(`minimax_h3_ref2v_turbo_4step`)도 없다. 사용자의 v2v 워크플로는 2단계 샘플링(시그마 이동 + 잠재 업스케일러)을 쓰는데, 지금 도구는 1단계다.
+
+예정: GPU 락은 VideoStudioOM의 `bridge/om_tool.py`에서 처리하므로 OpenMontage 쪽 수정은 필요 없다.
+
+### R2V subject swap check (verified)
+`h3_reference_video` with `reference_video_path` + one `reference_image_paths` entry and the prompt
+"Replace the woman in <Video 1> with the man from <Picture 1>. Keep the same motion, camera and background."
+(736x416, 3 s, turbo, no upscale, 76 s): the person (face, beard, glasses, blue coat) came from the image;
+pose, camera and park background stayed as in the reference video. Face swap and clothes swap work this way.

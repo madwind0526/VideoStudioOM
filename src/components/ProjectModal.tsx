@@ -232,7 +232,7 @@ export default function ProjectModal({ id, onClose, onWork }: Props) {
             닫기
           </button>
           <button className="btn primary" type="button" onClick={() => onWork(id)}>
-            이 프로젝트로 작업하기
+            프로젝트 열기
           </button>
         </div>
       </div>

@@ -64,9 +64,20 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
   const settings = createSettingsStore({ dir: dataDir, onSaved: (effective) => ensureWorkFolders(effective, appRoot) });
   const systemStats = createSystemStats({ readGpu });
   const events = createEventHub();
+  const probeDuration = createDurationProbe({ getFfprobe: async () => ffprobeFor((await settings.get()).connections.ffmpegPath) });
+  const projects = createProjectStore({
+    probeDuration,
+    getRoot: async () => {
+      if (projectsRoot) return projectsRoot;
+      return folderPaths(await settings.get(), appRoot).projects;
+    },
+  });
+
   const jobs = createJobQueue({
     dir: path.join(dataDir, "runtime"),
     events,
+    // Keep how a generated file was made, so it can be made again from the screen.
+    onFinished: (job) => (job.meta?.output && job.meta?.record ? projects.setAssetRecord(job.meta.project, job.meta.output, job.meta.record) : undefined),
     // `bridge` overrides the defaults (tests point it at a fake OpenMontage).
     getConfig: async () => {
       const { connections } = await settings.get();
@@ -81,15 +92,6 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
       };
     },
   });
-  const probeDuration = createDurationProbe({ getFfprobe: async () => ffprobeFor((await settings.get()).connections.ffmpegPath) });
-  const projects = createProjectStore({
-    probeDuration,
-    getRoot: async () => {
-      if (projectsRoot) return projectsRoot;
-      return folderPaths(await settings.get(), appRoot).projects;
-    },
-  });
-
   let guard;
   const server = createServer(async (req, res) => {
     try {

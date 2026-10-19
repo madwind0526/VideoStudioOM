@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -48,8 +48,26 @@ test("card info: description, favorite, duration, media lists", async () => {
     await store.updateMeta(id, { favorite: false });
     assert.equal((await store.get(id)).favorite, false);
     await assert.rejects(store.updateMeta(id, { favorite: "yes" }), { status: 400 });
-    await assert.rejects(store.updateMeta(id, { title: "x" }), { status: 400 });
+    await assert.rejects(store.updateMeta(id, { color: "red" }), { status: 400 });
     await assert.rejects(store.updateMeta(id, [true]), { status: 400 });
+  } finally {
+    await cleanup();
+  }
+});
+
+test("title can be renamed in the app without touching project.json", async () => {
+  const { root, store, cleanup } = await setup();
+  try {
+    const { id } = await store.create("원래 제목");
+    assert.equal((await store.get(id)).title, "원래 제목");
+    await store.updateMeta(id, { title: "  새 제목  " });
+    assert.equal((await store.get(id)).title, "새 제목");
+    assert.equal((await store.list())[0].title, "새 제목");
+    assert.equal(JSON.parse(await readFile(path.join(root, id, "project.json"), "utf8")).title, "원래 제목");
+    await assert.rejects(store.updateMeta(id, { title: "   " }), { status: 400 });
+    await assert.rejects(store.updateMeta(id, { title: "x".repeat(101) }), { status: 400 });
+    await assert.rejects(store.updateMeta(id, { title: 5 }), { status: 400 });
+    assert.equal((await store.get(id)).title, "새 제목");
   } finally {
     await cleanup();
   }

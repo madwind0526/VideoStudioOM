@@ -26,7 +26,7 @@ const options = (values: readonly string[], labels: Record<string, string> = {})
   values.map((value) => ({ value, label: labels[value] ?? value }));
 
 const VIDEO_MODE_LABELS = { T2V: "T2V 텍스트 → 영상", I2V: "I2V 첫 이미지 → 영상", FL2V: "FL2V 첫+끝 이미지", R2V: "R2V 참조 영상/이미지" };
-const AUDIO_LABELS = { input: "입력한 노래", songyue: "SongYUE2로 생성", h3: "H3 자체 오디오", lipsync: "립싱크(음성 고정)" };
+const AUDIO_LABELS = { input: "입력한 노래", songyue: "SongYUE2로 생성", h3: "H3 자체 오디오", s2v: "S2V (음성 → 영상)" };
 const IMAGE_LABELS = { "krea2-turbo": "Krea 2 Turbo", "h3-still": "H3 스틸" };
 const UPSCALE_LABELS = { "rtx-2pass": "RTX 2패스", none: "없음", lanczos: "Lanczos" };
 

@@ -20,7 +20,7 @@ export const SIZE_PRESETS = [
 ];
 export const CUSTOM_SIZE_ID = "custom";
 export const VIDEO_MODES = ["T2V", "I2V", "FL2V", "R2V"];
-export const AUDIO_SOURCES = ["input", "songyue", "h3", "lipsync"];
+export const AUDIO_SOURCES = ["input", "songyue", "h3", "s2v"];
 export const IMAGE_MODELS = ["krea2-turbo", "h3-still"];
 export const UPSCALES = ["rtx-2pass", "none", "lanczos"];
 export const MUSIC_FORMATS = ["wav", "flac", "mp3", "mp4"];

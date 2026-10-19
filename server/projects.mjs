@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { deepMerge, sanitizeSettings, validateSettings } from "../shared/settings.mjs";
@@ -25,6 +25,7 @@ const MEDIA_TYPES = {
   ".ogg": "audio/ogg",
 };
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
+const ASSETS_FILE = "studio/assets.json";
 const PROJECT_SETTINGS_FILE = "studio/settings.json";
 
 const exists = (target) => stat(target).then(() => true, () => false);
@@ -79,6 +80,9 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     } catch {
       // Older projects have no project.json; the folder name is the title.
     }
+    // A title set in the app (studio/meta.json) wins over the one in OpenMontage's project.json.
+    const metaTitle = (await readMeta(dir)).title;
+    if (typeof metaTitle === "string" && metaTitle) title = metaTitle;
     const info = await stat(dir);
     const imagesDir = path.join(dir, "assets", "images");
     const images = await readdir(imagesDir).catch(() => []);
@@ -115,14 +119,35 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     }
   }
 
+  async function readAssets(dir) {
+    try {
+      const data = JSON.parse(await readFile(path.join(dir, ASSETS_FILE), "utf8"));
+      return data !== null && typeof data === "object" && !Array.isArray(data) ? data : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** A path the app may create, replace or delete: a media file under assets/. */
+  function checkAssetPath(rel) {
+    const segments = String(rel).split(/[\\/]/);
+    if (segments.length < 3 || segments[0].toLowerCase() !== "assets" || !MEDIA_TYPES[path.extname(rel).toLowerCase()]) {
+      throw new HttpError(400, "assets 아래의 이미지, 오디오, 영상 파일만 다룰 수 있습니다.");
+    }
+  }
+
   /** Media files of a project for the detail window (relative paths, at most 200 per kind). */
   async function mediaOf(dir) {
+    // studio/assets.json remembers how each generated file was made (prompt, scene, ...), so it can be made again.
+    const records = await readAssets(dir);
     const list = async (sub, pattern) => {
       const names = await readdir(path.join(dir, sub)).catch(() => []);
       const picked = [];
-      for (const name of names.filter((item) => pattern.test(item)).sort().slice(0, 200)) {
+      // Natural order: scene-2 comes before scene-10.
+      const sorted = names.filter((item) => pattern.test(item)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      for (const name of sorted.slice(0, 200)) {
         const info = await stat(path.join(dir, sub, name)).catch(() => null);
-        if (info?.isFile()) picked.push({ path: `${sub}/${name}`, size: info.size });
+        if (info?.isFile()) picked.push({ path: `${sub}/${name}`, size: info.size, mtimeMs: info.mtimeMs, record: records[`${sub}/${name}`] ?? null });
       }
       return picked;
     };
@@ -262,6 +287,40 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       return { content: await readFile(target, "utf8"), mtimeMs: info.mtimeMs };
     },
 
+    /** Remembers how a generated file was made. Called when a job finishes, so the file can be made again. */
+    async setAssetRecord(id, rel, record) {
+      checkAssetPath(rel);
+      if (record === null || typeof record !== "object" || Array.isArray(record) || JSON.stringify(record).length > 4000) {
+        throw new HttpError(400, "기록이 올바르지 않습니다.");
+      }
+      const dir = await projectDir(id);
+      const target = await resolveInside(dir, ASSETS_FILE);
+      return mutex(target, async () => {
+        const records = { ...(await readAssets(dir)), [String(rel).replace(/\\/g, "/")]: { ...record, createdAt: Date.now() } };
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFileAtomic(target, `${JSON.stringify(records, null, 2)}\n`);
+      });
+    },
+
+    /** Deletes one media file under assets/ together with its record. */
+    async deleteMedia(id, rel) {
+      checkAssetPath(rel);
+      const dir = await projectDir(id);
+      const file = await resolveInside(dir, rel);
+      const info = await stat(file).catch(() => null);
+      if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+      const manifest = await resolveInside(dir, ASSETS_FILE);
+      await mutex(manifest, async () => {
+        await rm(file);
+        const records = await readAssets(dir);
+        const key = String(rel).replace(/\\/g, "/");
+        if (key in records) {
+          delete records[key];
+          await writeFileAtomic(manifest, `${JSON.stringify(records, null, 2)}\n`);
+        }
+      });
+    },
+
     /** Locates a media file for streaming. Only image/video/audio types are served. */
     async statMedia(id, rel) {
       const dir = await projectDir(id);
@@ -277,12 +336,14 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       return writeChecked(await projectDir(id), rel, content, expectedMtimeMs);
     },
 
-    /** Per-project flags kept in studio/meta.json (only `favorite` for now). */
+    /** Per-project values kept in studio/meta.json: `favorite` and `title` (the folder name never changes). */
     async updateMeta(id, patch) {
       if (patch === null || typeof patch !== "object" || Array.isArray(patch)) throw new HttpError(400, "요청 본문이 올바르지 않습니다.");
       for (const [key, value] of Object.entries(patch)) {
-        if (key !== "favorite" || typeof value !== "boolean") throw new HttpError(400, "지원하지 않는 항목입니다.");
+        const ok = (key === "favorite" && typeof value === "boolean") || (key === "title" && typeof value === "string" && value.trim() !== "" && value.length <= 100);
+        if (!ok) throw new HttpError(400, key === "title" ? "제목은 1~100자로 입력하세요." : "지원하지 않는 항목입니다.");
       }
+      if (typeof patch.title === "string") patch = { ...patch, title: patch.title.trim() };
       const dir = await projectDir(id);
       const target = await resolveInside(dir, "studio/meta.json");
       return mutex(target, async () => {

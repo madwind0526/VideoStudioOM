@@ -3,9 +3,11 @@ import { pipeline } from "node:stream/promises";
 
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
+import { concatMedia } from "./concat.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
+import { resolveInside } from "./paths.mjs";
 
 function decodeId(raw) {
   try {
@@ -38,6 +40,9 @@ async function streamMedia(req, res, file) {
   await pipeline(createReadStream(file.target, options), res).catch(() => {});
 }
 
+// Projects whose files are being joined right now (one join per project at a time).
+const joining = new Set();
+
 /** Handles /api/* requests. Returns false when no route matches. */
 export async function handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot }) {
   const { pathname } = url;
@@ -45,6 +50,36 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   const methodNotAllowed = () => {
     throw new HttpError(405, "허용되지 않은 메서드입니다.");
   };
+
+  /** Joins audio pieces into assets/audio/narration.wav, or video clips into renders/final.mp4. */
+  async function joinMedia(id, body) {
+    const kinds = {
+      audio: { extensions: /\.(wav|mp3|flac|ogg)$/i, output: "assets/audio/narration.wav" },
+      video: { extensions: /\.(mp4|webm)$/i, output: "renders/final.mp4" },
+    };
+    const kind = kinds[body.kind];
+    if (!kind) throw new HttpError(400, "종류는 audio 또는 video여야 합니다.");
+    const names = body.inputs;
+    if (!Array.isArray(names) || names.length === 0 || names.length > 60 || names.some((name) => typeof name !== "string")) {
+      throw new HttpError(400, "이어 붙일 파일 목록이 올바르지 않습니다.");
+    }
+    const dir = await projects.dir(id);
+    const inputs = [];
+    for (const name of names) {
+      if (!/^assets[\\/]/i.test(name) || !kind.extensions.test(name) || name.replace(/\\/g, "/") === kind.output) throw new HttpError(400, `이어 붙일 수 없는 파일입니다: ${name}`);
+      const { target } = await projects.statMedia(id, name);
+      inputs.push(target);
+    }
+    if (joining.has(id)) throw new HttpError(409, "이미 이어 붙이는 중입니다.");
+    joining.add(id);
+    try {
+      await concatMedia({ ffmpegPath: (await settings.get()).connections.ffmpegPath, kind: body.kind, inputs, output: await resolveInside(dir, kind.output) });
+    } finally {
+      joining.delete(id);
+    }
+    if (body.kind === "audio") await projects.setAssetRecord(id, kind.output, { kind: "concat", inputs: names });
+    return { output: kind.output, count: inputs.length };
+  }
 
   if (pathname === "/api/health") {
     sendJson(res, 200, { ok: true, app: "VideoStudioOM" });
@@ -89,10 +124,22 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       sendJson(res, 200, await jobs.list());
     } else if (method === "POST") {
       const body = requireObject(await readJsonBody(req));
-      if (!ALLOWED_TOOLS.has(body.tool)) throw new HttpError(400, "지원하지 않는 도구입니다.");
       const dir = await projects.dir(body.project);
-      const inputs = await prepareInputs(dir, body.inputs);
-      sendJson(res, 202, { job: await jobs.start({ tool: body.tool, inputs, allowRoot: dir, meta: { project: body.project } }) });
+      const items = Array.isArray(body.items) ? body.items : [body];
+      if (items.length === 0 || items.length > 60) throw new HttpError(400, "한 번에 1~60개까지 만들 수 있습니다.");
+      const prepared = [];
+      for (const raw of items) {
+        const item = requireObject(raw);
+        if (!ALLOWED_TOOLS.has(item.tool)) throw new HttpError(400, "지원하지 않는 도구입니다.");
+        const inputs = await prepareInputs(dir, item.inputs);
+        // `record` is how the file was made (prompt, scene, ...); it is saved so the file can be made again.
+        // `output` (project-relative) lets the screen find the result; `label` is only for the job list.
+        const record = item.record === undefined ? undefined : requireObject(item.record);
+        const meta = { project: body.project, output: item.inputs.output_path, label: typeof item.label === "string" ? item.label.slice(0, 40) : undefined, record };
+        prepared.push({ tool: item.tool, inputs, allowRoot: dir, meta });
+      }
+      if (Array.isArray(body.items)) sendJson(res, 202, await jobs.startBatch(prepared));
+      else sendJson(res, 202, { job: await jobs.start(prepared[0]) });
     } else methodNotAllowed();
     return true;
   }
@@ -118,7 +165,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
@@ -129,8 +176,15 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     if (method !== "PUT") methodNotAllowed();
     sendJson(res, 200, { meta: await projects.updateMeta(id, await readJsonBody(req)) });
   } else if (match[2] === "media") {
-    if (method !== "GET") methodNotAllowed();
-    await streamMedia(req, res, await projects.statMedia(id, url.searchParams.get("path")));
+    if (method === "DELETE") {
+      await projects.deleteMedia(id, url.searchParams.get("path"));
+      sendJson(res, 200, { ok: true });
+    } else if (method === "GET") {
+      await streamMedia(req, res, await projects.statMedia(id, url.searchParams.get("path")));
+    } else methodNotAllowed();
+  } else if (match[2] === "concat") {
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));
   } else if (match[2] === "file") {
     if (method === "GET") {
       sendJson(res, 200, await projects.readText(id, url.searchParams.get("path"), { optional: url.searchParams.get("optional") === "1" }));

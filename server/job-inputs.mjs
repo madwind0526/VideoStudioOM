@@ -4,7 +4,7 @@ import { HttpError } from "./http.mjs";
 import { resolveInside } from "./paths.mjs";
 
 // Only the free local tools this app drives; the bridge would run any registered tool otherwise.
-export const ALLOWED_TOOLS = new Set(["comfyui_krea_image", "h3_local_video", "qwen3_tts", "songyue_music"]);
+export const ALLOWED_TOOLS = new Set(["comfyui_krea_image", "h3_local_video", "h3_reference_video", "qwen3_tts", "songyue_music"]);
 const OUTPUT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".wav", ".mp3", ".flac"]);
 
 /**
@@ -15,7 +15,13 @@ export async function prepareInputs(projectDir, inputs) {
   if (inputs === null || typeof inputs !== "object" || Array.isArray(inputs)) throw new HttpError(400, "inputs는 객체여야 합니다.");
   const prepared = {};
   for (const [key, value] of Object.entries(inputs)) {
-    if (key.endsWith("_dir") || key.endsWith("_paths")) throw new HttpError(400, `지원하지 않는 입력입니다: ${key}`);
+    if (key.endsWith("_dir")) throw new HttpError(400, `지원하지 않는 입력입니다: ${key}`);
+    if (key.endsWith("_paths")) {
+      // A list of project-relative files (e.g. several reference images); each one is checked like a single path.
+      if (!Array.isArray(value) || value.length > 8 || value.some((item) => typeof item !== "string")) throw new HttpError(400, `${key}는 경로 문자열 목록이어야 합니다.`);
+      prepared[key] = await Promise.all(value.map((item) => resolveInside(projectDir, item)));
+      continue;
+    }
     if (!key.endsWith("_path")) {
       prepared[key] = value;
       continue;

@@ -1,29 +1,50 @@
-import { ChevronRight, FileText, Film, House, LayoutGrid, Library, Moon, Settings as SettingsIcon, Sun, type LucideIcon } from "lucide-react";
+import { ChevronRight, Film, FolderOpen, Heart, Library, Moon, Plus, Settings as SettingsIcon, Sparkles, Sun, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary } from "./api";
 import { BRAND } from "./brand";
 import Logo from "./components/Logo";
 import ProjectModal from "./components/ProjectModal";
 import ResourceBar from "./components/ResourceBar";
-import WorkSteps, { type StepTarget } from "./components/WorkSteps";
 import { setIn } from "./fields";
-import ComingPage from "./pages/ComingPage";
-import LibraryPage from "./pages/LibraryPage";
+import { LibraryPage, LikesPage } from "./pages/LibraryPage";
+import ProjectsScreen, { SECTIONS } from "./pages/ProjectWorkspace";
 import SettingsPage from "./pages/SettingsPage";
 import StartPage from "./pages/StartPage";
+import type { SectionId } from "./sections/types";
 import { useEvents } from "./useEvents";
 
-type PageId = "start" | "scenario" | "storyboard" | "video" | "library" | "settings";
+// #/create  #/projects  #/projects/<id>/<section>  #/library  #/likes  #/settings
+type Route = { page: "create" } | { page: "projects" } | { page: "project"; id: string; section: SectionId } | { page: "library" } | { page: "likes" } | { page: "settings" };
 
-const PAGES: { id: PageId; label: string; icon: LucideIcon }[] = [
-  { id: "start", label: "시작", icon: House },
-  { id: "scenario", label: "시나리오", icon: FileText },
-  { id: "storyboard", label: "스토리보드", icon: LayoutGrid },
-  { id: "video", label: "영상", icon: Film },
-  { id: "library", label: "내 라이브러리", icon: Library },
-  { id: "settings", label: "설정", icon: SettingsIcon },
+const SECTION_IDS = SECTIONS.map((section) => section.id);
+
+function parseRoute(): Route {
+  let parts: string[];
+  try {
+    parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return { page: "create" };
+  }
+  const [head, id, section] = parts;
+  if (head === "projects") return id ? { page: "project", id, section: SECTION_IDS.includes(section as SectionId) ? (section as SectionId) : "title" } : { page: "projects" };
+  if (head === "library" || head === "likes" || head === "settings") return { page: head };
+  return { page: "create" };
+}
+
+function hashOf(route: Route): string {
+  if (route.page === "project") return `#/projects/${encodeURIComponent(route.id)}/${route.section}`;
+  return `#/${route.page}`;
+}
+
+type NavKey = "create" | "projects" | "library" | "likes";
+const NAV: { key: NavKey; label: string; icon: LucideIcon }[] = [
+  { key: "create", label: "만들기", icon: Sparkles },
+  { key: "projects", label: "프로젝트", icon: FolderOpen },
+  { key: "library", label: "라이브러리", icon: Library },
+  { key: "likes", label: "좋아요", icon: Heart },
 ];
 
+const PAGE_LABELS: Record<Route["page"], string> = { create: "만들기", projects: "프로젝트", project: "프로젝트", library: "라이브러리", likes: "좋아요", settings: "설정" };
 const RECENT_LIMIT = 6;
 
 // localStorage can throw (private window, blocked site data); the app must work without it.
@@ -52,20 +73,17 @@ function rememberedList(key: string): string[] {
   }
 }
 
-function pageFromHash(): PageId {
-  const id = window.location.hash.replace("#/", "");
-  return PAGES.some((page) => page.id === id) ? (id as PageId) : "start";
-}
-
 export default function App() {
-  const [page, setPage] = useState<PageId>(pageFromHash);
+  const [route, setRoute] = useState<Route>(parseRoute);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(() => remembered("currentProject"));
   const [recentIds, setRecentIds] = useState<string[]>(() => rememberedList("recentProjects"));
   const [detailId, setDetailId] = useState<string | null>(null);
   const [projectView, setProjectView] = useState<ProjectSettingsView | null>(null);
   const [message, setMessage] = useState("준비됨");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [jobTick, setJobTick] = useState(0);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const saved = remembered("theme");
     if (saved === "light" || saved === "dark") return saved;
@@ -77,11 +95,11 @@ export default function App() {
     remember("theme", theme);
   }, [theme]);
 
-  // A details window belongs to the page it was opened on.
-  useEffect(() => setDetailId(null), [page]);
-
   useEffect(() => {
-    const onHash = () => setPage(pageFromHash());
+    const onHash = () => {
+      setRoute(parseRoute());
+      setDetailId(null); // a details window belongs to the page it was opened on
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -96,12 +114,14 @@ export default function App() {
       },
       [reload],
     ),
+    useCallback(() => setJobTick((tick) => tick + 1), []),
   );
 
   useEffect(() => {
     api<{ projects: ProjectSummary[] }>("GET", "/api/projects")
       .then((data) => {
         setProjects(data.projects);
+        setProjectsLoaded(true);
         // Forget a remembered project that no longer exists.
         setCurrentId((id) => (id && data.projects.some((p) => p.id === id) ? id : null));
       })
@@ -118,12 +138,12 @@ export default function App() {
       .catch(() => setProjectView(null));
   }, [currentId, refreshKey]);
 
-  const go = (id: PageId) => {
-    window.location.hash = `#/${id}`;
+  const go = (next: Route) => {
+    window.location.hash = hashOf(next);
   };
 
-  /** Makes a project the one being worked on and moves it to the front of the recent list. */
-  const select = (id: string) => {
+  /** Makes a project the selected one and moves it to the front of the recent list. */
+  const select = useCallback((id: string) => {
     setCurrentId(id);
     remember("currentProject", id);
     setRecentIds((list) => {
@@ -131,13 +151,15 @@ export default function App() {
       remember("recentProjects", JSON.stringify(next));
       return next;
     });
-  };
+  }, []);
 
-  const work = (id: string) => {
-    select(id);
-    setDetailId(null);
-    go("start");
-  };
+  // Opening a project (from any link, including a pasted address) selects it.
+  const openedId = route.page === "project" ? route.id : null;
+  useEffect(() => {
+    if (openedId) select(openedId);
+  }, [openedId, select]);
+
+  const openProject = (id: string, section: SectionId = "title") => go({ page: "project", id, section });
 
   async function toggleFavorite(id: string, favorite: boolean) {
     try {
@@ -162,6 +184,7 @@ export default function App() {
 
   const setProjectField = (path: string, value: unknown) => updateProject({ set: setIn({}, path, value) });
   const resetProjectField = (path: string) => updateProject({ unset: [path] });
+  const onFavorite = (id: string, favorite: boolean) => void toggleFavorite(id, favorite);
 
   const current = projects.find((project) => project.id === currentId) ?? null;
   // Sidebar list: recently opened projects, or the most recently changed ones until something was opened.
@@ -170,8 +193,8 @@ export default function App() {
     const opened = recentIds.map((id) => byId.get(id)).filter((project): project is ProjectSummary => Boolean(project));
     return (opened.length > 0 ? opened : [...projects].sort((a, b) => b.updatedAt - a.updatedAt)).slice(0, 5);
   })();
-  const active = PAGES.find((item) => item.id === page)!;
-  const stepTargets: Record<StepTarget, PageId> = { scenario: "scenario", storyboard: "storyboard", video: "video" };
+  const activeNav: NavKey | null = route.page === "project" ? "projects" : route.page === "settings" ? null : route.page;
+  const openedProject = route.page === "project" ? projects.find((project) => project.id === route.id) : undefined;
 
   return (
     <div className="app">
@@ -186,10 +209,11 @@ export default function App() {
           </div>
         </div>
         <nav className="nav" aria-label="메뉴">
-          {PAGES.filter((item) => item.id !== "settings").map(({ id, label, icon: Icon }) => (
-            <button key={id} className="nav-item" type="button" aria-current={id === page ? "page" : undefined} onClick={() => go(id)}>
+          {NAV.map(({ key, label, icon: Icon }) => (
+            <button key={key} className="nav-item" type="button" aria-current={key === activeNav ? "page" : undefined} onClick={() => go({ page: key })}>
               <Icon size={18} />
-              {label}
+              <span className="nav-text">{label}</span>
+              {key === "create" && <Plus size={15} className="nav-plus" />}
             </button>
           ))}
           <div className="nav-divider" role="separator" />
@@ -198,16 +222,16 @@ export default function App() {
             <p className="nav-empty">아직 프로젝트가 없어요</p>
           ) : (
             recentProjects.map((project) => (
-              <button key={project.id} className="recent-row" type="button" title={project.title} aria-current={project.id === currentId ? "true" : undefined} onClick={() => work(project.id)}>
+              <button key={project.id} className="recent-row" type="button" title={project.title} aria-current={openedId === project.id ? "true" : undefined} onClick={() => openProject(project.id)}>
                 <span className="mini">{project.poster ? <img src={mediaUrl(project.id, project.poster)} alt="" loading="lazy" /> : <Film size={13} />}</span>
                 <span className="rname">{project.title}</span>
               </button>
             ))
           )}
         </nav>
-        <button className="nav-item settings" type="button" aria-current={page === "settings" ? "page" : undefined} onClick={() => go("settings")}>
+        <button className="nav-item settings" type="button" aria-current={route.page === "settings" ? "page" : undefined} onClick={() => go({ page: "settings" })}>
           <SettingsIcon size={18} />
-          설정
+          <span className="nav-text">설정</span>
         </button>
       </aside>
 
@@ -215,11 +239,15 @@ export default function App() {
         <div className="crumbs">
           <span>작업 공간</span>
           <ChevronRight size={14} />
-          <strong>{active.label}</strong>
+          <strong>{PAGE_LABELS[route.page]}</strong>
+          {route.page === "project" && openedProject && (
+            <>
+              <ChevronRight size={14} />
+              <strong className="crumb-title">{openedProject.title}</strong>
+            </>
+          )}
         </div>
-        <div className="work">
-          <WorkSteps stages={current?.stages ?? null} onGo={(target) => go(stepTargets[target])} />
-        </div>
+        <div className="work" />
         <ResourceBar connected={connected} />
         <button className="icon-btn" type="button" title="라이트/다크 전환" aria-label="라이트/다크 전환" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
           {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
@@ -227,14 +255,14 @@ export default function App() {
       </header>
 
       <main className="main">
-        {page === "start" && (
+        {route.page === "create" && (
           <StartPage
             projects={projects}
             currentId={currentId}
             view={projectView}
-            onWork={work}
-            onOpenDetail={setDetailId}
-            onFavorite={(id, favorite) => void toggleFavorite(id, favorite)}
+            onWork={(id) => openProject(id)}
+            onOpenDetail={select}
+            onFavorite={onFavorite}
             onCreated={(project) => {
               select(project.id);
               reload();
@@ -244,11 +272,26 @@ export default function App() {
             notify={setMessage}
           />
         )}
-        {page === "library" && (
-          <LibraryPage projects={projects} currentId={currentId} onWork={work} onOpenDetail={setDetailId} onFavorite={(id, favorite) => void toggleFavorite(id, favorite)} onNew={() => go("start")} />
+        {(route.page === "projects" || route.page === "project") && (
+          <ProjectsScreen
+            projects={projects}
+            projectsLoaded={projectsLoaded}
+            selectedId={route.page === "project" ? route.id : null}
+            section={route.page === "project" ? route.section : "title"}
+            view={route.page === "project" && route.id === currentId ? projectView : null}
+            jobTick={jobTick}
+            refreshKey={refreshKey}
+            onSelect={(id) => openProject(id, route.page === "project" ? route.section : "title")}
+            onSection={(section) => route.page === "project" && openProject(route.id, section)}
+            onNew={() => go({ page: "create" })}
+            onFavorite={onFavorite}
+            onChanged={reload}
+            notify={setMessage}
+          />
         )}
-        {page === "settings" && <SettingsPage notify={setMessage} onSaved={reload} />}
-        {(page === "scenario" || page === "storyboard" || page === "video") && <ComingPage title={active.label} kicker="다음 단계에서" icon={active.icon} projectTitle={current?.title ?? null} />}
+        {route.page === "library" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onNew={() => go({ page: "create" })} />}
+        {route.page === "likes" && <LikesPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} />}
+        {route.page === "settings" && <SettingsPage notify={setMessage} onSaved={reload} />}
       </main>
 
       <footer className="status">
@@ -256,7 +299,16 @@ export default function App() {
         <span>{projects.length}개 프로젝트</span>
       </footer>
 
-      {detailId && <ProjectModal id={detailId} onClose={() => setDetailId(null)} onWork={work} />}
+      {detailId && (
+        <ProjectModal
+          id={detailId}
+          onClose={() => setDetailId(null)}
+          onWork={(id) => {
+            setDetailId(null);
+            openProject(id, "videos");
+          }}
+        />
+      )}
     </div>
   );
 }

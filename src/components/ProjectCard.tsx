@@ -70,7 +70,7 @@ export default function ProjectCard({ project, isCurrent, playing, onPlay, onOpe
         <button className={project.favorite ? "act-btn on" : "act-btn"} type="button" title={project.favorite ? "즐겨찾기 해제" : "즐겨찾기"} aria-pressed={project.favorite} onClick={() => onFavorite(project.id, !project.favorite)}>
           <Heart size={15} fill={project.favorite ? "currentColor" : "none"} />
         </button>
-        <button className="act-btn" type="button" title="이 프로젝트로 작업하기" aria-label="이 프로젝트로 작업하기" onClick={() => onWork(project.id)}>
+        <button className="act-btn" type="button" title="프로젝트 열기" aria-label="프로젝트 열기" onClick={() => onWork(project.id)}>
           <ArrowRight size={15} />
         </button>
         <div ref={menuRef}>
@@ -83,7 +83,7 @@ export default function ProjectCard({ project, isCurrent, playing, onPlay, onOpe
                 자세히 보기
               </button>
               <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onWork(project.id); }}>
-                이 프로젝트로 작업하기
+                프로젝트 열기
               </button>
               <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onFavorite(project.id, !project.favorite); }}>
                 {project.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가"}
