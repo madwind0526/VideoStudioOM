@@ -58,7 +58,7 @@ function ProjectPane({ project, section, view, jobTick, refreshKey, onSection, o
     project,
     detail,
     view,
-    jobs: { current: jobs.current, history: jobs.history },
+    jobs: { current: jobs.current, history: jobs.history, pending: jobs.pending },
     onJobsChanged: () => {
       void jobs.reload();
       void reloadDetail();

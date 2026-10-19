@@ -51,6 +51,13 @@ export const DEFAULTS = {
     openmontageDir: "E:\\Claude\\OpenMontage",
     ffmpegPath: "",
   },
+  // Advanced: empty means the built-in workflow and models. A workflow file (ComfyUI API format) replaces the built-in
+  // one; model names and LoRAs then replace what that workflow loads, and the upscaler model replaces its upscaler.
+  engine: {
+    image: { workflowT2I: "", workflowI2I: "", diffusion: "", textEncoder: "", vae: "", loras: [] },
+    video: { workflowT2V: "", workflowI2V: "", workflowR2V: "", diffusion: "", textEncoder: "", vae: "", loras: [] },
+    upscale: { model: "" },
+  },
   // Empty means the default folder (see server/folders.mjs). Relative paths are relative to the app folder.
   storage: { projectsDir: "", inputDir: "", outputDir: "" },
 };
@@ -95,6 +102,22 @@ const localUrl = (label) => (value) => {
     return message;
   }
 };
+const loraList = (label) => (value) =>
+  Array.isArray(value) &&
+  value.length <= 8 &&
+  value.every(
+    (lora) =>
+      isObject(lora) &&
+      Object.keys(lora).every((key) => key === "name" || key === "strength") &&
+      typeof lora.name === "string" &&
+      lora.name.length > 0 &&
+      lora.name.length <= 300 &&
+      typeof lora.strength === "number" &&
+      lora.strength >= -4 &&
+      lora.strength <= 4,
+  )
+    ? null
+    : `${label}: 이름과 강도(-4~4)를 가진 항목 8개 이하여야 합니다.`;
 const providerChain = (label) => (value) =>
   Array.isArray(value) && value.length > 0 && new Set(value).size === value.length && value.every((p) => LLM_PROVIDERS.includes(p))
     ? null
@@ -126,6 +149,20 @@ const RULES = {
   "connections.comfyUrl": localUrl("ComfyUI 주소"),
   "connections.openmontageDir": text("OpenMontage 폴더"),
   "connections.ffmpegPath": text("ffmpeg 경로"),
+  "engine.image.workflowT2I": folder("image T2I 워크플로"),
+  "engine.image.workflowI2I": folder("image I2I 워크플로"),
+  "engine.image.diffusion": text("diffusion 모델", 300),
+  "engine.image.textEncoder": text("text encoder", 300),
+  "engine.image.vae": text("VAE", 300),
+  "engine.image.loras": loraList("image LoRA"),
+  "engine.video.workflowT2V": folder("video T2V 워크플로"),
+  "engine.video.workflowI2V": folder("video I2V 워크플로"),
+  "engine.video.workflowR2V": folder("video R2V 워크플로"),
+  "engine.video.diffusion": text("diffusion 모델", 300),
+  "engine.video.textEncoder": text("text encoder", 300),
+  "engine.video.vae": text("VAE", 300),
+  "engine.video.loras": loraList("video LoRA"),
+  "engine.upscale.model": text("업스케일 모델", 300),
   "storage.projectsDir": folder("프로젝트 폴더"),
   "storage.inputDir": folder("입력 폴더"),
   "storage.outputDir": folder("출력 폴더"),

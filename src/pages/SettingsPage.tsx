@@ -1,6 +1,7 @@
-import { Check, Film, FolderCog, Image as ImageIcon, Mic, Save, Sparkles, type LucideIcon } from "lucide-react";
+import { Check, Film, FolderCog, Image as ImageIcon, Mic, Save, SlidersHorizontal, Sparkles, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, type FolderInfo, type LlmProviderStatus, type Settings } from "../api";
+import EngineSettings, { ENGINE_PATHS } from "../components/EngineSettings";
 import SettingField from "../components/SettingField";
 import SizePicker from "../components/SizePicker";
 import { changedPaths, FIELDS, getIn, setIn } from "../fields";
@@ -265,6 +266,16 @@ export default function SettingsPage({ notify, onSaved }: Props) {
 
       <Section icon={Mic} title="오디오" subtitle="노래와 음성의 기본값입니다." {...section(AUDIO_PATHS)}>
         <div className="fields">{AUDIO_PATHS.map(renderField)}</div>
+      </Section>
+
+      <Section
+        icon={SlidersHorizontal}
+        title="고급: 워크플로 · 모델 · LoRA"
+        subtitle="비워 두면 기본 워크플로와 기본 모델을 씁니다. 워크플로 파일(ComfyUI API 형식)을 고르면 그 워크플로로 만들고, 모델·LoRA·업스케일러가 있으면 워크플로 안의 값 대신 씁니다."
+        note="필요한 노드나 모델이 ComfyUI에 없으면 만들 때 어떤 것이 없는지 알려 줍니다. '확인'으로 미리 볼 수 있어요."
+        {...section(ENGINE_PATHS)}
+      >
+        <EngineSettings get={(path) => getIn(draft, path)} set={change} errors={errors} />
       </Section>
 
       <Section icon={FolderCog} title="로컬 실행 환경" subtitle="엔진 연결과 작업 폴더 위치입니다. 비워 둔 칸은 연한 글씨의 기본값을 씁니다." note="상대 경로는 이 앱 폴더 기준입니다. 폴더를 바꿔도 기존 파일은 옮기지 않습니다." {...section(LOCAL_PATHS)}>

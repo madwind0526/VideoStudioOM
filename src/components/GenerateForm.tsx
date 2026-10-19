@@ -1,9 +1,10 @@
 import { Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { resolveSize } from "../../shared/settings.mjs";
-import { api, ApiError, type MediaFile, type ProjectSettingsView } from "../api";
+import { ApiError, type MediaFile, type ProjectSettingsView } from "../api";
+import { makeItem, startItems, stamp, type MakeItem, type MakeKind } from "../sections/mediaJobs";
 
-export type Kind = "image" | "voice" | "i2v" | "fl2v" | "s2v";
+export type Kind = MakeKind;
 
 const KINDS: Record<Kind, { label: string; hint: string }> = {
   image: { label: "이미지", hint: "Krea 2 Turbo로 장면 이미지를 만듭니다." },
@@ -22,8 +23,6 @@ interface Props {
   notify: (text: string) => void;
   onStarted: () => void;
 }
-
-const stamp = () => new Date().toISOString().replace(/\D/g, "").slice(2, 14);
 
 /** Starts a generation job for the free local tools; the result is saved in the project's assets. */
 export default function GenerateForm({ projectId, kinds, view, media, running, notify, onStarted }: Props) {
@@ -46,34 +45,11 @@ export default function GenerateForm({ projectId, kinds, view, media, running, n
   const settings = view?.effective;
   const size = settings ? resolveSize(settings) : null;
 
-  function build(): { tool: string; inputs: Record<string, unknown>; label: string } | string {
+  function build(): MakeItem | string {
     if (!settings || !size) return "설정을 불러오는 중입니다.";
-    const text = prompt.trim();
-    if (!text) return kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
     const id = stamp();
-    const video = {
-      prompt: text,
-      width: size.generate[0],
-      height: size.generate[1],
-      duration_seconds: Number(duration),
-      // Only the RTX pass is wired to the tool; other settings mean "no enlargement" for now.
-      upscale: settings.video.upscale === "rtx-2pass" && size.final[0] > size.generate[0],
-      upscale_scale: size.final[0] / size.generate[0],
-      output_path: `assets/video/clip-${id}.mp4`,
-    };
-    if (kind !== "image" && kind !== "voice" && !(Number(duration) >= 2 && Number(duration) <= 15)) return "길이는 2~15초로 입력하세요.";
-    switch (kind) {
-      case "image":
-        return { tool: "comfyui_krea_image", label: text, inputs: { prompt: text, width: size.image[0], height: size.image[1], output_path: `assets/images/gen-${id}.png` } };
-      case "voice":
-        return { tool: "qwen3_tts", label: text, inputs: { text, voice: settings.audio.voice.name, language: settings.audio.voice.language, output_path: `assets/audio/tts-${id}.wav` } };
-      case "i2v":
-        return first ? { tool: "h3_local_video", label: text, inputs: { ...video, reference_image_path: first } } : "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
-      case "fl2v":
-        return first && last && first !== last ? { tool: "h3_local_video", label: text, inputs: { ...video, reference_image_path: first, last_frame_path: last } } : "서로 다른 첫 이미지와 마지막 이미지를 고르세요.";
-      case "s2v":
-        return first && audio ? { tool: "h3_local_video", label: text, inputs: { ...video, reference_image_path: first, audio_path: audio } } : "얼굴 이미지와 음성을 고르세요. 음성은 오디오 화면에서 만들 수 있습니다.";
-    }
+    const output = kind === "image" ? `assets/images/gen-${id}.png` : kind === "voice" ? `assets/audio/tts-${id}.wav` : `assets/video/clip-${id}.mp4`;
+    return makeItem(settings, { kind, prompt, first: first || undefined, last: kind === "fl2v" ? last || undefined : undefined, audio: kind === "s2v" ? audio || undefined : undefined, duration: Number(duration) }, output);
   }
 
   async function submit() {
@@ -82,7 +58,7 @@ export default function GenerateForm({ projectId, kinds, view, media, running, n
     if (typeof request === "string") return setError(request);
     setBusy(true);
     try {
-      await api("POST", "/api/jobs", { project: projectId, tool: request.tool, label: request.label, inputs: request.inputs });
+      await startItems(projectId, [request]);
       notify("작업을 시작했습니다.");
       setPrompt("");
       onStarted();

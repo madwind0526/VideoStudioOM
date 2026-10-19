@@ -231,3 +231,45 @@ test("API: whitelist, project-relative paths, full run, GPU status", async () =>
     await f.cleanup();
   }
 });
+
+test("API: a batch runs in order, saves how each file was made, and a file can be deleted", async () => {
+  const f = await fixture();
+  const projectsRoot = path.join(f.base, "projects");
+  const { port, token, stop } = await startServer({ port: 0, dataDir: f.dataDir, projectsRoot, bridge: f.config });
+  const call = async (method, url, body) => {
+    const res = await fetch(`http://127.0.0.1:${port}${url}`, {
+      method,
+      headers: { "content-type": "application/json", [TOKEN_HEADER]: token },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const idle = async () => {
+    for (let i = 0; i < 200; i += 1) {
+      const { body } = await call("GET", "/api/jobs");
+      if (!body.current && body.pending === 0) return body;
+      await sleep(50);
+    }
+    throw new Error("batch did not finish");
+  };
+  try {
+    const items = ["a", "b", "c"].map((name) => ({ tool: "comfyui_krea_image", label: name, inputs: { output_path: `assets/images/${name}.png` }, record: { kind: "image", prompt: `picture ${name}` } }));
+    const started = await call("POST", "/api/jobs", { project: "demo", items });
+    assert.equal(started.status, 202);
+    assert.equal(started.body.queued, 2);
+    assert.deepEqual(started.body.job.meta.batch, { id: started.body.job.meta.batch.id, index: 1, total: 3 });
+    await idle();
+
+    const detail = (await call("GET", "/api/projects/demo")).body.project;
+    assert.deepEqual(detail.media.images.map((file) => file.path), ["assets/images/a.png", "assets/images/b.png", "assets/images/c.png"]);
+    assert.equal(detail.media.images[1].record.prompt, "picture b");
+
+    assert.equal((await call("DELETE", "/api/projects/demo/media?path=assets%2Fimages%2Fb.png")).status, 200);
+    assert.equal((await call("GET", "/api/projects/demo")).body.project.media.images.length, 2);
+    assert.equal((await call("DELETE", "/api/projects/demo/media?path=..%2Fproject.json")).status >= 400, true);
+    assert.equal((await call("POST", "/api/jobs", { project: "demo", items: [] })).status, 400);
+  } finally {
+    await stop();
+    await f.cleanup();
+  }
+});

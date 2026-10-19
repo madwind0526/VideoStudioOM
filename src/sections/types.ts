@@ -6,7 +6,7 @@ export interface SectionProps {
   project: ProjectSummary;
   detail: ProjectDetail | null;
   view: ProjectSettingsView | null;
-  jobs: { current: Job | null; history: Job[] };
+  jobs: { current: Job | null; history: Job[]; pending: number };
   /** Reloads the job list and the project's media after a job started or changed. */
   onJobsChanged: () => void;
   /** Reloads the project list (title, stages) after an edit. */

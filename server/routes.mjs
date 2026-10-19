@@ -4,6 +4,7 @@ import { pipeline } from "node:stream/promises";
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
 import { concatMedia } from "./concat.mjs";
+import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
@@ -126,17 +127,18 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       const body = requireObject(await readJsonBody(req));
       const dir = await projects.dir(body.project);
       const items = Array.isArray(body.items) ? body.items : [body];
+      const { value: effective } = resolveSettings(await settings.get(), await projects.getSettings(body.project));
       if (items.length === 0 || items.length > 60) throw new HttpError(400, "한 번에 1~60개까지 만들 수 있습니다.");
       const prepared = [];
       for (const raw of items) {
         const item = requireObject(raw);
         if (!ALLOWED_TOOLS.has(item.tool)) throw new HttpError(400, "지원하지 않는 도구입니다.");
-        const inputs = await prepareInputs(dir, item.inputs);
+        const prepared_ = applyEngine(effective, { tool: item.tool, inputs: await prepareInputs(dir, item.inputs) });
         // `record` is how the file was made (prompt, scene, ...); it is saved so the file can be made again.
         // `output` (project-relative) lets the screen find the result; `label` is only for the job list.
         const record = item.record === undefined ? undefined : requireObject(item.record);
         const meta = { project: body.project, output: item.inputs.output_path, label: typeof item.label === "string" ? item.label.slice(0, 40) : undefined, record };
-        prepared.push({ tool: item.tool, inputs, allowRoot: dir, meta });
+        prepared.push({ tool: prepared_.tool, inputs: prepared_.inputs, allowRoot: [dir, ...prepared_.allowRoots], meta });
       }
       if (Array.isArray(body.items)) sendJson(res, 202, await jobs.startBatch(prepared));
       else sendJson(res, 202, { job: await jobs.start(prepared[0]) });
@@ -151,6 +153,21 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
+  if (pathname === "/api/fs") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? ""));
+    return true;
+  }
+  if (pathname === "/api/comfy/models") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, await comfyModels((await settings.get()).connections.comfyUrl));
+    return true;
+  }
+  if (pathname === "/api/workflows/check") {
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, await checkWorkflow(requireObject(await readJsonBody(req)).path, (await settings.get()).connections.comfyUrl));
+    return true;
+  }
   if (pathname === "/api/settings") {
     if (method === "GET") sendJson(res, 200, { settings: await settings.get() });
     else if (method === "PUT") sendJson(res, 200, { settings: await settings.update(requireObject(await readJsonBody(req))) });

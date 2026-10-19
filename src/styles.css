@@ -917,7 +917,8 @@ p {
   gap: 10px;
 }
 
-.thumbs button {
+.thumbs > button,
+.thumbs .media-item > button {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -1687,13 +1688,15 @@ textarea.big {
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
 
-.thumbs.big button {
+.thumbs.big > button,
+.thumbs.big .media-item > button {
   display: flex;
   flex-direction: column;
   text-align: left;
 }
 
-.thumbs.big span {
+.thumbs.big > button > span,
+.thumbs.big .media-item > button > span {
   padding: 6px 8px;
   overflow: hidden;
   color: var(--muted-fg);
@@ -1841,4 +1844,109 @@ textarea.big {
   flex: 1;
   align-content: center;
   padding: 40px;
+}
+
+/* ---------- advanced engine settings ---------- */
+
+.sub-head {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.fs-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.fs-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fs-list button:hover {
+  background: var(--nav-active);
+}
+
+/* ---------- media items: section head, re-make/delete icons ---------- */
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.media-item {
+  position: relative;
+}
+
+.item-tools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+}
+
+.item-tools .icon-btn {
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+.item-pop {
+  position: absolute;
+  top: 40px;
+  right: 6px;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  width: min(260px, calc(100% - 12px));
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+.item-pop p,
+.item-pop label {
+  margin: 0;
+  font-size: 12px;
+}
+
+.item-pop textarea {
+  width: 100%;
+}
+
+.audio-row.media-item .item-tools,
+.videos .media-item .item-tools {
+  top: 4px;
+}
+
+.videos .media-item .item-tools {
+  top: 28px;
+}
+
+.item-pop .btn {
+  white-space: nowrap;
 }

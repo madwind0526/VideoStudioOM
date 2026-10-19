@@ -107,7 +107,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
       bridgePath: config.bridgePath,
       omDir: config.omDir,
       timeoutMs: config.timeoutMs,
-      args: ["--lock-file", config.lockFile, "--allow-root", allowRoot, "run", tool],
+      args: ["--lock-file", config.lockFile, ...[allowRoot].flat().flatMap((root) => ["--allow-root", root]), "run", tool],
       stdin: JSON.stringify(inputs),
       onSpawn: (child) => (currentChild = child),
     }).then(async (result) => {

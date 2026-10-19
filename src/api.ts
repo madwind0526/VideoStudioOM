@@ -30,6 +30,9 @@ export interface SystemStats {
 export interface MediaFile {
   path: string;
   size: number;
+  mtimeMs: number;
+  /** How the file was made (prompt, source files); null for files not made by this app. */
+  record: Record<string, unknown> | null;
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -61,7 +64,7 @@ export interface Job {
   error?: string | null;
   code?: string | null;
   durationSeconds?: number | null;
-  meta: { project?: string; output?: string; label?: string };
+  meta: { project?: string; output?: string; label?: string; batch?: { id: string; index: number; total: number } };
 }
 
 export interface ProjectSettingsView {
@@ -108,4 +111,6 @@ export async function api<T>(method: string, url: string, body?: unknown): Promi
   return data as T;
 }
 
-export const mediaUrl = (id: string, rel: string) => `/api/projects/${encodeURIComponent(id)}/media?path=${encodeURIComponent(rel)}`;
+/** `version` (the file's modified time) makes the browser load a file again after it was made over. */
+export const mediaUrl = (id: string, rel: string, version?: number) =>
+  `/api/projects/${encodeURIComponent(id)}/media?path=${encodeURIComponent(rel)}${version ? `&v=${Math.round(version)}` : ""}`;
