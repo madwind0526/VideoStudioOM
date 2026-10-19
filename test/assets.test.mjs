@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { concatMedia } from "../server/concat.mjs";
+import { concatMedia, mixAudio } from "../server/concat.mjs";
 import { createProjectStore } from "../server/projects.mjs";
 
 test("records how a file was made, lists it, and deletes file with record", async () => {
@@ -38,6 +38,21 @@ test("concat joins two tiny clips into one longer clip", async () => {
     await concatMedia({ ffmpegPath: "", kind: "video", inputs: clips, output });
     const seconds = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", output]).toString());
     assert.ok(seconds > 1.8 && seconds < 2.3, `duration ${seconds}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("mix places every piece at its own start second", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-mix-"));
+  try {
+    const tone = path.join(root, "t.wav");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", tone]);
+    const output = path.join(root, "out", "mix.wav");
+    await mixAudio({ ffmpegPath: "", pieces: [{ file: tone, startSeconds: 0 }, { file: tone, startSeconds: 2 }], output });
+    const seconds = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", output]).toString());
+    assert.ok(seconds > 2.9 && seconds < 3.2, `duration ${seconds}`);
+    await assert.rejects(mixAudio({ ffmpegPath: "", pieces: [], output }), { status: 400 });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

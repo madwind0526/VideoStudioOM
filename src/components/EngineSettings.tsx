@@ -1,6 +1,7 @@
-import { ArrowUp, Folder, FileJson, FolderOpen, Plus, Trash2, X } from "lucide-react";
+import { FolderOpen, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
+import FileNavigator from "./FileNavigator";
 
 export const ENGINE_PATHS = [
   "engine.image.workflowT2I",
@@ -38,70 +39,10 @@ interface Check {
   videoInputs?: number;
   audioInputs?: number;
 }
-interface Listing {
-  dir: string;
-  parent: string | null;
-  entries: { name: string; type: "dir" | "file" }[];
-}
-
 interface Props {
   get: (path: string) => unknown;
   set: (path: string, value: unknown) => void;
   errors: Record<string, string>;
-}
-
-/** The built-in file browser: folders and .json files of this PC. */
-function WorkflowPicker({ start, onPick, onClose }: { start: string; onPick: (file: string) => void; onClose: () => void }) {
-  const [listing, setListing] = useState<Listing | null>(null);
-  const [error, setError] = useState("");
-
-  const open = (dir: string) =>
-    api<Listing>("GET", `/api/fs?dir=${encodeURIComponent(dir)}`)
-      .then((data) => {
-        setListing(data);
-        setError("");
-      })
-      .catch((e) => setError(e instanceof ApiError ? e.message : "폴더를 열지 못했습니다."));
-
-  useEffect(() => {
-    // Start in the folder of the current workflow, or at the drive list.
-    void open(start ? start.replace(/[\\/][^\\/]*$/, "") : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const join = (dir: string, name: string) => (dir ? `${dir.replace(/[\\/]$/, "")}\\${name}` : name);
-
-  return (
-    <div className="backdrop" role="dialog" aria-modal="true" aria-label="워크플로 선택">
-      <div className="modal" style={{ width: "min(640px, 100%)" }}>
-        <div className="modal-head">
-          <h2>워크플로 선택</h2>
-          <button className="icon-btn" type="button" aria-label="닫기" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        <div className="modal-body">
-          <div className="row" style={{ marginBottom: 10, gap: 8 }}>
-            <button className="icon-btn" type="button" aria-label="위 폴더" disabled={!listing || listing.parent === null} onClick={() => listing && void open(listing.parent ?? "")}>
-              <ArrowUp size={16} />
-            </button>
-            <span className="muted" style={{ overflowWrap: "anywhere" }}>{listing?.dir || "내 컴퓨터"}</span>
-          </div>
-          {error && <p className="error">{error}</p>}
-          <ul className="fs-list">
-            {listing?.entries.map((entry) => (
-              <li key={entry.name}>
-                <button type="button" onClick={() => (entry.type === "dir" ? void open(join(listing.dir, entry.name)) : onPick(join(listing.dir, entry.name)))}>
-                  {entry.type === "dir" ? <Folder size={16} /> : <FileJson size={16} />} {entry.name}
-                </button>
-              </li>
-            ))}
-            {listing && listing.entries.length === 0 && <li className="muted">이 폴더에는 폴더나 .json 파일이 없습니다.</li>}
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /** Advanced engine options: workflow files, model names, LoRAs and the upscaler. Empty means the built-in one. */
@@ -217,7 +158,9 @@ export default function EngineSettings({ get, set, errors }: Props) {
       <h3 className="sub-head">업스케일</h3>
       <div className="fields">{modelRow("engine.upscale.model", "업스케일 모델", models?.upscale)}</div>
       {picking && (
-        <WorkflowPicker
+        <FileNavigator
+          title="워크플로 선택"
+          accept={[".json"]}
           start={text(picking)}
           onClose={() => setPicking(null)}
           onPick={(file) => {

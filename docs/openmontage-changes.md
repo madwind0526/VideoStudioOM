@@ -9,6 +9,7 @@
 | 2026-10-19 | 57c1382 | `tools/_comfyui/local_stack.py`, `tools/graphics/comfyui_krea_image.py`, `tools/video/h3_local_video.py`, `tools/audio/qwen3_tts.py`, `tools/audio/songyue_music.py` | 무료 로컬 도구(Krea, H3, Qwen3-TTS, SongYUE2) 추가(기존 작업, 새 파일) | 중 |
 | 2026-10-20 | 768589b | `tools/video/h3_local_video.py` | FL2V(`last_frame_path`), 오디오 고정 S2V(Sound2Video, 립싱크)(`audio_path`, `mux_audio`), 입력 프레임 비율 보정(`fit_images`) | 중(+67/-9줄, 기존 파일 한 곳) |
 | 2026-10-20 | 2c1f93c | `tools/_comfyui/workflow_patch.py`, `tools/video/comfyui_workflow.py` (새 파일) | 사용자가 고른 ComfyUI API 형식 워크플로를 그대로 실행: 프롬프트/크기/시드/입력 파일을 노드 종류로 찾아 채우고, 모델 이름·LoRA·업스케일 모델을 덮어쓴다. 없는 노드/모델은 이름을 알려 주며 중단 | 중(새 파일 약 330줄) |
+| 2026-10-20 | 113638b | `tools/audio/songyue_sfx.py` (새 파일), `tools/_comfyui/workflow_patch.py`, `tools/graphics/comfyui_krea_image.py`, `tools/video/h3_local_video.py`, `tools/video/h3_reference_video.py` | 효과음 도구(SongYUE2 Stable Audio SFX), 기본 그래프에도 모델·LoRA 선택(`overrides`)을 적용, H3 형식 프롬프트에는 부정 접미사를 붙이지 않음 | 소(기존 파일은 각 2~4줄) |
 | 2026-10-20 | 80dc980 | `tools/video/h3_reference_video.py` (새 파일) | R2V와 참조 영상 수정(v2v): 코어 노드 `MiniMaxH3ReferenceToVideo`에 참조 이미지/영상/오디오를 넣는다 | 중(새 파일 약 230줄, 기존 파일은 그대로) |
 
 `backlot/__init__.py`는 작업 트리에 줄바꿈(CRLF)만 다른 상태여서 커밋하지 않았다.

@@ -1,6 +1,7 @@
 import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
+import { AUDIO_KINDS, AUDIO_KINDS_FILE, audioKindOf } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 // Measured with Qwen3-TTS (voice Sohee): 33 characters took 5.04 s, about 6.5 characters per second.
@@ -36,7 +37,7 @@ function newPart(parts: ScriptPart[]): ScriptPart {
 
 const longest = (parts: ScriptPart[]) => parts.reduce((max, part) => (Number.isFinite(part.end_seconds) ? Math.max(max, part.end_seconds) : max), 0);
 
-function check(parts: ScriptPart[]): { problems: string[]; warnings: string[] } {
+function check(parts: ScriptPart[], kinds: Record<string, string> | null): { problems: string[]; warnings: string[] } {
   const problems: string[] = [];
   const warnings: string[] = [];
   parts.forEach((part, index) => {
@@ -45,12 +46,19 @@ function check(parts: ScriptPart[]): { problems: string[]; warnings: string[] } 
     else if (parts.findIndex((other) => other.id === part.id) !== index) problems.push(`${name}: 이름(id) "${part.id}"이 겹칩니다.`);
     if (!Number.isFinite(part.start_seconds) || !Number.isFinite(part.end_seconds)) problems.push(`${name}: 시작과 끝 시간을 숫자로 입력하세요.`);
     else if (part.end_seconds <= part.start_seconds) problems.push(`${name}: 끝이 시작보다 커야 합니다.`);
-    else if (part.text.length / KOREAN_CHARS_PER_SECOND > (part.end_seconds - part.start_seconds) * 1.15) {
+    else if (audioKindOf(kinds, part.id) === "dialogue" && part.text.length / KOREAN_CHARS_PER_SECOND > (part.end_seconds - part.start_seconds) * 1.15) {
       warnings.push(`${name}: 대사가 구간보다 깁니다. 읽는 데 약 ${(part.text.length / KOREAN_CHARS_PER_SECOND).toFixed(1)}초가 걸려요.`);
     }
   });
   return { problems, warnings };
 }
+
+const TEXT_HINTS: Record<string, string> = {
+  dialogue: "이 구간에서 읽을 대사를 적어 주세요.",
+  sfx: "효과음을 영어로 설명하세요. 예: heavy wooden door creaking open",
+  instrumental: "연주곡의 장르, 악기, 분위기를 적어 주세요. 예: cinematic ambient, slow, piano",
+  vocal: "부를 가사를 적어 주세요.",
+};
 
 const num = (value: number) => (Number.isFinite(value) ? value : "");
 
@@ -59,14 +67,20 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
   const file = useJsonFile<Script>(project.id, "artifacts/script.json", notify);
   const script = file.data;
   const parts = script?.sections ?? [];
-  const { problems, warnings } = check(parts);
+  // What each section sounds like lives next to the script: script.json follows OpenMontage's fixed schema.
+  const kinds = useJsonFile<Record<string, string>>(project.id, AUDIO_KINDS_FILE, notify);
+  const { problems, warnings } = check(parts, kinds.data);
+  const setKind = (id: string, kind: string) => kinds.setData({ ...(kinds.data ?? {}), [id]: kind });
+  const dirty = file.dirty || kinds.dirty;
 
   // The total length always follows the last end time, so the file stays consistent.
   const setParts = (next: ScriptPart[]) => script && file.setData({ ...script, sections: next, total_duration_seconds: longest(next) });
   const update = (index: number, patch: Partial<ScriptPart>) => setParts(parts.map((part, i) => (i === index ? { ...part, ...patch } : part)));
 
   async function save() {
-    if (await file.save()) onChanged();
+    const saved = file.dirty ? await file.save() : true;
+    if (saved && kinds.dirty) await kinds.save();
+    if (saved) onChanged();
   }
 
   return (
@@ -81,16 +95,16 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
             <button className="btn" type="button" onClick={() => setParts([...parts, newPart(parts)])}>
               <Plus size={15} /> 구간 추가
             </button>
-            <button className="btn" type="button" disabled={!file.dirty} onClick={file.revert}>
+            <button className="btn" type="button" disabled={!dirty} onClick={() => { file.revert(); kinds.revert(); }}>
               <RotateCcw size={15} /> 되돌리기
             </button>
-            <button className="btn primary" type="button" disabled={!file.dirty || problems.length > 0 || file.saving} onClick={() => void save()}>
+            <button className="btn primary" type="button" disabled={!dirty || problems.length > 0 || file.saving} onClick={() => void save()}>
               <Save size={15} /> 저장
             </button>
           </div>
         )}
       </div>
-      <p className="muted section-note">시간대별로 읽을 대사입니다. 한국어는 1초에 약 6~7글자를 읽어서, 구간보다 긴 대사는 알려 드려요. 자동으로 만들어 주는 기능은 다음 단계에서 추가됩니다.</p>
+      <p className="muted section-note">구간마다 소리의 종류를 고르세요. 대화는 TTS가 읽고, 효과음·연주곡·보컬은 SongYUE2가 만듭니다. 대화는 한국어 기준 1초에 약 6~7글자를 읽어서, 구간보다 긴 대사는 알려 드려요.</p>
 
       {!file.ready ? (
         <p className="muted">불러오는 중...</p>
@@ -141,14 +155,32 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
                       <span>끝(초)</span>
                       <input type="number" min={0} step={0.5} value={num(part.end_seconds)} onChange={(event) => update(index, { end_seconds: event.target.value === "" ? NaN : Number(event.target.value) })} />
                     </label>
-                    <span className="muted" style={{ fontSize: 11 }}>
-                      {part.text.length}자 · 약 {(part.text.length / KOREAN_CHARS_PER_SECOND).toFixed(1)}초
-                    </span>
+                    <label>
+                      <span>소리 종류</span>
+                      <select value={audioKindOf(kinds.data, part.id)} onChange={(event) => setKind(part.id, event.target.value)}>
+                        {AUDIO_KINDS.map((kind) => (
+                          <option key={kind.id} value={kind.id}>
+                            {kind.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {audioKindOf(kinds.data, part.id) === "dialogue" && (
+                      <span className="muted" style={{ fontSize: 11 }}>
+                        {part.text.length}자 · 약 {(part.text.length / KOREAN_CHARS_PER_SECOND).toFixed(1)}초
+                      </span>
+                    )}
                     <button className="icon-btn danger" type="button" title="구간 지우기" aria-label={`${index + 1}번 구간 지우기`} onClick={() => setParts(parts.filter((_, i) => i !== index))}>
                       <Trash2 size={15} />
                     </button>
                   </div>
-                  <textarea rows={3} value={part.text} placeholder="이 구간에서 읽을 대사를 적어 주세요." onChange={(event) => update(index, { text: event.target.value })} />
+                  <textarea rows={3} value={part.text} placeholder={TEXT_HINTS[audioKindOf(kinds.data, part.id)]} onChange={(event) => update(index, { text: event.target.value })} />
+                  {audioKindOf(kinds.data, part.id) === "vocal" && (
+                    <label>
+                      <span>음악 스타일 (위 칸에는 가사를 적으세요)</span>
+                      <input type="text" value={String(part.speaker_directions ?? "")} maxLength={300} placeholder="예: korean ballad, warm female vocal, piano" onChange={(event) => update(index, { speaker_directions: event.target.value || undefined })} />
+                    </label>
+                  )}
                 </div>
               </article>
             ))}

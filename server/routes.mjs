@@ -3,8 +3,9 @@ import { pipeline } from "node:stream/promises";
 
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
-import { concatMedia } from "./concat.mjs";
+import { concatMedia, mixAudio } from "./concat.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
+import { askWith, makePrompt } from "./prompt-maker.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
@@ -58,9 +59,12 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       audio: { extensions: /\.(wav|mp3|flac|ogg)$/i, output: "assets/audio/narration.wav" },
       video: { extensions: /\.(mp4|webm)$/i, output: "renders/final.mp4" },
     };
-    const kind = kinds[body.kind];
-    if (!kind) throw new HttpError(400, "종류는 audio 또는 video여야 합니다.");
-    const names = body.inputs;
+    const kind = kinds[body.kind === "mix" ? "audio" : body.kind];
+    if (!kind) throw new HttpError(400, "종류는 audio, mix, video 중 하나여야 합니다.");
+    // "mix": the pieces are [{ path, start }] placed at their start second instead of one after another.
+    const list = Array.isArray(body.inputs) ? body.inputs : [];
+    const starts = body.kind === "mix" ? list.map((item) => Number(item?.start) || 0) : [];
+    const names = body.kind === "mix" ? list.map((item) => item?.path) : list;
     if (!Array.isArray(names) || names.length === 0 || names.length > 60 || names.some((name) => typeof name !== "string")) {
       throw new HttpError(400, "이어 붙일 파일 목록이 올바르지 않습니다.");
     }
@@ -74,11 +78,14 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     if (joining.has(id)) throw new HttpError(409, "이미 이어 붙이는 중입니다.");
     joining.add(id);
     try {
-      await concatMedia({ ffmpegPath: (await settings.get()).connections.ffmpegPath, kind: body.kind, inputs, output: await resolveInside(dir, kind.output) });
+      const ffmpegPath = (await settings.get()).connections.ffmpegPath;
+      const output = await resolveInside(dir, kind.output);
+      if (body.kind === "mix") await mixAudio({ ffmpegPath, pieces: inputs.map((file, i) => ({ file, startSeconds: starts[i] })), output });
+      else await concatMedia({ ffmpegPath, kind: body.kind, inputs, output });
     } finally {
       joining.delete(id);
     }
-    if (body.kind === "audio") await projects.setAssetRecord(id, kind.output, { kind: "concat", inputs: names });
+    if (body.kind !== "video") await projects.setAssetRecord(id, kind.output, { kind: body.kind === "mix" ? "mix" : "concat", inputs: names });
     return { output: kind.output, count: inputs.length };
   }
 
@@ -153,9 +160,21 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
+  if (pathname === "/api/prompt") {
+    if (method !== "POST") methodNotAllowed();
+    const body = requireObject(await readJsonBody(req));
+    const detail = await projects.get(body.project);
+    const recipeOf = (rel) => detail.media.images.find((file) => file.path === rel)?.record?.prompt;
+    const prompt = await makePrompt(
+      { target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined },
+      askWith((await settings.get()).llm),
+    );
+    sendJson(res, 200, { prompt });
+    return true;
+  }
   if (pathname === "/api/fs") {
     if (method !== "GET") methodNotAllowed();
-    sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? ""));
+    sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? "", { projectsDir: folderPaths(await settings.get(), appRoot).projects }));
     return true;
   }
   if (pathname === "/api/comfy/models") {

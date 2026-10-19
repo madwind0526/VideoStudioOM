@@ -5,7 +5,7 @@ import GenerateForm from "../components/GenerateForm";
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
-import { baseName, deleteMedia, joinMedia, makeItem, recipeOf, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
+import { AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -22,6 +22,9 @@ interface Scene {
 interface Part {
   id: string;
   text?: string;
+  start_seconds?: number;
+  end_seconds?: number;
+  speaker_directions?: string;
 }
 
 /** Re-make and delete icons for one generated file (top right of its tile or row). */
@@ -30,13 +33,14 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
   const recipe = recipeOf(file.record);
   const [mode, setMode] = useState<"edit" | "delete" | null>(null);
   const [text, setText] = useState("");
+  const [lyrics, setLyrics] = useState("");
   const running = jobs.current !== null;
   // Files made elsewhere have no recipe; images and speech can still be made again from a new description.
   const base: Recipe | null = recipe ?? (kind === "image" || kind === "voice" ? { kind, prompt: "" } : null);
 
   async function again() {
     if (!view || !base) return;
-    const item = makeItem(view.effective, { ...base, prompt: text }, file.path);
+    const item = makeItem(view.effective, { ...base, prompt: text, lyrics: base.kind === "vocal" ? lyrics : base.lyrics }, file.path);
     if (typeof item === "string") return notify(item);
     try {
       await startItems(project.id, [item]);
@@ -69,6 +73,7 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
         disabled={!base || running}
         onClick={() => {
           setText(recipe?.prompt ?? "");
+          setLyrics(recipe?.lyrics ?? "");
           setMode(mode === "edit" ? null : "edit");
         }}
       >
@@ -93,8 +98,14 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
       )}
       {mode === "edit" && base && (
         <div className="item-pop">
-          <label>{base.kind === "voice" ? "대사" : base.kind === "image" ? "이미지 설명" : "움직임 설명"}</label>
-          <textarea rows={3} value={text} maxLength={1000} onChange={(event) => setText(event.target.value)} />
+          <label>{{ voice: "대사", image: "이미지 설명", sfx: "소리 설명 (영어)", instrumental: "음악 스타일", vocal: "음악 스타일" }[base.kind as string] ?? "움직임 설명"}</label>
+          <textarea rows={4} value={text} maxLength={7000} onChange={(event) => setText(event.target.value)} />
+          {base.kind === "vocal" && (
+            <>
+              <label>가사</label>
+              <textarea rows={3} value={lyrics} maxLength={4000} onChange={(event) => setLyrics(event.target.value)} />
+            </>
+          )}
           <div className="row" style={{ gap: 8 }}>
             <button className="btn" type="button" onClick={() => setMode(null)}>
               취소
@@ -117,20 +128,38 @@ interface HeaderProps {
   onCreating: (value: boolean) => void;
   /** Items for "전체 만들기" (only what is still missing) and how that is described. */
   all: { items: MakeItem[]; note: string } | null;
-  join?: { count: number; busy: boolean; label: string; onJoin: () => void };
+  /** Items the prompt maker should rewrite first (images, clips); sections that do not need it leave this off. */
+  refine?: boolean;
+  join?: { count: number; busy: boolean; label: string; name?: string; onJoin: () => void };
 }
 
-function Header({ props, title, count, creating, onCreating, all, join }: HeaderProps) {
-  const { jobs, onJobsChanged, notify, project } = props;
-  const running = jobs.current !== null;
+function Header({ props, title, count, creating, onCreating, all, refine, join }: HeaderProps) {
+  const { jobs, onJobsChanged, notify, project, view } = props;
+  const [preparing, setPreparing] = useState<string | null>(null);
+  const running = jobs.current !== null || preparing !== null;
   async function makeAll() {
-    if (!all || all.items.length === 0) return;
+    if (!all || all.items.length === 0 || !view) return;
     try {
-      await startItems(project.id, all.items);
-      notify(`${all.items.length}개를 차례로 만듭니다.`);
+      // The prompt maker (LLM) writes each prompt first; one that fails keeps the original description.
+      const items: MakeItem[] = [];
+      let failed = 0;
+      for (const [index, item] of all.items.entries()) {
+        setPreparing(`${index + 1}/${all.items.length}`);
+        try {
+          items.push(refine === false ? item : await refineItem(project.id, view.effective, item));
+        } catch {
+          failed += 1;
+          items.push(item);
+        }
+      }
+      setPreparing(null);
+      await startItems(project.id, items);
+      notify(`${items.length}개를 차례로 만듭니다.${failed ? ` (프롬프트를 못 만든 ${failed}개는 입력한 설명 그대로 만듭니다.)` : ""}`);
       onJobsChanged();
     } catch (e) {
       notify(message(e, "작업을 시작하지 못했습니다."));
+    } finally {
+      setPreparing(null);
     }
   }
   return (
@@ -142,12 +171,12 @@ function Header({ props, title, count, creating, onCreating, all, join }: Header
       <div className="row" style={{ gap: 8 }}>
         {all && (
           <button className="btn" type="button" disabled={running || all.items.length === 0} title={all.note} onClick={() => void makeAll()}>
-            <Layers size={15} /> 전체 만들기{all.items.length > 0 ? ` (${all.items.length})` : ""}
+            <Layers size={15} /> {preparing ? `프롬프트 만드는 중 ${preparing}` : `전체 만들기${all.items.length > 0 ? ` (${all.items.length})` : ""}`}
           </button>
         )}
         {join && (
           <button className="btn" type="button" disabled={join.busy || join.count < 1} title={join.label} onClick={join.onJoin}>
-            <Combine size={15} /> {join.busy ? "이어 붙이는 중..." : `이어 붙이기 (${join.count})`}
+            <Combine size={15} /> {join.busy ? "합치는 중..." : `${join.name ?? "이어 붙이기"} (${join.count})`}
           </button>
         )}
         <button className="btn primary" type="button" aria-pressed={creating} onClick={() => onCreating(!creating)}>
@@ -214,30 +243,43 @@ export function ImagesSection(props: SectionProps) {
   );
 }
 
-/** The project's audio: one speech file per script section, music files, and the joined narration. */
+/** The project's audio: one file per script section (dialogue by TTS; effects, music and vocals by SongYUE2), mixed on the script's timeline. */
 export function AudioSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const script = useJsonFile<{ sections?: Part[] }>(props.project.id, "artifacts/script.json", props.notify);
+  const kinds = useJsonFile<Record<string, string>>(props.project.id, AUDIO_KINDS_FILE, props.notify);
   const audio = props.detail?.media.audio ?? [];
   const settings = props.view?.effective;
   const parts = audio.filter((file) => file.path.startsWith("assets/audio/") && file.path !== "assets/audio/narration.wav");
   const selection = useSelection(parts.map((file) => file.path));
+  const sections = script.data?.sections ?? [];
+  const fileOf = (part: Part) => `assets/audio/${safeName(part.id)}.wav`;
 
-  const missing = (script.data?.sections ?? []).filter((part) => part.text?.trim() && !audio.some((file) => file.path === `assets/audio/${safeName(part.id)}.wav`));
-  const items = settings ? missing.flatMap((part) => {
-    const item = makeItem(settings, { kind: "voice", prompt: part.text ?? "", source: part.id }, `assets/audio/${safeName(part.id)}.wav`);
+  // What each missing section needs: dialogue is read, the rest is made by SongYUE2.
+  const items = settings ? sections.flatMap((part) => {
+    const text = part.text?.trim();
+    if (!text || audio.some((file) => file.path === fileOf(part))) return [];
+    const kind = audioKindOf(kinds.data, part.id);
+    const seconds = (part.end_seconds ?? 0) - (part.start_seconds ?? 0);
+    const recipe: Recipe =
+      kind === "dialogue" ? { kind: "voice", prompt: text, source: part.id }
+      : kind === "sfx" ? { kind: "sfx", prompt: text, duration: seconds > 0 ? Math.round(seconds * 2) / 2 : 5, source: part.id }
+      : kind === "instrumental" ? { kind: "instrumental", prompt: text, source: part.id }
+      : { kind: "vocal", prompt: part.speaker_directions?.trim() || "pop vocal song", lyrics: text, source: part.id };
+    const item = makeItem(settings, recipe, fileOf(part));
     return typeof item === "string" ? [] : [item];
   }) : [];
 
   async function join() {
     setJoining(true);
     try {
-      await joinMedia(props.project.id, "audio", selection.picked);
-      props.notify("오디오를 이어 붙였습니다. (narration.wav)");
+      const startOf = (path: string) => sections.find((part) => fileOf(part) === path)?.start_seconds ?? 0;
+      await mixMedia(props.project.id, selection.picked.map((path) => ({ path, start: startOf(path) })));
+      props.notify("대본 시간에 맞춰 오디오를 합쳤습니다. (narration.wav)");
       props.onJobsChanged();
     } catch (e) {
-      props.notify(message(e, "이어 붙이지 못했습니다."));
+      props.notify(message(e, "합치지 못했습니다."));
     } finally {
       setJoining(false);
     }
@@ -251,21 +293,22 @@ export function AudioSection(props: SectionProps) {
         count={audio.length}
         creating={creating}
         onCreating={setCreating}
-        all={{ items, note: "대본의 구간 중 아직 음성이 없는 구간의 음성을 차례로 모두 만듭니다." }}
-        join={{ count: selection.picked.length, busy: joining, label: "체크한 음성을 순서대로 이어 붙여 narration.wav를 만듭니다.", onJoin: () => void join() }}
+        all={{ items, note: "대본의 구간 중 아직 소리가 없는 구간을 종류에 맞게 차례로 모두 만듭니다. 대화는 TTS, 효과음·연주곡·보컬은 SongYUE2가 만들어요." }}
+        join={{ count: selection.picked.length, busy: joining, label: "체크한 소리를 대본의 시작 시간에 맞춰 겹쳐서 narration.wav를 만듭니다.", name: "시간에 맞춰 합치기", onJoin: () => void join() }}
       />
-      <Top props={props} kinds={["voice"]} outputs={["assets/audio/", "assets/music/"]} creating={creating} />
+      <Top props={props} kinds={["voice", "sfx", "instrumental", "vocal"]} outputs={["assets/audio/", "assets/music/"]} creating={creating} />
       {audio.length === 0 ? (
-        <p className="muted">아직 오디오가 없습니다. 대본이 있으면 "전체 만들기"로 구간마다 음성을 만들 수 있어요.</p>
+        <p className="muted">아직 오디오가 없습니다. 대본에서 구간마다 소리 종류를 고른 뒤 "전체 만들기"를 눌러 보세요.</p>
       ) : (
         <div className="audio-list">
           {audio.map((file) => {
             const joinable = parts.includes(file);
+            const section = sections.find((part) => fileOf(part) === file.path);
             return (
               <div key={file.path} className="audio-row media-item">
-                {joinable && <input type="checkbox" aria-label="이어 붙일 파일" checked={selection.isOn(file.path)} onChange={() => selection.toggle(file.path)} />}
+                {joinable && <input type="checkbox" aria-label="합칠 파일" checked={selection.isOn(file.path)} onChange={() => selection.toggle(file.path)} />}
                 <span className="audio-name" title={file.path}>
-                  {file.path.replace(/^assets\//, "")} <span className="muted">· {sizeLabel(file.size)}</span>
+                  {file.path.replace(/^assets\//, "")} <span className="muted">· {sizeLabel(file.size)}{section && ` · ${section.start_seconds ?? 0}초부터`}</span>
                 </span>
                 <audio controls preload="metadata" src={mediaUrl(props.project.id, file.path, file.mtimeMs)} />
                 <ItemTools props={props} file={file} kind={file.path.startsWith("assets/audio/") ? "voice" : null} />

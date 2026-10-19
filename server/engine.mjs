@@ -1,4 +1,5 @@
 import { access, readdir, readFile, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { HttpError } from "./http.mjs";
@@ -14,9 +15,18 @@ export function engineSlot(tool, inputs) {
   return null;
 }
 
+/** Model names and LoRAs of one settings section, in the shape the tools take (empty when nothing is set). */
+function overridesOf(section) {
+  const models = Object.fromEntries(
+    [["diffusion", section.diffusion], ["text_encoder", section.textEncoder], ["vae", section.vae]].filter(([, value]) => value),
+  );
+  const loras = section.loras.map((lora) => ({ name: lora.name, strength: lora.strength }));
+  return Object.keys(models).length || loras.length ? { ...(Object.keys(models).length ? { models } : {}), ...(loras.length ? { loras } : {}) } : null;
+}
+
 /**
- * Without a workflow in the settings the call is left alone (default workflow and default models).
- * With one, the call becomes a comfyui_workflow call: the same prompt/size/seed/files, plus the workflow file,
+ * Without a workflow in the settings the built-in tool runs, but still with the chosen models and LoRAs (`overrides`).
+ * With a workflow, the call becomes a comfyui_workflow call: the same prompt/size/seed/files, plus the workflow file,
  * the model overrides, the LoRAs and the upscaler model from the settings.
  * Returns { tool, inputs, allowRoots } where allowRoots lists extra folders the bridge may read from.
  */
@@ -24,7 +34,10 @@ export function applyEngine(settings, { tool, inputs }) {
   const picked = engineSlot(tool, inputs);
   const section = picked && settings.engine?.[picked.kind];
   const workflow = section?.[`workflow${picked?.slot}`];
-  if (!workflow) return { tool, inputs, allowRoots: [] };
+  if (!workflow) {
+    const overrides = section && overridesOf(section);
+    return { tool, inputs: overrides ? { ...inputs, overrides } : inputs, allowRoots: [] };
+  }
 
   const files = [inputs.reference_image_path, inputs.last_frame_path, ...(inputs.reference_image_paths ?? [])].filter(Boolean);
   const mapped = {
@@ -34,8 +47,7 @@ export function applyEngine(settings, { tool, inputs }) {
     height: inputs.height,
     seed: inputs.seed,
     output_path: inputs.output_path,
-    models: { diffusion: section.diffusion, text_encoder: section.textEncoder, vae: section.vae },
-    loras: section.loras.map((lora) => ({ name: lora.name, strength: lora.strength })),
+    ...overridesOf(section),
     upscale_model: settings.engine.upscale.model,
   };
   if (inputs.duration_seconds) mapped.duration_seconds = inputs.duration_seconds;
@@ -46,28 +58,45 @@ export function applyEngine(settings, { tool, inputs }) {
   return { tool: "comfyui_workflow", inputs: mapped, allowRoots: [path.dirname(workflow)] };
 }
 
-/** Folders and .json files of one folder, for the workflow picker. An empty `dir` lists the drives. */
-export async function listDir(dir) {
-  if (!dir) {
-    const drives = [];
-    for (let code = 65; code <= 90; code += 1) {
-      const root = `${String.fromCharCode(code)}:\\`;
-      if (await access(root).then(() => true, () => false)) drives.push({ name: root, type: "dir" });
-    }
-    return { dir: "", parent: null, entries: drives };
-  }
-  if (typeof dir !== "string" || dir.includes("\0") || !path.isAbsolute(dir)) throw new HttpError(400, "폴더 경로가 올바르지 않습니다.");
-  const resolved = path.resolve(dir);
-  const names = await readdir(resolved, { withFileTypes: true }).catch(() => {
-    throw new HttpError(404, "폴더를 열 수 없습니다.");
-  });
-  const entries = names
-    .filter((entry) => entry.isDirectory() || (entry.isFile() && /\.json$/i.test(entry.name)))
-    .map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "dir" : "file" }))
-    .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, undefined, { numeric: true }) : a.type === "dir" ? -1 : 1))
-    .slice(0, MAX_ENTRIES);
+/** Quick-jump folders of the file picker: the usual user folders, the project folder, ComfyUI's workflows and the drives. */
+async function pickerShortcuts(projectsDir) {
+  const home = os.homedir();
+  const candidates = [
+    { label: "바탕화면", path: path.join(home, "Desktop") },
+    { label: "문서", path: path.join(home, "Documents") },
+    { label: "다운로드", path: path.join(home, "Downloads") },
+    { label: "ComfyUI 워크플로", path: path.join(home, "Documents", "ComfyUI", "user", "default", "workflows") },
+    ...(projectsDir ? [{ label: "프로젝트 폴더", path: projectsDir }] : []),
+  ];
+  for (let code = 67; code <= 90; code += 1) candidates.push({ label: `${String.fromCharCode(code)}:`, path: `${String.fromCharCode(code)}:\\` });
+  const found = [];
+  for (const item of candidates) if (await access(item.path).then(() => true, () => false)) found.push(item);
+  return found;
+}
+
+/**
+ * One folder for the built-in file picker: folders first, then files, hidden names left out. A folder that cannot be
+ * opened comes back with `error` (and no entries) instead of failing, so the picker can show the message and stay open.
+ * With no `dir` it opens the user's Documents folder.
+ */
+export async function listDir(dir, { projectsDir } = {}) {
+  const shortcuts = await pickerShortcuts(projectsDir);
+  const target = dir && dir.trim() ? dir.trim() : path.join(os.homedir(), "Documents");
+  if (target.includes("\0") || !path.isAbsolute(target)) throw new HttpError(400, "폴더 경로가 올바르지 않습니다.");
+  const resolved = path.resolve(target);
   const parent = path.dirname(resolved);
-  return { dir: resolved, parent: parent === resolved ? "" : parent, entries };
+  try {
+    if (!(await stat(resolved)).isDirectory()) throw new Error("폴더가 아닙니다.");
+    const names = await readdir(resolved, { withFileTypes: true });
+    const entries = names
+      .filter((entry) => !entry.name.startsWith("."))
+      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+      .sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name, "ko", { numeric: true }) : a.isDirectory ? -1 : 1))
+      .slice(0, MAX_ENTRIES);
+    return { path: resolved, parent: parent === resolved ? null : parent, entries, shortcuts };
+  } catch (error) {
+    return { path: resolved, parent: parent === resolved ? null : parent, entries: [], shortcuts, error: error instanceof Error ? error.message : "폴더를 열지 못했습니다." };
+  }
 }
 
 async function nodeInfo(comfyUrl, cls) {

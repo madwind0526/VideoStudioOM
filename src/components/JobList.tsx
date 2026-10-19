@@ -2,7 +2,7 @@ import { Square } from "lucide-react";
 import { api, type Job } from "../api";
 import { formatTime } from "../format";
 
-const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", qwen3_tts: "음성", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악" };
+const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", qwen3_tts: "음성", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악", songyue_sfx: "효과음" };
 const STATUS_LABELS: Record<Job["status"], string> = { running: "만드는 중", done: "완료", failed: "실패", cancelled: "취소됨", interrupted: "중단됨" };
 
 interface Props {

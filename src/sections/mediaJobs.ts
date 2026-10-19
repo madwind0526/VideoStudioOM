@@ -1,13 +1,29 @@
 import { resolveSize } from "../../shared/settings.mjs";
 import { api, type Settings } from "../api";
 
-export type MakeKind = "image" | "voice" | "i2v" | "fl2v" | "s2v";
+export type MakeKind = "image" | "voice" | "sfx" | "instrumental" | "vocal" | "i2v" | "fl2v" | "s2v";
+
+/** What a script section sounds like. Dialogue is read by TTS; the other three are made by SongYUE2. */
+export type AudioKind = "dialogue" | "sfx" | "instrumental" | "vocal";
+export const AUDIO_KINDS: { id: AudioKind; label: string; make: MakeKind }[] = [
+  { id: "dialogue", label: "대화 (TTS)", make: "voice" },
+  { id: "sfx", label: "효과음", make: "sfx" },
+  { id: "instrumental", label: "연주곡", make: "instrumental" },
+  { id: "vocal", label: "보컬", make: "vocal" },
+];
+/** Sidecar file with the kind of every script section (script.json itself follows OpenMontage's fixed schema). */
+export const AUDIO_KINDS_FILE = "studio/audio_kinds.json";
+export const audioKindOf = (kinds: Record<string, string> | null | undefined, id: string): AudioKind => (AUDIO_KINDS.some((kind) => kind.id === kinds?.[id]) ? (kinds?.[id] as AudioKind) : "dialogue");
 
 /** How a generated file was made. Saved next to the file so it can be made again. */
 export interface Recipe {
   kind: MakeKind;
-  /** Picture or motion description (image, video) or the spoken line (voice). */
+  /** Picture or motion description (image, video), the spoken line (voice), the sound description in English (sfx) or style tags (instrumental, vocal). */
   prompt: string;
+  /** Words to sing (vocal). */
+  lyrics?: string;
+  /** The user's own short description, kept when `prompt` was written by the prompt maker. */
+  idea?: string;
   first?: string;
   last?: string;
   audio?: string;
@@ -28,7 +44,7 @@ export const stamp = () => new Date().toISOString().replace(/\D/g, "").slice(2, 
 /** Reads a stored record back as a recipe, or null when it is missing or from another version. */
 export function recipeOf(record: Record<string, unknown> | null | undefined): Recipe | null {
   if (!record || typeof record.prompt !== "string") return null;
-  return ["image", "voice", "i2v", "fl2v", "s2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
+  return ["image", "voice", "sfx", "instrumental", "vocal", "i2v", "fl2v", "s2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
 }
 
 /** The job for one recipe, built from the current settings. The result goes to `output` (a project-relative path). */
@@ -41,6 +57,16 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   }
   if (recipe.kind === "voice") {
     return { tool: "qwen3_tts", label: text, record: recipe, inputs: { text, voice: settings.audio.voice.name, language: settings.audio.voice.language, output_path: output } };
+  }
+  if (recipe.kind === "sfx") {
+    const seconds = Math.min(30, Math.max(1, recipe.duration ?? 5));
+    return { tool: "songyue_sfx", label: text, record: recipe, inputs: { prompt: text, duration_seconds: seconds, output_path: output } };
+  }
+  if (recipe.kind === "instrumental") return { tool: "songyue_music", label: text, record: recipe, inputs: { prompt: text, output_path: output } };
+  if (recipe.kind === "vocal") {
+    const lyrics = (recipe.lyrics ?? "").trim();
+    if (!lyrics) return "가사를 입력하세요.";
+    return { tool: "songyue_music", label: text, record: recipe, inputs: { prompt: text, lyrics, output_path: output } };
   }
   const duration = recipe.duration ?? 5;
   if (!(duration >= 2 && duration <= 15)) return "길이는 2~15초로 입력하세요.";
@@ -73,9 +99,29 @@ export async function startItems(projectId: string, items: MakeItem[]): Promise<
   await api("POST", "/api/jobs", { project: projectId, items: body });
 }
 
+/** Asks the LLM to write a model-ready prompt (Krea 2 for images, MiniMax H3 for video, English for sound effects). */
+export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string }): Promise<string> {
+  const { prompt } = await api<{ prompt: string }>("POST", "/api/prompt", { project: projectId, ...body });
+  return prompt;
+}
+
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
 
 export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[]) =>
   api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs });
+
+/** Audio pieces laid on one timeline: each starts at its own second. */
+export const mixMedia = (projectId: string, inputs: { path: string; start: number }[]) =>
+  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind: "mix", inputs });
+
+/** Rewrites an item's prompt with the prompt maker (images, video clips, non-English sound effects). Items it cannot improve come back unchanged. */
+export async function refineItem(projectId: string, settings: Settings, item: MakeItem): Promise<MakeItem> {
+  const recipe = item.record;
+  const target = recipe.kind === "image" ? "image" : recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
+  if (!target) return item;
+  const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first, last: recipe.last });
+  const next = makeItem(settings, { ...recipe, prompt, idea: recipe.prompt }, String(item.inputs.output_path));
+  return typeof next === "string" ? item : next;
+}
 
 export const baseName = (path: string) => (path.split("/").pop() ?? path).replace(/\.[^.]+$/, "");

@@ -32,19 +32,29 @@ test("a workflow turns the call into comfyui_workflow with models, LoRAs and fil
   assert.deepEqual(out.inputs.loras, [{ name: "l.safetensors", strength: 0.7 }]);
   assert.equal(out.inputs.upscale_model, "up.pth");
   assert.deepEqual(out.allowRoots, ["D:/wf"]);
+  // Without a workflow the built-in tool still gets the chosen models and LoRAs.
+  const plain = applyEngine(withEngine({ image: { diffusion: "m.safetensors", loras: [{ name: "l", strength: 0.5 }] } }), { tool: "comfyui_krea_image", inputs: { prompt: "p", output_path: "o.png" } });
+  assert.equal(plain.tool, "comfyui_krea_image");
+  assert.deepEqual(plain.inputs.overrides, { models: { diffusion: "m.safetensors" }, loras: [{ name: "l", strength: 0.5 }] });
   // The slot follows the kind of call: text-only video uses the T2V workflow, which is empty here.
   assert.equal(applyEngine(settings, { tool: "h3_local_video", inputs: { prompt: "p", output_path: "o.mp4" } }).tool, "h3_local_video");
 });
 
-test("folder picker lists folders and json files only", async () => {
+test("folder picker lists folders first, hides dot names, reports errors without failing", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-fs-"));
   try {
     await mkdir(path.join(dir, "sub"));
     await writeFile(path.join(dir, "a.json"), "{}");
     await writeFile(path.join(dir, "b.txt"), "x");
-    const { entries, parent } = await listDir(dir);
-    assert.deepEqual(entries, [{ name: "sub", type: "dir" }, { name: "a.json", type: "file" }]);
+    await writeFile(path.join(dir, ".hidden"), "x");
+    const { entries, parent, path: shown, shortcuts } = await listDir(dir);
+    assert.deepEqual(entries, [{ name: "sub", isDirectory: true }, { name: "a.json", isDirectory: false }, { name: "b.txt", isDirectory: false }]);
     assert.equal(parent, path.dirname(dir));
+    assert.equal(shown, path.resolve(dir));
+    assert.ok(shortcuts.length > 0);
+    const missing = await listDir(path.join(dir, "nope"));
+    assert.equal(missing.entries.length, 0);
+    assert.ok(missing.error);
     await assert.rejects(listDir("relative/path"));
   } finally {
     await rm(dir, { recursive: true, force: true });

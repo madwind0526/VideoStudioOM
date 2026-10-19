@@ -271,8 +271,8 @@ export default function SettingsPage({ notify, onSaved }: Props) {
       <Section
         icon={SlidersHorizontal}
         title="고급: 워크플로 · 모델 · LoRA"
-        subtitle="비워 두면 기본 워크플로와 기본 모델을 씁니다. 워크플로 파일(ComfyUI API 형식)을 고르면 그 워크플로로 만들고, 모델·LoRA·업스케일러가 있으면 워크플로 안의 값 대신 씁니다."
-        note="필요한 노드나 모델이 ComfyUI에 없으면 만들 때 어떤 것이 없는지 알려 줍니다. '확인'으로 미리 볼 수 있어요."
+        subtitle="비워 두면 기본 워크플로와 기본 모델을 씁니다. 모델과 LoRA는 기본 워크플로에도 적용됩니다. 워크플로 파일(ComfyUI API 형식)을 고르면 그 워크플로로 만들고, 모델·LoRA·업스케일러가 있으면 워크플로 안의 값 대신 씁니다."
+        note="업스케일 모델은 외부 워크플로에만 적용됩니다(기본 업스케일은 RTX 2패스). 필요한 노드나 모델이 없으면 어떤 것인지 알려 줍니다."
         {...section(ENGINE_PATHS)}
       >
         <EngineSettings get={(path) => getIn(draft, path)} set={change} errors={errors} />
