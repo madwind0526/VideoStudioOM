@@ -86,3 +86,16 @@ test("workflow check names missing nodes and models, and rejects the UI format",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a character sheet has its own workflow slot and the slot key never reaches the tool", () => {
+  const withSheet = withEngine({ image: { workflowSheet: "D:/wf/sheet.json" } });
+  const out = applyEngine(withSheet, { tool: "comfyui_krea_image", inputs: { prompt: "p", slot: "sheet", output_path: "assets/images/sheet-a.png" } });
+  assert.equal(out.tool, "comfyui_workflow");
+  assert.equal(out.inputs.workflow_path, "D:/wf/sheet.json");
+  assert.ok(!("slot" in out.inputs));
+  // Without a sheet workflow the built-in image tool runs, still without the slot key.
+  const plain = applyEngine(DEFAULTS, { tool: "comfyui_krea_image", inputs: { prompt: "p", slot: "sheet", output_path: "o.png" } });
+  assert.deepEqual([plain.tool, "slot" in plain.inputs], ["comfyui_krea_image", false]);
+  // A normal image call does not use the sheet workflow.
+  assert.equal(applyEngine(withSheet, { tool: "comfyui_krea_image", inputs: { prompt: "p", output_path: "o.png" } }).tool, "comfyui_krea_image");
+});

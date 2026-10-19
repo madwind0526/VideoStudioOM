@@ -5,6 +5,7 @@ import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
 import { concatMedia, mixAudio } from "./concat.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
+import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, makePrompt } from "./prompt-maker.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
@@ -165,8 +166,12 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const body = requireObject(await readJsonBody(req));
     const detail = await projects.get(body.project);
     const recipeOf = (rel) => detail.media.images.find((file) => file.path === rel)?.record?.prompt;
+    const bible = await readBible(projects, body.project);
+    // A sheet is about one character: only the style is shared. Other prompts take every bible entry the idea names.
+    const bibleText = body.target === "sheet" ? (bible.style.trim() ? `Visual style: ${bible.style.trim()}` : "") : typeof body.text === "string" ? bibleContext(bible, body.text) : "";
+    const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 4).map((ref) => ref.slice(0, 600)) : [];
     const prompt = await makePrompt(
-      { target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined },
+      { target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined },
       askWith((await settings.get()).llm),
     );
     sendJson(res, 200, { prompt });

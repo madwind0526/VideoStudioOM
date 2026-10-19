@@ -5,6 +5,7 @@ import GenerateForm from "../components/GenerateForm";
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
+import { BIBLE_FILE, charactersIn, sheetPath, type Bible } from "../bible";
 import { AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
@@ -98,7 +99,7 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
       )}
       {mode === "edit" && base && (
         <div className="item-pop">
-          <label>{{ voice: "대사", image: "이미지 설명", sfx: "소리 설명 (영어)", instrumental: "음악 스타일", vocal: "음악 스타일" }[base.kind as string] ?? "움직임 설명"}</label>
+          <label>{{ voice: "대사", image: "이미지 설명", sheet: "시트 설명", sfx: "소리 설명 (영어)", instrumental: "음악 스타일", vocal: "음악 스타일" }[base.kind as string] ?? "움직임 설명"}</label>
           <textarea rows={4} value={text} maxLength={7000} onChange={(event) => setText(event.target.value)} />
           {base.kind === "vocal" && (
             <>
@@ -130,10 +131,12 @@ interface HeaderProps {
   all: { items: MakeItem[]; note: string } | null;
   /** Items the prompt maker should rewrite first (images, clips); sections that do not need it leave this off. */
   refine?: boolean;
+  /** Tells the prompt maker what a reference picture shows (R2V clips). */
+  describeRef?: (path: string) => string;
   join?: { count: number; busy: boolean; label: string; name?: string; onJoin: () => void };
 }
 
-function Header({ props, title, count, creating, onCreating, all, refine, join }: HeaderProps) {
+function Header({ props, title, count, creating, onCreating, all, refine, describeRef, join }: HeaderProps) {
   const { jobs, onJobsChanged, notify, project, view } = props;
   const [preparing, setPreparing] = useState<string | null>(null);
   const running = jobs.current !== null || preparing !== null;
@@ -146,7 +149,7 @@ function Header({ props, title, count, creating, onCreating, all, refine, join }
       for (const [index, item] of all.items.entries()) {
         setPreparing(`${index + 1}/${all.items.length}`);
         try {
-          items.push(refine === false ? item : await refineItem(project.id, view.effective, item));
+          items.push(refine === false ? item : await refineItem(project.id, view.effective, item, describeRef));
         } catch {
           failed += 1;
           items.push(item);
@@ -187,11 +190,11 @@ function Header({ props, title, count, creating, onCreating, all, refine, join }
   );
 }
 
-function Top({ props, kinds, outputs, creating }: { props: SectionProps; kinds: Parameters<typeof GenerateForm>[0]["kinds"]; outputs: string[]; creating: boolean }) {
+function Top({ props, kinds, outputs, creating, bible }: { props: SectionProps; kinds: Parameters<typeof GenerateForm>[0]["kinds"]; outputs: string[]; creating: boolean; bible?: Bible | null }) {
   const { project, detail, view, jobs, onJobsChanged, notify } = props;
   return (
     <>
-      {creating && <GenerateForm projectId={project.id} kinds={kinds} view={view} media={{ images: detail?.media.images ?? [], audio: detail?.media.audio ?? [] }} running={jobs.current !== null} notify={notify} onStarted={onJobsChanged} />}
+      {creating && <GenerateForm projectId={project.id} kinds={kinds} view={view} media={{ images: detail?.media.images ?? [], audio: detail?.media.audio ?? [] }} bible={bible} running={jobs.current !== null} notify={notify} onStarted={onJobsChanged} />}
       <JobList projectId={project.id} jobs={jobs.history} outputs={outputs} pending={jobs.pending} onChanged={onJobsChanged} />
     </>
   );
@@ -326,11 +329,19 @@ export function VideosSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
+  const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
+  const bible = bibleFile.data;
   const videos = props.detail?.media.videos ?? [];
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
   const clips = videos.filter((file) => file.path.startsWith("assets/video/"));
   const selection = useSelection(clips.map((file) => file.path));
+  const describeRef = (path: string) => {
+    const owner = bible?.characters.find((character) => sheetPath(character) === path);
+    if (owner) return `character sheet of ${owner.name}: ${owner.description}`;
+    const recipe = images.find((image) => image.path === path)?.record;
+    return typeof recipe?.prompt === "string" ? `scene picture: ${recipe.prompt.slice(0, 300)}` : "scene picture";
+  };
 
   // Clip n joins image n and image n+1: 1-2, 2-3, 3-4, ...
   const items: MakeItem[] = [];
@@ -342,7 +353,15 @@ export function VideosSection(props: SectionProps) {
       const scene = plan.data?.scenes?.find((item) => safeName(item.id) === baseName(a.path));
       const seconds = scene?.start_seconds != null && scene.end_seconds != null ? scene.end_seconds - scene.start_seconds : 5;
       const prompt = scene?.description?.trim() || "부드러운 카메라 이동으로 다음 장면으로 이어진다.";
-      const item = makeItem(settings, { kind: "fl2v", prompt, first: a.path, last: b.path, duration: Math.min(15, Math.max(2, Math.round(seconds * 2) / 2)), source: scene?.id }, output);
+      const duration = Math.min(15, Math.max(2, Math.round(seconds * 2) / 2));
+      // A scene with people uses their character sheets as references (R2V, one sheet per person, 3 at most);
+      // the scene picture comes along as the fourth. Other scenes go from picture to picture (FL2V).
+      const sheets = charactersIn(bible, prompt)
+        .map((character) => sheetPath(character))
+        .filter((path) => images.some((image) => image.path === path))
+        .slice(0, 3);
+      const recipe: Recipe = sheets.length > 0 ? { kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id } : { kind: "fl2v", prompt, first: a.path, last: b.path, duration, source: scene?.id };
+      const item = makeItem(settings, recipe, output);
       if (typeof item !== "string") items.push(item);
     }
   }
@@ -368,10 +387,11 @@ export function VideosSection(props: SectionProps) {
         count={videos.length}
         creating={creating}
         onCreating={setCreating}
-        all={{ items, note: "이미지를 1-2, 2-3, 3-4 ... 두 장씩 짝지어 아직 없는 구간의 영상을 차례로 만듭니다. 한 구간에 약 1분 걸립니다." }}
+        describeRef={describeRef}
+        all={{ items, note: "이미지를 1-2, 2-3, 3-4 ... 두 장씩 짝지어 아직 없는 구간의 영상을 차례로 만듭니다. 장면 설명에 등장인물 이름이 있고 시트가 있으면 시트를 참조해(R2V) 만듭니다. 한 구간에 약 1분 걸립니다." }}
         join={{ count: selection.picked.length, busy: joining, label: "체크한 구간 영상을 순서대로 이어 붙여 renders/final.mp4를 만듭니다.", onJoin: () => void join() }}
       />
-      <Top props={props} kinds={["i2v", "fl2v", "s2v"]} outputs={["assets/video/"]} creating={creating} />
+      <Top props={props} kinds={["auto", "i2v", "fl2v", "s2v", "r2v"]} outputs={["assets/video/"]} creating={creating} bible={bible} />
       {videos.length === 0 ? (
         <p className="muted">아직 동영상이 없습니다. 이미지가 2장 이상이면 "전체 만들기"로 구간 영상을 만들 수 있어요.</p>
       ) : (

@@ -6,7 +6,7 @@ import { askLlm } from "./llm.mjs";
 
 const read = (name) => readFile(new URL(`./prompts/${name}`, import.meta.url), "utf8");
 
-export const TARGETS = ["image", "video", "sfx"];
+export const TARGETS = ["image", "video", "sfx", "sheet"];
 export const VIDEO_MODES = ["t2v", "i2v", "fl2v", "s2v", "r2v"];
 
 // First lines the H3 guide prescribes when pictures are given. They are added here, not written by the LLM, so they stay exact.
@@ -35,21 +35,27 @@ const serial = (job) => {
  * Writes the prompt for one image, video clip or sound effect from the user's short idea.
  * `ask(system, user)` returns the LLM text (the server passes askLlm bound to the settings; tests pass a fake).
  */
-export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt }, ask) {
+export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], bible = "" }, ask) {
   if (!TARGETS.includes(target)) throw new HttpError(400, "만들 대상이 올바르지 않습니다.");
   if (typeof text !== "string" || !text.trim() || text.length > 4000) throw new HttpError(400, "설명은 1~4000자로 입력하세요.");
-  const context = [title ? `Project title: ${title}` : "", firstPrompt ? `Prompt of <Picture 1> (what the first frame shows): ${firstPrompt}` : "", lastPrompt ? `Prompt of <Picture 2> (what the last frame shows): ${lastPrompt}` : ""].filter(Boolean).join("\n");
+  const context = [title ? `Project title: ${title}` : "", firstPrompt ? `Prompt of <Picture 1> (what the first frame shows): ${firstPrompt}` : "", lastPrompt ? `Prompt of <Picture 2> (what the last frame shows): ${lastPrompt}` : "", bible].filter(Boolean).join("\n");
+  // Reference pictures of an R2V clip, in the order they are given to the model.
+  const refLines = refs.map((ref, index) => `<Picture ${index + 1}> = ${ref}`).join("\n");
 
   if (target === "image") {
     const answer = await serial(async () => ask(await read("krea-image.md"), `IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`));
     // One paragraph is asked for; anything after a blank line is a remark.
     return answer.split(/\n\s*\n/)[0].trim().replace(/^["“]|["”]$/g, "");
   }
+  if (target === "sheet") {
+    // The description is the character itself; the bible adds only the shared visual style.
+    return serial(async () => ask(await read("character-sheet.md"), `CHARACTER:\n${text.trim()}${context ? `\n\n${context}` : ""}`));
+  }
   if (target === "sfx") return serial(async () => ask(await read("sfx.md"), `IDEA:\n${text.trim()}`));
 
   const videoMode = VIDEO_MODES.includes(mode) ? mode : "i2v";
   const seconds = snapFrames(Number(duration) > 0 ? Number(duration) : 5).seconds;
-  const user = `${MODE_TASKS[videoMode]}\nCLIP LENGTH: ${seconds.toFixed(2)} seconds (24 fps)\n\nIDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`;
+  const user = `${MODE_TASKS[videoMode]}\nCLIP LENGTH: ${seconds.toFixed(2)} seconds (24 fps)\n\n${refLines ? `REFERENCES (in this order):\n${refLines}\n\n` : ""}IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`;
   const answer = await serial(async () => ask(await read("h3-video.md"), user));
   // The music field is the last one; a remark after its paragraph is dropped.
   const start = Math.max(0, answer.indexOf("integrated_multimodal_description:"));

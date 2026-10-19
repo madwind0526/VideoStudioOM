@@ -1,7 +1,7 @@
 import { resolveSize } from "../../shared/settings.mjs";
 import { api, type Settings } from "../api";
 
-export type MakeKind = "image" | "voice" | "sfx" | "instrumental" | "vocal" | "i2v" | "fl2v" | "s2v";
+export type MakeKind = "image" | "sheet" | "voice" | "sfx" | "instrumental" | "vocal" | "i2v" | "fl2v" | "s2v" | "r2v";
 
 /** What a script section sounds like. Dialogue is read by TTS; the other three are made by SongYUE2. */
 export type AudioKind = "dialogue" | "sfx" | "instrumental" | "vocal";
@@ -27,6 +27,8 @@ export interface Recipe {
   first?: string;
   last?: string;
   audio?: string;
+  /** Reference pictures of an R2V clip (character sheets, a scene picture), at most four. */
+  refs?: string[];
   duration?: number;
   /** Scene or script section this file belongs to. */
   source?: string;
@@ -44,7 +46,7 @@ export const stamp = () => new Date().toISOString().replace(/\D/g, "").slice(2, 
 /** Reads a stored record back as a recipe, or null when it is missing or from another version. */
 export function recipeOf(record: Record<string, unknown> | null | undefined): Recipe | null {
   if (!record || typeof record.prompt !== "string") return null;
-  return ["image", "voice", "sfx", "instrumental", "vocal", "i2v", "fl2v", "s2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
+  return ["image", "sheet", "voice", "sfx", "instrumental", "vocal", "i2v", "fl2v", "s2v", "r2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
 }
 
 /** The job for one recipe, built from the current settings. The result goes to `output` (a project-relative path). */
@@ -54,6 +56,10 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   if (!text) return recipe.kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
   if (recipe.kind === "image") {
     return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], output_path: output } };
+  }
+  if (recipe.kind === "sheet") {
+    // Same image tool, models and LoRAs; `slot` only picks the character-sheet workflow when one is set.
+    return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], slot: "sheet", output_path: output } };
   }
   if (recipe.kind === "voice") {
     return { tool: "qwen3_tts", label: text, record: recipe, inputs: { text, voice: settings.audio.voice.name, language: settings.audio.voice.language, output_path: output } };
@@ -80,6 +86,13 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     upscale_scale: size.final[0] / size.generate[0],
     output_path: output,
   };
+  if (recipe.kind === "r2v") {
+    const refs = recipe.refs ?? [];
+    if (refs.length === 0) return "참조할 그림(인물 시트나 장면 이미지)을 하나 이상 고르세요.";
+    if (refs.length > 4) return "참조 그림은 4장까지입니다.";
+    inputs.reference_image_paths = refs;
+    return { tool: "h3_reference_video", label: text, record: recipe, inputs };
+  }
   if (!recipe.first) return "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
   inputs.reference_image_path = recipe.first;
   if (recipe.kind === "fl2v") {
@@ -100,7 +113,7 @@ export async function startItems(projectId: string, items: MakeItem[]): Promise<
 }
 
 /** Asks the LLM to write a model-ready prompt (Krea 2 for images, MiniMax H3 for video, English for sound effects). */
-export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string }): Promise<string> {
+export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx" | "sheet"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string; refs?: string[] }): Promise<string> {
   const { prompt } = await api<{ prompt: string }>("POST", "/api/prompt", { project: projectId, ...body });
   return prompt;
 }
@@ -115,11 +128,11 @@ export const mixMedia = (projectId: string, inputs: { path: string; start: numbe
   api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind: "mix", inputs });
 
 /** Rewrites an item's prompt with the prompt maker (images, video clips, non-English sound effects). Items it cannot improve come back unchanged. */
-export async function refineItem(projectId: string, settings: Settings, item: MakeItem): Promise<MakeItem> {
+export async function refineItem(projectId: string, settings: Settings, item: MakeItem, describeRef?: (path: string) => string): Promise<MakeItem> {
   const recipe = item.record;
-  const target = recipe.kind === "image" ? "image" : recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
+  const target = recipe.kind === "image" ? "image" : recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" || recipe.kind === "r2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
   if (!target) return item;
-  const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first, last: recipe.last });
+  const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first, last: recipe.last, refs: recipe.refs && describeRef ? recipe.refs.map(describeRef) : undefined });
   const next = makeItem(settings, { ...recipe, prompt, idea: recipe.prompt }, String(item.inputs.output_path));
   return typeof next === "string" ? item : next;
 }

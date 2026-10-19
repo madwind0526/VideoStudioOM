@@ -54,7 +54,7 @@ export const DEFAULTS = {
   // Advanced: empty means the built-in workflow and models. A workflow file (ComfyUI API format) replaces the built-in
   // one; model names and LoRAs then replace what that workflow loads, and the upscaler model replaces its upscaler.
   engine: {
-    image: { workflowT2I: "", workflowI2I: "", diffusion: "", textEncoder: "", vae: "", loras: [] },
+    image: { workflowT2I: "", workflowI2I: "", workflowSheet: "", diffusion: "", textEncoder: "", vae: "", loras: [] },
     video: { workflowT2V: "", workflowI2V: "", workflowR2V: "", diffusion: "", textEncoder: "", vae: "", loras: [] },
     upscale: { model: "" },
   },
@@ -151,6 +151,7 @@ const RULES = {
   "connections.ffmpegPath": text("ffmpeg 경로"),
   "engine.image.workflowT2I": folder("image T2I 워크플로"),
   "engine.image.workflowI2I": folder("image I2I 워크플로"),
+  "engine.image.workflowSheet": folder("캐릭터 시트 워크플로"),
   "engine.image.diffusion": text("diffusion 모델", 300),
   "engine.image.textEncoder": text("text encoder", 300),
   "engine.image.vae": text("VAE", 300),

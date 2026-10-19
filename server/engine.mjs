@@ -9,7 +9,8 @@ const MAX_ENTRIES = 500;
 
 /** Which workflow slot a tool call belongs to (settings.engine.<kind>.workflow<SLOT>), or null when it has none. */
 export function engineSlot(tool, inputs) {
-  if (tool === "comfyui_krea_image") return { kind: "image", slot: inputs.reference_image_path ? "I2I" : "T2I" };
+  // `slot: "sheet"` marks a character-sheet image: it has its own workflow, and shares the image models and LoRAs.
+  if (tool === "comfyui_krea_image") return { kind: "image", slot: inputs.slot === "sheet" ? "Sheet" : inputs.reference_image_path ? "I2I" : "T2I" };
   if (tool === "h3_reference_video") return { kind: "video", slot: "R2V" };
   if (tool === "h3_local_video") return { kind: "video", slot: inputs.reference_image_path ? "I2V" : "T2V" };
   return null;
@@ -30,8 +31,11 @@ function overridesOf(section) {
  * the model overrides, the LoRAs and the upscaler model from the settings.
  * Returns { tool, inputs, allowRoots } where allowRoots lists extra folders the bridge may read from.
  */
-export function applyEngine(settings, { tool, inputs }) {
-  const picked = engineSlot(tool, inputs);
+export function applyEngine(settings, call) {
+  const picked = engineSlot(call.tool, call.inputs);
+  // `slot` only selects the workflow; the tools do not know it.
+  const { slot: _slot, ...inputs } = call.inputs;
+  const tool = call.tool;
   const section = picked && settings.engine?.[picked.kind];
   const workflow = section?.[`workflow${picked?.slot}`];
   if (!workflow) {

@@ -1996,3 +1996,30 @@ textarea.big {
 .item-pop .btn {
   white-space: nowrap;
 }
+
+.sheet-thumb {
+  flex: none;
+  width: 200px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  cursor: pointer;
+}
+
+.sheet-thumb img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.sheet-thumb.empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  color: var(--muted-fg);
+  font-size: 12px;
+  cursor: default;
+}

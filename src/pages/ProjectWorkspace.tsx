@@ -1,7 +1,8 @@
-import { BookOpen, Check, Clapperboard, Film, Image as ImageIcon, Mic, ScrollText, Type, type LucideIcon } from "lucide-react";
+import { BookOpen, Check, Clapperboard, Film, Image as ImageIcon, Mic, ScrollText, Type, UserRound, type LucideIcon } from "lucide-react";
 import type { ProjectSettingsView, ProjectSummary } from "../api";
 import ProjectPicker from "../components/ProjectPicker";
 import { AudioSection, ImagesSection, VideosSection } from "../sections/MediaSections";
+import CharactersSection from "../sections/CharactersSection";
 import ScenarioSection from "../sections/ScenarioSection";
 import ScriptSection from "../sections/ScriptSection";
 import SynopsisSection from "../sections/SynopsisSection";
@@ -14,6 +15,7 @@ export const SECTIONS: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: "synopsis", label: "줄거리", icon: BookOpen },
   { id: "scenario", label: "시나리오", icon: Clapperboard },
   { id: "script", label: "대본", icon: ScrollText },
+  { id: "characters", label: "등장인물", icon: UserRound },
   { id: "images", label: "이미지", icon: ImageIcon },
   { id: "audio", label: "오디오", icon: Mic },
   { id: "videos", label: "동영상", icon: Film },
@@ -72,6 +74,7 @@ function ProjectPane({ project, section, view, jobTick, refreshKey, onSection, o
     synopsis: <SynopsisSection {...props} />,
     scenario: <ScenarioSection {...props} />,
     script: <ScriptSection {...props} />,
+    characters: <CharactersSection {...props} />,
     images: <ImagesSection {...props} />,
     audio: <AudioSection {...props} />,
     videos: <VideosSection {...props} />,

@@ -1,6 +1,6 @@
 import type { Job, ProjectDetail, ProjectSettingsView, ProjectSummary } from "../api";
 
-export type SectionId = "title" | "synopsis" | "scenario" | "script" | "images" | "audio" | "videos";
+export type SectionId = "title" | "synopsis" | "scenario" | "script" | "characters" | "images" | "audio" | "videos";
 
 export interface SectionProps {
   project: ProjectSummary;

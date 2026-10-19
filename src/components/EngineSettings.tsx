@@ -6,6 +6,7 @@ import FileNavigator from "./FileNavigator";
 export const ENGINE_PATHS = [
   "engine.image.workflowT2I",
   "engine.image.workflowI2I",
+  "engine.image.workflowSheet",
   "engine.image.diffusion",
   "engine.image.textEncoder",
   "engine.image.vae",
@@ -140,6 +141,7 @@ export default function EngineSettings({ get, set, errors }: Props) {
       <div className="fields">
         {workflowRow("engine.image.workflowT2I", "T2I 워크플로", "비워 두면 기본(Krea 2 Turbo)")}
         {workflowRow("engine.image.workflowI2I", "I2I 워크플로", "비워 두면 기본 워크플로")}
+        {workflowRow("engine.image.workflowSheet", "캐릭터 시트 워크플로", "비워 두면 기본(Krea 2 + 시트 프롬프트)")}
         {modelRow("engine.image.diffusion", "diffusion 모델", models?.diffusion)}
         {modelRow("engine.image.textEncoder", "text encoder", models?.textEncoder)}
         {modelRow("engine.image.vae", "VAE", models?.vae)}

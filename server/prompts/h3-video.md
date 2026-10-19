@@ -26,3 +26,11 @@ non_diegetic_music
 - 1-3 English sentences: score the audience hears but the characters do not. Instruments, tempo, rhythm, dynamics; no abstract mood words. N/A when there is no score.
 
 The clip length and the amount of action must match: do not describe more events than fit in the stated length.
+
+CONTINUITY (this clip is one shot of a longer video; clips are joined later)
+- STORY BIBLE, when given under CONTEXT, is authoritative: restate each listed character's appearance and the place's description word for word, never paraphrased; keep the stated visual style in the first shot's style declaration.
+- The clip opens holding the opening arrangement quietly for about a second (a breath, a small weight shift or eyeline change, never a frozen pose), and ends settled on a stable arrangement with any dialogue finished and about two seconds to spare.
+- Put one physical, lasting change in the action (a prop moves, a door opens, a garment is adjusted) so the clip clearly differs from its neighbours. State what changes, not what stays.
+- Never use negations ("does not move") or stillness phrases ("goes still", "freezes"); they get rendered literally. Describe what happens.
+- A spoken line plus about four seconds of quiet must fit inside the clip length. A clip of about 5 seconds has no room for dialogue; leave dialogue out unless the idea quotes it and the clip is 10 seconds or longer.
+- Keep a reference sheet's identity in character: when a character sheet is a reference picture, say so with its role in a full sentence ("<Picture 1> is the character sheet of S1; throughout the clip S1 is the identical person from <Picture 1>, the exact same face, hair and outfit; this lock never restricts pose, expression or movement").
