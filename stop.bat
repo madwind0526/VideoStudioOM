@@ -16,4 +16,5 @@ rem Child node processes can outlive the cmd window that started them; match the
 taskkill /F /IM node.exe /FI "WINDOWTITLE eq VideoStudioOM*" >nul 2>&1
 
 echo Done.
-pause
+rem "stop.bat nopause" skips the pause (for automation).
+if /i not "%~1"=="nopause" pause

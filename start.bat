@@ -9,6 +9,8 @@ set "API_PORT=4314"
 set "WEB_PORT=5184"
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=prod"
+rem "start.bat prod nopause" skips the final pause (for automation).
+set "NOPAUSE=%~2"
 
 echo Checking for an existing VideoStudioOM server on ports %API_PORT%/%WEB_PORT%...
 for %%R in (%API_PORT% %WEB_PORT%) do (
@@ -21,9 +23,21 @@ for %%R in (%API_PORT% %WEB_PORT%) do (
 rem Child node processes can outlive the cmd window that started them; match them by window title.
 taskkill /F /IM node.exe /FI "WINDOWTITLE eq VideoStudioOM*" >nul 2>&1
 
+rem Wait for the ports to actually free up instead of assuming the kill worked.
+for /l %%I in (1,1,20) do (
+    netstat -ano | findstr ":%API_PORT% :%WEB_PORT% " | findstr "LISTENING" >nul 2>&1 || goto :portsfree
+    ping -n 2 127.0.0.1 >nul
+)
+:portsfree
+
 if not exist "node_modules" (
     echo Installing dependencies...
     call npm install
+    if errorlevel 1 (
+        echo Install failed.
+        if /i not "%NOPAUSE%"=="nopause" pause
+        exit /b 1
+    )
 )
 
 if /i "%MODE%"=="dev" (
@@ -35,7 +49,7 @@ if /i "%MODE%"=="dev" (
     call npm run build
     if errorlevel 1 (
         echo Build failed.
-        pause
+        if /i not "%NOPAUSE%"=="nopause" pause
         exit /b 1
     )
     echo Starting VideoStudioOM ^(http://127.0.0.1:%API_PORT%^)...
@@ -43,4 +57,4 @@ if /i "%MODE%"=="dev" (
     echo Done. Open http://127.0.0.1:%API_PORT%
 )
 
-pause
+if /i not "%NOPAUSE%"=="nopause" pause
