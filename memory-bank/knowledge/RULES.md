@@ -20,7 +20,7 @@
 
 ## P-01: 창작 판단은 에이전트가, GUI는 조종/검토/수정만 (MANDATORY)
 
-**규칙:** 대본, 장면 구성 등 창작 판단은 OpenMontage 지침을 따르는 에이전트 CLI(Claude/Codex/OpenCode)가 한다. VideoStudio 백엔드는 자체 LLM 로직으로 창작을 대신하지 않는다.
+**규칙:** 대본, 장면 구성 등 창작 판단은 OpenMontage 지침을 따르는 에이전트 CLI(Claude/Codex/OpenCode)가 한다. VideoStudioOM 백엔드는 자체 LLM 로직으로 창작을 대신하지 않는다.
 **이유:** 사용자 결정(2026-10-19). OpenMontage의 파이프라인과 승인 지점(gate)을 그대로 쓰기 위함.
 **적용 시점:** 시나리오/스토리보드/영상 단계를 구현할 때 항상. Ollama는 도구 사용이 없어 주제 제안 같은 단순 텍스트 작업에만 쓴다.
 

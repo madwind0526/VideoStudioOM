@@ -15,4 +15,4 @@
 
 ## Session Notes
 
-- 2026-10-19: /startpjt로 초기화. 엔진은 OpenMontage(G:\Claude-External\OpenMontage), 음악은 SongYUE2(4311).
+- 2026-10-19: /startpjt로 초기화. 엔진은 OpenMontage(E:\Claude\OpenMontage), 음악은 SongYUE2(4311).

@@ -1,4 +1,4 @@
-# VideoStudio 설계서 (초안)
+# VideoStudioOM 설계서 (초안)
 
 작성: 2026-10-19. 상태: 사용자 검토 대기. 사용자 요구 6가지를 그대로 따른다.
 
@@ -17,7 +17,7 @@
                                                               ├ 에이전트 실행기 (claude / codex / opencode CLI)
                                                               ├ OpenMontage 브릿지 (Python 도구 1회 실행)
                                                               └ SongYUE2 브릿지 (:4311)
-엔진: G:\Claude-External\OpenMontage (tools/, pipeline_defs/, skills/, projects/<id>/)
+엔진: E:\Claude\OpenMontage (tools/, pipeline_defs/, skills/, projects/<id>/)
 ```
 
 - **UI**: SongYUE2 스타일. 미니멀, 아이콘(lucide) 중심. 좌측 아이콘 메뉴 / 상단 메뉴(프로젝트, 단계 표시, LLM 선택) / 하단 시스템 메시지 줄(진행, 오류, 에이전트 로그 요약). 한국어 UI, 라이트/다크.
@@ -27,7 +27,7 @@
 
 ## 3. 프로젝트 폴더 (단일 진실 원천 = OpenMontage 프로젝트)
 
-`G:\Claude-External\OpenMontage\projects\<id>\` 를 그대로 쓰고 GUI 전용 `studio/`만 추가한다. Backlot 보드와 에이전트 모두 같은 폴더를 본다.
+`E:\Claude\OpenMontage\projects\<id>\` 를 그대로 쓰고 GUI 전용 `studio/`만 추가한다. Backlot 보드와 에이전트 모두 같은 폴더를 본다.
 
 ```
 projects/<id>/

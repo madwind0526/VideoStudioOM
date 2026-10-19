@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 rem Ports this app owns (see C:\Claude\PORTS.md).
-echo Stopping VideoStudio...
+echo Stopping VideoStudioOM...
 
 for %%R in (4314 5184) do (
     for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%%R " ^| findstr "LISTENING"') do (
@@ -13,7 +13,7 @@ for %%R in (4314 5184) do (
 )
 
 rem Child node processes can outlive the cmd window that started them; match them by window title.
-taskkill /F /IM node.exe /FI "WINDOWTITLE eq VideoStudio*" >nul 2>&1
+taskkill /F /IM node.exe /FI "WINDOWTITLE eq VideoStudioOM*" >nul 2>&1
 
 echo Done.
 pause
