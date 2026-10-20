@@ -6,6 +6,7 @@
 - 미디어 화면(이미지/오디오/동영상): "새로 만들기"(한 건), "전체 만들기"(장면/대본 구간/이미지 쌍으로 없는 것만 차례로), "이어 붙이기"(오디오 → narration.wav, 영상 → renders/final.mp4), 항목마다 다시 만들기·지우기 아이콘. 만든 방법은 studio/assets.json에 기록
 - 고급 설정(설정 > 고급): 워크플로 파일(탐색기로 선택)·모델·LoRA·업스케일러. 비면 기본 도구/모델, 값이 있으면 OpenMontage `comfyui_workflow`(2c1f93c). 서버는 server/engine.mjs
 - 등장인물 탭(대본 다음): 설정집 studio/bible.json(화풍/인물/장소), 인물마다 캐릭터 시트(assets/images/sheet-<id>.png, 설정 > 고급에 시트 워크플로 칸), 영상은 시트를 참조(R2V). 새로 만들기 "자동" 모드. 다음 후보: OpenMontage 의존을 걷고 Node ComfyUI 클라이언트로 옮기기
+- 완료(이번 세션): 줄거리 4안→설정집 뽑기→시나리오→대본 LLM 생성(server/story.mjs), 자막(SRT/새기기)·덕킹 믹스·색 맞추기·영상 점검·코덱 선택 내보내기(server/post.mjs), 중단된 배치 이어하기, 인물 참고 사진·옷차림, 장면별 LoRA, 시나리오 타임라인 바. 남은 큰 일: OpenMontage 의존 걷고 Node ComfyUI 클라이언트로 이전, Pat3dx식 장면 단위 스토리 편집 UI 다듬기
 - 프롬프트 만들기: server/prompts/ + prompt-maker.mjs(Krea 공식 expansion, H3 공식 가이드), 전체 만들기가 장면별 프롬프트를 LLM으로 먼저 만든다. 대본 구간 소리 종류(대화 TTS/효과음·연주곡·보컬 SongYUE2)는 studio/audio_kinds.json. 설명은 docs/prompting.md
 - R2V(참조 영상 + 이미지로 얼굴/옷 교체)는 `h3_reference_video`로 실측 확인(3초 76초 소요). UI 종류로는 아직 노출 안 함
 - 결정: 줄거리/시나리오/대본은 LLM 텍스트 호출(P-01). LLM 선택은 설정에서만. 정본은 artifacts/scene_plan.json, script.json

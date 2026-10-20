@@ -57,3 +57,23 @@ test("mix places every piece at its own start second", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("import copies a picture into assets/images and refuses other files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-import-"));
+  try {
+    const store = createProjectStore({ getRoot: async () => path.join(root, "projects") });
+    await store.create("demo");
+    const { writeFile } = await import("node:fs/promises");
+    const photo = path.join(root, "my photo.JPG");
+    await writeFile(photo, "x");
+    const rel = await store.importImage("demo", photo);
+    assert.match(rel, /^assets\/images\/photo-[a-z0-9]+-my-photo\.jpg$/i);
+    assert.equal((await store.get("demo")).media.images.length, 1);
+    await writeFile(path.join(root, "a.exe"), "x");
+    await assert.rejects(store.importImage("demo", path.join(root, "a.exe")), { status: 400 });
+    await assert.rejects(store.importImage("demo", "relative.png"), { status: 400 });
+    await assert.rejects(store.importImage("demo", path.join(root, "missing.png")), { status: 404 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

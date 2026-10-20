@@ -26,7 +26,12 @@ export function bibleContext(bible, text) {
   const lines = [];
   if (bible.style.trim()) lines.push(`Visual style: ${bible.style.trim()}`);
   if (presetHint(bible.preset)) lines.push(`Direction style: ${presetHint(bible.preset)}`);
-  charactersIn(bible, text).forEach((character, index) => lines.push(`Character "${character.name}" (S${index + 1}): ${String(character.description ?? "").trim()}`));
+  charactersIn(bible, text).forEach((character, index) => {
+    // An outfit named in the text replaces the default clothes for this scene only; face and hair stay as described.
+    const outfit = (Array.isArray(character.outfits) ? character.outfits : []).find((item) => item?.name && mentions(text, item.name));
+    const wearing = outfit?.description ? ` Wearing in this scene (replaces the default outfit; face and hair unchanged): ${String(outfit.description).trim()}` : "";
+    lines.push(`Character "${character.name}" (S${index + 1}): ${String(character.description ?? "").trim()}${wearing}`);
+  });
   for (const place of bible.places.filter((item) => mentions(text, item.name))) lines.push(`Place "${place.name}": ${String(place.description ?? "").trim()}`);
   return lines.length ? `STORY BIBLE (authoritative, repeat verbatim):\n${lines.join("\n")}` : "";
 }

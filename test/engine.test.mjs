@@ -99,3 +99,10 @@ test("a character sheet has its own workflow slot and the slot key never reaches
   // A normal image call does not use the sheet workflow.
   assert.equal(applyEngine(withSheet, { tool: "comfyui_krea_image", inputs: { prompt: "p", output_path: "o.png" } }).tool, "comfyui_krea_image");
 });
+
+test("a call's own LoRAs are added after the settings' LoRAs and never reach the tool", () => {
+  const settings = withEngine({ video: { loras: [{ name: "base", strength: 1 }] } });
+  const out = applyEngine(settings, { tool: "h3_local_video", inputs: { prompt: "p", reference_image_path: "a.png", output_path: "o.mp4", extra_loras: [{ name: "punch", strength: 0.6 }, { name: "" }] } });
+  assert.deepEqual(out.inputs.overrides.loras, [{ name: "base", strength: 1 }, { name: "punch", strength: 0.6 }]);
+  assert.ok(!("extra_loras" in out.inputs));
+});

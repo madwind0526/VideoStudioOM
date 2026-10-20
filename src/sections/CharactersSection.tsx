@@ -1,12 +1,13 @@
-import { Plus, RotateCcw, Save, Trash2, UserRound, Wand2 } from "lucide-react";
+import { ImagePlus, Plus, RotateCcw, Save, Trash2, UserRound, Wand2, X } from "lucide-react";
 import { useState } from "react";
 import { DIRECTION_PRESETS } from "../../shared/presets.mjs";
 import { ApiError, mediaUrl } from "../api";
 import { BIBLE_FILE, emptyBible, sheetPath, type Bible, type Character } from "../bible";
+import FileNavigator from "../components/FileNavigator";
 import Lightbox from "../components/Lightbox";
 import { storyApi } from "../story";
 import { useJsonFile } from "../useFile";
-import { deleteMedia, makeItem, makePrompt, startItems } from "./mediaJobs";
+import { deleteMedia, importImage, makeItem, makePrompt, startItems } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 const nextId = (characters: Character[]) => {
@@ -25,6 +26,8 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
   const [open, setOpen] = useState<string | null>(null);
   const [making, setMaking] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
+  // The character that is getting a picture from this PC (the file browser is open).
+  const [importing, setImporting] = useState<number | null>(null);
   const bible = file.data;
   const images = detail?.media.images ?? [];
   const running = jobs.current !== null;
@@ -170,6 +173,53 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
                       </button>
                     </div>
                     <textarea rows={3} value={character.description} maxLength={1500} placeholder="나이, 체격, 얼굴, 머리, 한 벌의 옷차림(색과 소재)을 구체적으로 적어 주세요. 이 글이 모든 프롬프트에 그대로 들어갑니다." onChange={(event) => update(index, { description: event.target.value })} />
+                    <div className="field wide">
+                      <span className="hint">참고 사진 (실제 인물이나 설계한 얼굴 사진: 시트와 함께 영상의 참조로 쓰입니다)</span>
+                      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        {(character.photos ?? []).map((photo) => (
+                          <span key={photo} className="photo-chip">
+                            <img src={mediaUrl(project.id, photo, images.find((image) => image.path === photo)?.mtimeMs)} alt="" />
+                            <button type="button" aria-label="사진 빼기" title="이 인물에서 빼기 (파일은 그대로)" onClick={() => update(index, { photos: (character.photos ?? []).filter((item) => item !== photo) })}>
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                        <button className="btn" type="button" disabled={(character.photos ?? []).length >= 4} onClick={() => setImporting(index)}>
+                          <ImagePlus size={15} /> 내 사진 가져오기
+                        </button>
+                        <select
+                          aria-label="이미지에서 고르기"
+                          value=""
+                          onChange={(event) => event.target.value && update(index, { photos: [...(character.photos ?? []), event.target.value].slice(0, 4) })}
+                        >
+                          <option value="">프로젝트 이미지에서 고르기</option>
+                          {images
+                            .filter((image) => !image.path.includes("/sheet-") && !(character.photos ?? []).includes(image.path))
+                            .map((image) => (
+                              <option key={image.path} value={image.path}>
+                                {image.path.replace("assets/images/", "")}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="field wide">
+                      <span className="hint">다른 옷차림 (장면 설명에 옷차림 이름을 쓰면 그 장면만 이 옷으로, 얼굴과 머리는 그대로)</span>
+                      {(character.outfits ?? []).map((outfit, outfitIndex) => (
+                        <div className="row" style={{ gap: 8, marginBottom: 6 }} key={outfitIndex}>
+                          <input type="text" aria-label="옷차림 이름" value={outfit.name} maxLength={30} placeholder="이름 (예: 수영복)" style={{ width: 140 }} onChange={(event) => update(index, { outfits: (character.outfits ?? []).map((item, i) => (i === outfitIndex ? { ...item, name: event.target.value } : item)) })} />
+                          <input type="text" aria-label="옷차림 설명" value={outfit.description} maxLength={400} placeholder="영어로: a navy one-piece swimsuit ..." style={{ flex: 1 }} onChange={(event) => update(index, { outfits: (character.outfits ?? []).map((item, i) => (i === outfitIndex ? { ...item, description: event.target.value } : item)) })} />
+                          <button className="icon-btn" type="button" aria-label="옷차림 지우기" onClick={() => update(index, { outfits: (character.outfits ?? []).filter((_, i) => i !== outfitIndex) })}>
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                      <div>
+                        <button className="btn" type="button" disabled={(character.outfits ?? []).length >= 6} onClick={() => update(index, { outfits: [...(character.outfits ?? []), { name: "", description: "" }] })}>
+                          <Plus size={15} /> 옷차림 추가
+                        </button>
+                      </div>
+                    </div>
                     <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
                       {sheet ? (
                         <button type="button" className="sheet-thumb" onClick={() => setOpen(sheet.path)} title="크게 보기">
@@ -220,6 +270,23 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
             </div>
           </div>
         </>
+      )}
+      {importing !== null && (
+        <FileNavigator
+          title="사진 가져오기"
+          accept={[".png", ".jpg", ".jpeg", ".webp"]}
+          onClose={() => setImporting(null)}
+          onPick={(from) => {
+            const target = importing;
+            setImporting(null);
+            importImage(project.id, from)
+              .then((path) => {
+                if (bible) update(target, { photos: [...(bible.characters[target].photos ?? []), path].slice(0, 4) });
+                onJobsChanged();
+              })
+              .catch((e) => notify(e instanceof ApiError ? e.message : "사진을 가져오지 못했습니다."));
+          }}
+        />
       )}
       {open && <Lightbox src={mediaUrl(project.id, open, images.find((image) => image.path === open)?.mtimeMs)} alt={open} onClose={() => setOpen(null)} />}
     </div>

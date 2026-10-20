@@ -1,6 +1,8 @@
 import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
-import { useState } from "react";
-import { ApiError } from "../api";
+import { useEffect, useState } from "react";
+import { api, ApiError } from "../api";
+import TimelineBar from "../components/TimelineBar";
+import { SCENE_OPTS_FILE, type SceneLora, type SceneOpts } from "./mediaJobs";
 import { storyApi } from "../story";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
@@ -73,13 +75,24 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
   const scenes = plan?.scenes ?? [];
   const { problems, warnings } = check(scenes);
   const [busy, setBusy] = useState(false);
+  // LoRAs only some scenes use (e.g. a fight move); kept next to the scenario because scene_plan.json has no field for them.
+  const opts = useJsonFile<SceneOpts>(project.id, SCENE_OPTS_FILE, notify);
+  const [loraNames, setLoraNames] = useState<string[]>([]);
+  useEffect(() => {
+    api<{ loras: string[] }>("GET", "/api/comfy/models").then((data) => setLoraNames(data.loras)).catch(() => {});
+  }, []);
+  const lorasOf = (id: string): SceneLora[] => opts.data?.[id]?.loras ?? [];
+  const setLoras = (id: string, loras: SceneLora[]) => opts.setData({ ...(opts.data ?? {}), [id]: { ...(opts.data?.[id] ?? {}), loras } });
+  const dirty = file.dirty || opts.dirty;
   const total = scenes.reduce((max, scene) => (Number.isFinite(scene.end_seconds) ? Math.max(max, scene.end_seconds) : max), 0);
 
   const setScenes = (next: Scene[]) => plan && file.setData({ ...plan, scenes: next });
   const update = (index: number, patch: Partial<Scene>) => setScenes(scenes.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
 
   async function save() {
-    if (await file.save()) onChanged();
+    const saved = file.dirty ? await file.save() : true;
+    if (saved && opts.dirty) await opts.save();
+    if (saved) onChanged();
   }
 
   /** The LLM splits the saved synopsis into scenes; the result is a draft that can be reviewed, edited and reverted. */
@@ -108,10 +121,10 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
             <button className="btn" type="button" onClick={() => setScenes([...scenes, newScene(scenes)])}>
               <Plus size={15} /> 장면 추가
             </button>
-            <button className="btn" type="button" disabled={!file.dirty} onClick={file.revert}>
+            <button className="btn" type="button" disabled={!dirty} onClick={() => { file.revert(); opts.revert(); }}>
               <RotateCcw size={15} /> 되돌리기
             </button>
-            <button className="btn primary" type="button" disabled={!file.dirty || problems.length > 0 || file.saving} onClick={() => void save()}>
+            <button className="btn primary" type="button" disabled={!dirty || problems.length > 0 || file.saving} onClick={() => void save()}>
               <Save size={15} /> 저장
             </button>
           </div>
@@ -156,6 +169,15 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
               ))}
             </ul>
           )}
+          <datalist id="scene-lora-list">
+            {loraNames.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          <TimelineBar
+            segments={scenes.map((scene, index) => ({ label: String(index + 1), start: scene.start_seconds, end: scene.end_seconds }))}
+            onBoundary={(boundary, seconds) => setScenes(scenes.map((scene, i) => (i === boundary ? { ...scene, end_seconds: seconds } : i === boundary + 1 ? { ...scene, start_seconds: seconds } : scene)))}
+          />
           <div className="edit-list">
             {scenes.map((scene, index) => (
               <article className="edit-row" key={index}>
@@ -191,6 +213,21 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
                     </button>
                   </div>
                   <textarea rows={2} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
+                  <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <span className="hint">이 장면만 쓰는 LoRA:</span>
+                    {lorasOf(scene.id).map((lora, loraIndex) => (
+                      <span key={loraIndex} className="row" style={{ gap: 4 }}>
+                        <input type="text" list="scene-lora-list" aria-label="LoRA 이름" value={lora.name} placeholder="LoRA 이름" style={{ width: 200 }} onChange={(event) => setLoras(scene.id, lorasOf(scene.id).map((item, i) => (i === loraIndex ? { ...item, name: event.target.value } : item)))} />
+                        <input type="number" aria-label="강도" step={0.05} min={-4} max={4} value={lora.strength} style={{ width: 70 }} onChange={(event) => setLoras(scene.id, lorasOf(scene.id).map((item, i) => (i === loraIndex ? { ...item, strength: Number(event.target.value) } : item)))} />
+                        <button className="icon-btn" type="button" aria-label="LoRA 지우기" onClick={() => setLoras(scene.id, lorasOf(scene.id).filter((_, i) => i !== loraIndex))}>
+                          <Trash2 size={14} />
+                        </button>
+                      </span>
+                    ))}
+                    <button className="btn" type="button" disabled={lorasOf(scene.id).length >= 4} onClick={() => setLoras(scene.id, [...lorasOf(scene.id), { name: "", strength: 1 }])}>
+                      <Plus size={14} /> LoRA
+                    </button>
+                  </div>
                 </div>
               </article>
             ))}

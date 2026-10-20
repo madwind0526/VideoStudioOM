@@ -306,7 +306,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa|import))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
@@ -325,6 +325,9 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     } else methodNotAllowed();
   } else if (match[2] === "subtitles" || match[2] === "export" || match[2] === "qa") {
     sendJson(res, 200, await postProduce(id, match[2], method, requireObject(method === "POST" ? await readJsonBody(req) : {})));
+  } else if (match[2] === "import") {
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, { path: await projects.importImage(id, requireObject(await readJsonBody(req)).from) });
   } else if (match[2] === "concat") {
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));

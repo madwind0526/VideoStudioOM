@@ -2,7 +2,7 @@ import { Sparkles, UserRound, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { resolveSize } from "../../shared/settings.mjs";
 import { ApiError, type MediaFile, type ProjectSettingsView } from "../api";
-import { charactersIn, sheetPath, type Bible } from "../bible";
+import { charactersIn, describeReference, referencesFor, sheetPath, type Bible } from "../bible";
 import { makeItem, makePrompt, startItems, stamp, type MakeItem, type MakeKind } from "../sections/mediaJobs";
 
 /** "auto" is a form-only choice: the video mode follows what was picked (references, first/last image, sound). */
@@ -66,12 +66,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
   /** R2V references: the picked ones, plus the first image when one is picked as well (the scene picture). */
   const refList = resolved === "r2v" ? [...new Set([...refs, ...(first ? [first] : [])])].slice(0, 9) : [];
 
-  const describeRef = (path: string): string => {
-    const owner = bible?.characters.find((character) => sheetPath(character) === path);
-    if (owner) return `character sheet of ${owner.name}: ${owner.description}`;
-    const recipe = media.images.find((file) => file.path === path)?.record;
-    return typeof recipe?.prompt === "string" ? `scene picture: ${recipe.prompt.slice(0, 300)}` : "scene picture";
-  };
+  const describeRef = (path: string): string => describeReference(bible, path, media.images);
 
   function build(): MakeItem | string {
     if (!settings || !size) return "설정을 불러오는 중입니다.";
@@ -132,10 +127,8 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
 
   /** Puts the sheet of every character named in the prompt into the references. */
   function addNamedSheets() {
-    const sheets = charactersIn(bible, prompt)
-      .map((character) => sheetPath(character))
-      .filter((path) => media.images.some((file) => file.path === path));
-    if (sheets.length === 0) return setError("설명에 이름이 나오는 인물의 캐릭터 시트가 없습니다. 등장인물 탭에서 시트를 먼저 만드세요.");
+    const sheets = referencesFor(charactersIn(bible, prompt), media.images, 9);
+    if (sheets.length === 0) return setError("설명에 이름이 나오는 인물의 캐릭터 시트나 사진이 없습니다. 등장인물 탭에서 먼저 만드세요.");
     setError("");
     setRefs((list) => [...new Set([...list, ...sheets])].slice(0, 9));
   }

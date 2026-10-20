@@ -16,12 +16,12 @@ export function engineSlot(tool, inputs) {
   return null;
 }
 
-/** Model names and LoRAs of one settings section, in the shape the tools take (empty when nothing is set). */
-function overridesOf(section) {
+/** Model names and LoRAs of one settings section (plus a call's extra LoRAs), in the shape the tools take (empty when nothing is set). */
+function overridesOf(section, extra = []) {
   const models = Object.fromEntries(
     [["diffusion", section.diffusion], ["text_encoder", section.textEncoder], ["vae", section.vae]].filter(([, value]) => value),
   );
-  const loras = section.loras.map((lora) => ({ name: lora.name, strength: lora.strength }));
+  const loras = [...section.loras, ...extra].map((lora) => ({ name: lora.name, strength: lora.strength }));
   return Object.keys(models).length || loras.length ? { ...(Object.keys(models).length ? { models } : {}), ...(loras.length ? { loras } : {}) } : null;
 }
 
@@ -33,13 +33,14 @@ function overridesOf(section) {
  */
 export function applyEngine(settings, call) {
   const picked = engineSlot(call.tool, call.inputs);
-  // `slot` only selects the workflow; the tools do not know it.
-  const { slot: _slot, ...inputs } = call.inputs;
+  // `slot` only selects the workflow and `extra_loras` adds LoRAs for this one call (a scene's own LoRAs); the tools know neither.
+  const { slot: _slot, extra_loras: extraLoras, ...inputs } = call.inputs;
+  const extra = Array.isArray(extraLoras) ? extraLoras.filter((lora) => lora && typeof lora.name === "string" && lora.name).slice(0, 4).map((lora) => ({ name: lora.name, strength: Number.isFinite(lora.strength) ? lora.strength : 1 })) : [];
   const tool = call.tool;
   const section = picked && settings.engine?.[picked.kind];
   const workflow = section?.[`workflow${picked?.slot}`];
   if (!workflow) {
-    const overrides = section && overridesOf(section);
+    const overrides = section && overridesOf(section, extra);
     return { tool, inputs: overrides ? { ...inputs, overrides } : inputs, allowRoots: [] };
   }
 
@@ -51,7 +52,7 @@ export function applyEngine(settings, call) {
     height: inputs.height,
     seed: inputs.seed,
     output_path: inputs.output_path,
-    ...overridesOf(section),
+    ...overridesOf(section, extra),
     upscale_model: settings.engine.upscale.model,
   };
   if (inputs.duration_seconds) mapped.duration_seconds = inputs.duration_seconds;

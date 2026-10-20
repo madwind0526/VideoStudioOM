@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { deepMerge, sanitizeSettings, validateSettings } from "../shared/settings.mjs";
@@ -303,6 +303,23 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     },
 
     /** Deletes one media file under assets/ together with its record. */
+    /** Copies a picture from anywhere on this PC (picked in the file browser) into assets/images. Returns its project path. */
+    async importImage(id, from) {
+      if (typeof from !== "string" || !path.isAbsolute(from)) throw new HttpError(400, "가져올 파일의 전체 경로가 필요합니다.");
+      const ext = path.extname(from).toLowerCase();
+      if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) throw new HttpError(400, "png, jpg, webp 이미지만 가져올 수 있습니다.");
+      const info = await stat(from).catch(() => null);
+      if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+      if (info.size > 30_000_000) throw new HttpError(413, "이미지가 너무 큽니다(30MB 이하).");
+      const dir = await projectDir(id);
+      const base = path.basename(from, path.extname(from)).replace(/[^\p{L}\p{N}._-]+/gu, "-").slice(0, 40) || "image";
+      const rel = `assets/images/photo-${Date.now().toString(36)}-${base}${ext}`;
+      const target = await resolveInside(dir, rel);
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyFile(from, target);
+      return rel;
+    },
+
     async deleteMedia(id, rel) {
       checkAssetPath(rel);
       const dir = await projectDir(id);

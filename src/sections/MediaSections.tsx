@@ -6,8 +6,8 @@ import GenerateForm from "../components/GenerateForm";
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
-import { BIBLE_FILE, charactersIn, sheetPath, type Bible } from "../bible";
-import { type ClipCheck, AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
+import { BIBLE_FILE, charactersIn, describeReference, referencesFor, type Bible } from "../bible";
+import { type ClipCheck, type SceneOpts, SCENE_OPTS_FILE, AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -214,12 +214,13 @@ export function ImagesSection(props: SectionProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
+  const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
 
   const missing = (plan.data?.scenes ?? []).filter((scene) => scene.description?.trim() && !images.some((file) => file.path === `assets/images/${safeName(scene.id)}.png`));
   const items = settings ? missing.flatMap((scene) => {
-    const item = makeItem(settings, { kind: "image", prompt: scene.description ?? "", source: scene.id }, `assets/images/${safeName(scene.id)}.png`);
+    const item = makeItem(settings, { kind: "image", prompt: scene.description ?? "", source: scene.id, loras: sceneOpts?.[scene.id]?.loras?.filter((lora) => lora.name) }, `assets/images/${safeName(scene.id)}.png`);
     return typeof item === "string" ? [] : [item];
   }) : [];
 
@@ -345,17 +346,13 @@ export function VideosSection(props: SectionProps) {
   const [qa, setQa] = useState<ClipCheck[]>([]);
   const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
   const bible = bibleFile.data;
+  const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
   const videos = props.detail?.media.videos ?? [];
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
   const clips = videos.filter((file) => file.path.startsWith("assets/video/"));
   const selection = useSelection(clips.map((file) => file.path));
-  const describeRef = (path: string) => {
-    const owner = bible?.characters.find((character) => sheetPath(character) === path);
-    if (owner) return `character sheet of ${owner.name}: ${owner.description}`;
-    const recipe = images.find((image) => image.path === path)?.record;
-    return typeof recipe?.prompt === "string" ? `scene picture: ${recipe.prompt.slice(0, 300)}` : "scene picture";
-  };
+  const describeRef = (path: string) => describeReference(bible, path, images);
 
   // Clip n joins image n and image n+1: 1-2, 2-3, 3-4, ...
   const items: MakeItem[] = [];
@@ -370,11 +367,9 @@ export function VideosSection(props: SectionProps) {
       const duration = Math.min(15, Math.max(2, Math.round(seconds * 2) / 2));
       // A scene with people uses their character sheets as references (R2V, one sheet per person, 8 at most);
       // the scene picture comes along as the ninth. Other scenes go from picture to picture (FL2V).
-      const sheets = charactersIn(bible, prompt)
-        .map((character) => sheetPath(character))
-        .filter((path) => images.some((image) => image.path === path))
-        .slice(0, 8);
-      const recipe: Recipe = sheets.length > 0 ? { kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id } : { kind: "fl2v", prompt, first: a.path, last: b.path, duration, source: scene?.id };
+      const sheets = referencesFor(charactersIn(bible, prompt), images, 8);
+      const loras = scene ? sceneOpts?.[scene.id]?.loras?.filter((lora) => lora.name) : undefined;
+      const recipe: Recipe = sheets.length > 0 ? { kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id, loras } : { kind: "fl2v", prompt, first: a.path, last: b.path, duration, source: scene?.id, loras };
       const item = makeItem(settings, recipe, output);
       if (typeof item !== "string") items.push(item);
     }

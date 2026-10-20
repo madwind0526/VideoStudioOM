@@ -25,3 +25,13 @@
 
 ## H3 연속 샷 규칙 (`h3-video.md`의 CONTINUITY)
 joeygambino의 H3 Multishot `PROMPTING.md`와 Pat3dx Story Studio에서 가져온 규칙: 인물·장소 묘사를 샷마다 그대로 반복, 안정된 자세로 시작하고 끝남(대사 + 약 4초 여유가 샷 안에), 샷마다 되돌릴 수 없는 물리적 변화 하나, 부정·정지 표현 금지, 5초 샷에는 대사를 넣지 않음.
+
+## 줄거리·시나리오·대본 생성 (`server/story.mjs`)
+- 흐름: 아이디어 → **줄거리 4안**(고르기) → 줄거리에서 **등장인물·장소 뽑기**(설정집 초안) → **시나리오**(장면 목록) → **대본**(장면마다 대화/효과음/연주곡/보컬). 각 단계는 저장된 파일을 읽어 초안을 돌려주고, 사람이 고치고 저장한다(되돌리기 가능).
+- 시스템 프롬프트: `story-synopsis.md`, `story-bible.md`, `story-scenario.md`, `story-script.md`. OpenMontage `skills/creative/storytelling.md`(but/therefore, 훅 유형, 시각적 원인으로 쓰기), `skills/pipelines/cinematic/scene-director.md`(주체·움직임·장면·프레이밍·카메라 5요소)를 요약해 넣었다.
+- 연출 프리셋 13종(`shared/presets.mjs`, 영화풍/다큐/뮤직비디오/광고/액션/로맨스/스릴러/코미디/판타지/SF/공포/브이로그/스포츠)은 설정집에 저장되어 줄거리부터 모든 이미지·영상 프롬프트에 한 줄로 들어간다.
+- LLM 출력은 JSON으로 받고(`parseJson`) 틀리면 이유를 알려 한 번 다시 묻는다. 장면 길이는 코드가 0.5초 단위, 2~15초로 고쳐 총 길이에 맞춘다.
+
+## 설정집 확장
+- 인물 **참고 사진**(내 사진 가져오기 또는 프로젝트 이미지 선택, 4장까지)은 시트와 함께 R2V 참조가 된다(시트 먼저, 남는 자리에 사진). **다른 옷차림**: 장면 설명에 옷차림 이름이 나오면 그 장면만 새 옷(얼굴·머리 유지).
+- 장면별 LoRA(`studio/scene_opts.json`)는 그 장면의 이미지·영상에만 추가된다(`extra_loras`).

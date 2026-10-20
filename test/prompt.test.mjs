@@ -95,3 +95,9 @@ test("sheet prompt uses the sheet instructions; R2V lists the reference pictures
   });
   assert.match(seen.user, /<Picture 1> = character sheet of Mina\n<Picture 2> = scene picture/);
 });
+
+test("bible: an outfit named in the text replaces the default clothes for that scene only", () => {
+  const bible = { ...BIBLE, characters: [{ ...BIBLE.characters[0], outfits: [{ name: "swimsuit", description: "a navy one-piece swimsuit" }] }] };
+  assert.match(bibleContext(bible, "Mina in her swimsuit at the beach"), /Wearing in this scene \(replaces the default outfit; face and hair unchanged\): a navy one-piece swimsuit/);
+  assert.ok(!bibleContext(bible, "Mina at the cafe").includes("Wearing in this scene"));
+});

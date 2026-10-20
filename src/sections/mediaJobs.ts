@@ -11,6 +11,14 @@ export const AUDIO_KINDS: { id: AudioKind; label: string; make: MakeKind }[] = [
   { id: "instrumental", label: "연주곡", make: "instrumental" },
   { id: "vocal", label: "보컬", make: "vocal" },
 ];
+/** studio/scene_opts.json: options of single scenes, for now the LoRAs that only this scene uses (a fight move, a look). */
+export const SCENE_OPTS_FILE = "studio/scene_opts.json";
+export interface SceneLora {
+  name: string;
+  strength: number;
+}
+export type SceneOpts = Record<string, { loras?: SceneLora[] }>;
+
 /** Sidecar file with the kind of every script section (script.json itself follows OpenMontage's fixed schema). */
 export const AUDIO_KINDS_FILE = "studio/audio_kinds.json";
 export const audioKindOf = (kinds: Record<string, string> | null | undefined, id: string): AudioKind => (AUDIO_KINDS.some((kind) => kind.id === kinds?.[id]) ? (kinds?.[id] as AudioKind) : "dialogue");
@@ -22,6 +30,8 @@ export interface Recipe {
   prompt: string;
   /** Words to sing (vocal). */
   lyrics?: string;
+  /** LoRAs that only this scene uses, added after the ones of the settings. */
+  loras?: SceneLora[];
   /** The user's own short description, kept when `prompt` was written by the prompt maker. */
   idea?: string;
   first?: string;
@@ -54,8 +64,9 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   const size = resolveSize(settings);
   const text = recipe.prompt.trim();
   if (!text) return recipe.kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
+  const sceneLoras = recipe.loras && recipe.loras.length > 0 ? { extra_loras: recipe.loras } : {};
   if (recipe.kind === "image") {
-    return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], output_path: output } };
+    return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, output_path: output } };
   }
   if (recipe.kind === "sheet") {
     // Same image tool, models and LoRAs; `slot` only picks the character-sheet workflow when one is set.
@@ -84,6 +95,7 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     // Only the RTX pass is wired to the tool; other settings mean "no enlargement" for now.
     upscale: settings.video.upscale === "rtx-2pass" && size.final[0] > size.generate[0],
     upscale_scale: size.final[0] / size.generate[0],
+    ...sceneLoras,
     output_path: output,
   };
   if (recipe.kind === "r2v") {
@@ -117,6 +129,9 @@ export async function makePrompt(projectId: string, body: { target: "image" | "v
   const { prompt } = await api<{ prompt: string }>("POST", "/api/prompt", { project: projectId, ...body });
   return prompt;
 }
+
+/** Copies a picture picked in the file browser into the project (assets/images) and returns its project path. */
+export const importImage = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from }).then((data) => data.path);
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
 
