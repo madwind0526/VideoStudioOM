@@ -12,6 +12,8 @@ export interface Place {
 
 export interface Bible {
   style: string;
+  /** Direction preset id (shared/presets.mjs): one way of shooting and telling the whole video. */
+  preset?: string;
   characters: Character[];
   places: Place[];
 }

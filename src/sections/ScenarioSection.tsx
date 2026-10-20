@@ -1,4 +1,7 @@
-import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { useState } from "react";
+import { ApiError } from "../api";
+import { storyApi } from "../story";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
 import type { SectionProps } from "./types";
@@ -69,6 +72,7 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
   const plan = file.data;
   const scenes = plan?.scenes ?? [];
   const { problems, warnings } = check(scenes);
+  const [busy, setBusy] = useState(false);
   const total = scenes.reduce((max, scene) => (Number.isFinite(scene.end_seconds) ? Math.max(max, scene.end_seconds) : max), 0);
 
   const setScenes = (next: Scene[]) => plan && file.setData({ ...plan, scenes: next });
@@ -76,6 +80,20 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
 
   async function save() {
     if (await file.save()) onChanged();
+  }
+
+  /** The LLM splits the saved synopsis into scenes; the result is a draft that can be reviewed, edited and reverted. */
+  async function generate() {
+    setBusy(true);
+    try {
+      const scenario = await storyApi.scenario(project.id);
+      file.setData({ ...(plan ?? {}), ...scenario } as ScenePlan);
+      notify(`${scenario.scenes.length}개 장면을 만들었습니다. 확인하고 저장하세요.`);
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "시나리오를 만들지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -99,7 +117,13 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
           </div>
         )}
       </div>
-      <p className="muted section-note">줄거리를 장면으로 나눈 계획입니다. 장면 길이는 영상 클립 단위(약 5초)에 맞추면 좋아요. 자동으로 만들어 주는 기능은 다음 단계에서 추가됩니다.</p>
+      <p className="muted section-note">줄거리를 장면으로 나눈 계획입니다. 장면 길이는 영상 클립 단위(약 5초)에 맞추면 좋아요.</p>
+      <div className="row" style={{ marginBottom: 14, gap: 12 }}>
+        <button className="btn" type="button" disabled={busy} onClick={() => void generate()}>
+          <Wand2 size={15} /> {busy ? "시나리오 만드는 중..." : "줄거리로 시나리오 만들기"}
+        </button>
+        <span className="hint">저장된 줄거리와 등장인물을 씁니다. 결과는 저장하기 전에 고치거나 되돌릴 수 있어요.</span>
+      </div>
 
       {!file.ready ? (
         <p className="muted">불러오는 중...</p>

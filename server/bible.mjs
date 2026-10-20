@@ -1,3 +1,5 @@
+import { presetHint } from "../shared/presets.mjs";
+
 /**
  * The story bible (studio/bible.json): the look of the video, its characters (each with its own character sheet image)
  * and places. Prompts take the matching entries word for word so every scene keeps the same people and settings.
@@ -8,9 +10,9 @@ export async function readBible(projects, id) {
     const raw = typeof text === "string" ? text : text?.content;
     const data = raw ? JSON.parse(raw) : {};
     const list = (value) => (Array.isArray(value) ? value.filter((item) => item && typeof item.name === "string" && item.name.trim()) : []);
-    return { style: typeof data.style === "string" ? data.style : "", characters: list(data.characters), places: list(data.places) };
+    return { style: typeof data.style === "string" ? data.style : "", preset: typeof data.preset === "string" ? data.preset : "", characters: list(data.characters), places: list(data.places) };
   } catch {
-    return { style: "", characters: [], places: [] };
+    return { style: "", preset: "", characters: [], places: [] };
   }
 }
 
@@ -23,6 +25,7 @@ export const charactersIn = (bible, text) => bible.characters.filter((character)
 export function bibleContext(bible, text) {
   const lines = [];
   if (bible.style.trim()) lines.push(`Visual style: ${bible.style.trim()}`);
+  if (presetHint(bible.preset)) lines.push(`Direction style: ${presetHint(bible.preset)}`);
   charactersIn(bible, text).forEach((character, index) => lines.push(`Character "${character.name}" (S${index + 1}): ${String(character.description ?? "").trim()}`));
   for (const place of bible.places.filter((item) => mentions(text, item.name))) lines.push(`Place "${place.name}": ${String(place.description ?? "").trim()}`);
   return lines.length ? `STORY BIBLE (authoritative, repeat verbatim):\n${lines.join("\n")}` : "";

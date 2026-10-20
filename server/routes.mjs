@@ -7,6 +7,7 @@ import { concatMedia, mixAudio } from "./concat.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, makePrompt } from "./prompt-maker.mjs";
+import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
@@ -161,6 +162,34 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
+  const story = /^\/api\/story\/(synopsis|bible|scenario|script)$/.exec(pathname);
+  if (story) {
+    if (method !== "POST") methodNotAllowed();
+    const body = requireObject(await readJsonBody(req));
+    const id = body.project;
+    const detail = await projects.get(id);
+    const ask = askWith((await settings.get()).llm);
+    const readFileText = async (rel) => (await projects.readText(id, rel, { optional: true })).content ?? "";
+    const synopsis = await readFileText("studio/synopsis.md");
+    const bible = await readBible(projects, id);
+    const preset = typeof body.preset === "string" ? body.preset : bible.preset;
+    const { value: effective } = resolveSettings(await settings.get(), await projects.getSettings(id));
+    const totalSeconds = Number(body.totalSeconds) > 0 ? Number(body.totalSeconds) : effective.defaults.durationSeconds;
+    const hasBible = bible.characters.length > 0;
+    if (story[1] === "synopsis") sendJson(res, 200, { options: await generateSynopses({ idea: body.idea, preset, count: body.count, totalSeconds }, ask) });
+    else if (story[1] === "bible") sendJson(res, 200, { bible: { ...(await generateBible({ synopsis, preset }, ask)), preset: preset ?? "" } });
+    else if (story[1] === "scenario") sendJson(res, 200, { scenario: await generateScenario({ synopsis, bible: hasBible ? bible : null, preset, totalSeconds }, ask) });
+    else {
+      let scenario = null;
+      try {
+        scenario = JSON.parse(await readFileText("artifacts/scene_plan.json"));
+      } catch {
+        scenario = null;
+      }
+      sendJson(res, 200, await generateScript({ synopsis, scenario, bible: hasBible ? bible : null, title: detail.title }, ask));
+    }
+    return true;
+  }
   if (pathname === "/api/prompt") {
     if (method !== "POST") methodNotAllowed();
     const body = requireObject(await readJsonBody(req));

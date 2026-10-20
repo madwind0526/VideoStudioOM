@@ -2023,3 +2023,28 @@ textarea.big {
   font-size: 12px;
   cursor: default;
 }
+
+.options {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.option-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+}
+
+.option-card p {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+.option-card .btn {
+  justify-self: start;
+}

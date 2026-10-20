@@ -1,8 +1,10 @@
 import { Plus, RotateCcw, Save, Trash2, UserRound, Wand2 } from "lucide-react";
 import { useState } from "react";
-import { mediaUrl } from "../api";
+import { DIRECTION_PRESETS } from "../../shared/presets.mjs";
+import { ApiError, mediaUrl } from "../api";
 import { BIBLE_FILE, emptyBible, sheetPath, type Bible, type Character } from "../bible";
 import Lightbox from "../components/Lightbox";
+import { storyApi } from "../story";
 import { useJsonFile } from "../useFile";
 import { deleteMedia, makeItem, makePrompt, startItems } from "./mediaJobs";
 import type { SectionProps } from "./types";
@@ -22,6 +24,7 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
   const file = useJsonFile<Bible>(project.id, BIBLE_FILE, notify);
   const [open, setOpen] = useState<string | null>(null);
   const [making, setMaking] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
   const bible = file.data;
   const images = detail?.media.images ?? [];
   const running = jobs.current !== null;
@@ -30,6 +33,20 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
 
   async function save() {
     if (await file.save()) onChanged();
+  }
+
+  /** The LLM reads the saved synopsis and drafts the style, the people and the places (English descriptions, so prompts stay identical). */
+  async function extract() {
+    setExtracting(true);
+    try {
+      const drafted = await storyApi.bible(project.id);
+      file.setData({ ...emptyBible(), ...(bible ?? {}), style: drafted.style, characters: drafted.characters, places: drafted.places });
+      notify(`인물 ${drafted.characters.length}명, 장소 ${drafted.places.length}곳을 뽑았습니다. 확인하고 저장하세요.`);
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "인물을 뽑지 못했습니다.");
+    } finally {
+      setExtracting(false);
+    }
   }
 
   /** The prompt maker writes a sheet prompt from the description; the image goes to assets/images/sheet-<id>.png. */
@@ -99,13 +116,35 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
             <UserRound size={28} />
           </div>
           <strong>아직 등장인물이 없습니다</strong>
-          <button className="btn primary" type="button" onClick={() => file.setData({ ...emptyBible(), characters: [{ id: "c1", name: "", description: "" }] })}>
-            <Plus size={15} /> 인물 추가
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn primary" type="button" disabled={extracting} onClick={() => void extract()}>
+              <Wand2 size={15} /> {extracting ? "뽑는 중..." : "줄거리에서 인물·장소 뽑기"}
+            </button>
+            <button className="btn" type="button" onClick={() => file.setData({ ...emptyBible(), characters: [{ id: "c1", name: "", description: "" }] })}>
+              <Plus size={15} /> 직접 추가
+            </button>
+          </div>
         </div>
       ) : (
         <>
           <div className="gen-card" style={{ maxWidth: 900 }}>
+            <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+              <button className="btn" type="button" disabled={extracting || file.dirty} title={file.dirty ? "먼저 저장하세요." : "저장된 줄거리에서 다시 뽑습니다. 지금 적은 인물은 바뀝니다."} onClick={() => void extract()}>
+                <Wand2 size={15} /> {extracting ? "뽑는 중..." : "줄거리에서 인물·장소 다시 뽑기"}
+              </button>
+            </div>
+            <label className="field">
+              <span>연출 스타일 (영상 전체)</span>
+              <select value={bible.preset ?? ""} onChange={(event) => set({ preset: event.target.value })}>
+                <option value="">(정하지 않음)</option>
+                {DIRECTION_PRESETS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">촬영과 이야기 방식을 정하는 문구가 모든 프롬프트에 들어갑니다.</span>
+            </label>
             <label className="field wide">
               <span>영상 전체의 화풍 (선택)</span>
               <textarea rows={2} value={bible.style} maxLength={500} placeholder="예: 따뜻한 필름 느낌의 실사, 부드러운 자연광" onChange={(event) => set({ style: event.target.value })} />

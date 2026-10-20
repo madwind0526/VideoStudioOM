@@ -74,8 +74,8 @@ test("bible: only the characters and places the text names are included, descrip
 });
 
 test("readBible tolerates a missing or broken file", async () => {
-  assert.deepEqual(await readBible({ readText: async () => ({ content: null }) }, "x"), { style: "", characters: [], places: [] });
-  assert.deepEqual(await readBible({ readText: async () => ({ content: "{oops" }) }, "x"), { style: "", characters: [], places: [] });
+  assert.deepEqual(await readBible({ readText: async () => ({ content: null }) }, "x"), { style: "", preset: "", characters: [], places: [] });
+  assert.deepEqual(await readBible({ readText: async () => ({ content: "{oops" }) }, "x"), { style: "", preset: "", characters: [], places: [] });
   assert.equal((await readBible({ readText: async () => ({ content: JSON.stringify(BIBLE) }) }, "x")).characters.length, 2);
 });
 

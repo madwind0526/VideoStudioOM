@@ -1,4 +1,7 @@
-import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { useState } from "react";
+import { ApiError } from "../api";
+import { storyApi } from "../story";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
 import { AUDIO_KINDS, AUDIO_KINDS_FILE, audioKindOf } from "./mediaJobs";
@@ -71,7 +74,10 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
   const kinds = useJsonFile<Record<string, string>>(project.id, AUDIO_KINDS_FILE, notify);
   const { problems, warnings } = check(parts, kinds.data);
   const setKind = (id: string, kind: string) => kinds.setData({ ...(kinds.data ?? {}), [id]: kind });
-  const dirty = file.dirty || kinds.dirty;
+  // The scenes get the id of their sound section (script_section_id), so the scenario is saved together with the script.
+  const plan = useJsonFile<{ scenes?: unknown[]; [key: string]: unknown }>(project.id, "artifacts/scene_plan.json", notify);
+  const [busy, setBusy] = useState(false);
+  const dirty = file.dirty || kinds.dirty || plan.dirty;
 
   // The total length always follows the last end time, so the file stays consistent.
   const setParts = (next: ScriptPart[]) => script && file.setData({ ...script, sections: next, total_duration_seconds: longest(next) });
@@ -80,7 +86,24 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
   async function save() {
     const saved = file.dirty ? await file.save() : true;
     if (saved && kinds.dirty) await kinds.save();
+    if (saved && plan.dirty) await plan.save();
     if (saved) onChanged();
+  }
+
+  /** The LLM decides what is heard in every scene (dialogue, effect, music, vocal); the result is a draft to review. */
+  async function generate() {
+    setBusy(true);
+    try {
+      const result = await storyApi.script(project.id);
+      file.setData({ ...(script ?? {}), ...result.script } as Script);
+      kinds.setData(result.kinds);
+      if (plan.data) plan.setData({ ...plan.data, scenes: result.scenes });
+      notify(`${result.script.sections.length}개 소리 구간을 만들었습니다. 확인하고 저장하세요.`);
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "대본을 만들지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -95,7 +118,7 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
             <button className="btn" type="button" onClick={() => setParts([...parts, newPart(parts)])}>
               <Plus size={15} /> 구간 추가
             </button>
-            <button className="btn" type="button" disabled={!dirty} onClick={() => { file.revert(); kinds.revert(); }}>
+            <button className="btn" type="button" disabled={!dirty} onClick={() => { file.revert(); kinds.revert(); plan.revert(); }}>
               <RotateCcw size={15} /> 되돌리기
             </button>
             <button className="btn primary" type="button" disabled={!dirty || problems.length > 0 || file.saving} onClick={() => void save()}>
@@ -105,6 +128,12 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
         )}
       </div>
       <p className="muted section-note">구간마다 소리의 종류를 고르세요. 대화는 TTS가 읽고, 효과음·연주곡·보컬은 SongYUE2가 만듭니다. 대화는 한국어 기준 1초에 약 6~7글자를 읽어서, 구간보다 긴 대사는 알려 드려요.</p>
+      <div className="row" style={{ marginBottom: 14, gap: 12 }}>
+        <button className="btn" type="button" disabled={busy} onClick={() => void generate()}>
+          <Wand2 size={15} /> {busy ? "대본 만드는 중..." : "시나리오로 대본 만들기"}
+        </button>
+        <span className="hint">저장된 시나리오를 장면마다 읽어 대화·효과음·연주곡·보컬 구간을 만듭니다. 결과는 저장하기 전에 고치거나 되돌릴 수 있어요.</span>
+      </div>
 
       {!file.ready ? (
         <p className="muted">불러오는 중...</p>
