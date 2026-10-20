@@ -7,6 +7,7 @@ import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
 import { concatMedia, mixAudio } from "./concat.mjs";
 import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, colorGains, exportVideo, ROLES, srtFromScript } from "./post.mjs";
+import { createComfy } from "./engine/comfy.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, makePrompt } from "./prompt-maker.mjs";
@@ -269,6 +270,16 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       askWith((await settings.get()).llm),
     );
     sendJson(res, 200, { prompt });
+    return true;
+  }
+  if (pathname === "/api/gpu/free") {
+    if (method !== "POST") methodNotAllowed();
+    if ((await jobs.list()).current) throw new HttpError(409, "작업이 진행 중일 때는 VRAM을 비울 수 없습니다.");
+    const { connections } = await settings.get();
+    // Both ComfyUI servers (the generator and the RTX upscaler) keep models loaded after a run.
+    const freed = [];
+    for (const [name, url] of [["comfy", connections.comfyUrl], ["rtx", connections.rtxUrl]]) if (await createComfy(url).free()) freed.push(name);
+    sendJson(res, 200, { freed });
     return true;
   }
   if (pathname === "/api/export/codecs") {

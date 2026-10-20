@@ -112,6 +112,16 @@ export function createComfy(baseUrl, { fetchImpl = fetch, WebSocketImpl = global
       return data.prompt_id;
     },
 
+    /** Unloads the models ComfyUI keeps in VRAM after a run (ComfyUI's /free). True when the server answered. */
+    async free() {
+      try {
+        const { res } = await json("/free", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) }, 15_000);
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+
     /** Stops the run in progress (ComfyUI's /interrupt). */
     async interrupt() {
       await fetchImpl(`${url}/interrupt`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => undefined);

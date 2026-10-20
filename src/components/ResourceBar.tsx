@@ -1,6 +1,6 @@
-import { Cpu } from "lucide-react";
+import { Cpu, Eraser } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, type SystemStats } from "../api";
+import { api, ApiError, type SystemStats } from "../api";
 
 // Green up to 70 %, amber above it, red above 90 % (same thresholds as the SongYUE2 monitor).
 const level = (percent: number) => (percent > 90 ? "high" : percent > 70 ? "mid" : "");
@@ -34,6 +34,24 @@ function activityOf(stats: SystemStats): { text: string; busy: boolean } {
 /** Right side of the top bar, like SongYUE2: connection, GPU name, usage numbers, what the GPU is doing. */
 export default function ResourceBar({ connected }: { connected: boolean }) {
   const [stats, setStats] = useState<SystemStats | null>(null);
+  // "Free VRAM": ComfyUI keeps the models of the last run in GPU memory; this unloads them.
+  const [freeing, setFreeing] = useState(false);
+  const [freeNote, setFreeNote] = useState("");
+
+  async function freeVram() {
+    setFreeing(true);
+    try {
+      const { freed } = await api<{ freed: string[] }>("POST", "/api/gpu/free", {});
+      setFreeNote(freed.length ? "모델을 내렸습니다." : "ComfyUI가 꺼져 있어 비울 것이 없습니다.");
+      // The reading follows within two seconds; show it at once.
+      setStats(await api<SystemStats>("GET", "/api/system/stats").catch(() => null));
+    } catch (e) {
+      setFreeNote(e instanceof ApiError ? e.message : "VRAM을 비우지 못했습니다.");
+    } finally {
+      setFreeing(false);
+      window.setTimeout(() => setFreeNote(""), 5000);
+    }
+  }
 
   useEffect(() => {
     let stopped = false;
@@ -69,6 +87,11 @@ export default function ResourceBar({ connected }: { connected: boolean }) {
           {gpu?.utilization != null && <Item label="GPU" percent={gpu.utilization} title={`GPU 사용률 ${gpu.utilization}%`} />}
           {gpu?.vramUsedMb != null && gpu.vramTotalMb > 0 && (
             <Item label="VRAM" percent={(gpu.vramUsedMb / gpu.vramTotalMb) * 100} title={`GPU 메모리 ${(gpu.vramUsedMb / 1024).toFixed(1)} / ${Math.round(gpu.vramTotalMb / 1024)} GB`} />
+          )}
+          {gpu?.vramUsedMb != null && (
+            <button className="free-vram" type="button" disabled={freeing || stats.activity.tool !== null} onClick={() => void freeVram()} title={freeNote || "ComfyUI가 올려 둔 모델을 내려 VRAM을 비웁니다. 다음 작업은 모델을 다시 올리느라 조금 더 걸립니다."}>
+              <Eraser size={13} /> {freeing ? "비우는 중..." : freeNote ? freeNote : "VRAM 비우기"}
+            </button>
           )}
           {stats.cpuPercent !== null && <Item label="CPU" percent={stats.cpuPercent} title={`CPU 사용률 ${stats.cpuPercent}%`} />}
           {stats.ramTotalMb > 0 && (

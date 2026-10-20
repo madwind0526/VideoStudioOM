@@ -6,7 +6,7 @@ import { createServer } from "node:http";
  *            files: { filename: Buffer } served by /view, reject: node_errors for /prompt, failure: execution error, running: queue }
  */
 export async function fakeComfy({ nodes = {}, finishAfter = 1, outputs = {}, files = {}, reject, failure, running = false } = {}) {
-  const seen = { prompts: [], uploads: [], interrupts: 0, views: [] };
+  const seen = { prompts: [], uploads: [], interrupts: 0, views: [], frees: [] };
   let polls = 0;
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://x");
@@ -34,6 +34,10 @@ export async function fakeComfy({ nodes = {}, finishAfter = 1, outputs = {}, fil
         seen.prompts.push(payload.prompt);
         if (reject) return send({ error: { message: "Prompt outputs failed validation" }, node_errors: reject }, 400);
         return send({ prompt_id: "p1", number: 1, node_errors: {} });
+      }
+      if (url.pathname === "/free") {
+        seen.frees.push(JSON.parse(body.toString() || "{}"));
+        return send({});
       }
       if (url.pathname === "/interrupt") {
         seen.interrupts += 1;

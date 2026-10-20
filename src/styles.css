@@ -2123,3 +2123,30 @@ textarea.big {
   cursor: col-resize;
   touch-action: none;
 }
+
+.free-vram {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 3px 9px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-fg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.free-vram:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.free-vram:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

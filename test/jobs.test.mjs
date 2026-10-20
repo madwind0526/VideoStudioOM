@@ -191,6 +191,29 @@ test("API: whitelist, project-relative paths, full run, GPU status", async () =>
   }
 });
 
+test("API: freeing VRAM works when idle and is refused while a job runs", async () => {
+  const comfy = await fakeComfy(false);
+  const f = await fixture({ comfyUrl: comfy.url });
+  const projectsRoot = path.join(f.base, "projects");
+  const { port, token, stop } = await startServer({ port: 0, dataDir: f.dataDir, projectsRoot, runTool: fakeRun });
+  const call = async (method, url, body) => {
+    const res = await fetch(`http://127.0.0.1:${port}${url}`, { method, headers: { "content-type": "application/json", [TOKEN_HEADER]: token }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    const idle = await call("POST", "/api/gpu/free", {});
+    assert.equal(idle.status, 200);
+    // The settings point the RTX ComfyUI at its default port, which is not running here; the fake one answered.
+    assert.ok(idle.body.freed.includes("comfy"));
+    await call("POST", "/api/jobs", { project: "demo", tool: "comfyui_krea_image", inputs: { output_path: "assets/images/a.png", sleep: 1.5 } });
+    assert.equal((await call("POST", "/api/gpu/free", {})).status, 409);
+  } finally {
+    await stop();
+    comfy.close();
+    await f.cleanup();
+  }
+});
+
 test("API: a batch runs in order, saves how each file was made, and a file can be deleted", async () => {
   const f = await fixture();
   const projectsRoot = path.join(f.base, "projects");

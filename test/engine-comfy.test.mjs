@@ -69,6 +69,17 @@ test("cancel interrupts the server run and ends the wait; a timeout does not int
   }
 });
 
+test("free asks ComfyUI to unload its models and tells whether the server answered", async () => {
+  const comfy = await fakeComfy();
+  try {
+    assert.equal(await createComfy(comfy.url).free(), true);
+    assert.deepEqual(comfy.seen.frees, [{ unload_models: true, free_memory: true }]);
+    assert.equal(await createComfy("http://127.0.0.1:9").free(), false);
+  } finally {
+    comfy.close();
+  }
+});
+
 test("upload, node info, model options and busy check", async () => {
   const comfy = await fakeComfy({ nodes: { UNETLoader: { input: { required: { unet_name: [["a.safetensors", "b.safetensors"]] } } } }, running: true });
   const dir = await tmp();
