@@ -32,16 +32,25 @@ export function createJobQueue({ dir, getConfig, events, onFinished, run = runTo
   let loaded = null;
   const queueFile = path.join(dir, "queue.json");
 
+  // Saving the queue and the history is best effort: a write that fails must not stop the server or the running job.
   const persistQueue = () =>
     mutex("queue", async () => {
-      await mkdir(dir, { recursive: true });
-      await writeFileAtomic(queueFile, `${JSON.stringify({ current: currentItem, pending, paused }, null, 2)}\n`);
+      try {
+        await mkdir(dir, { recursive: true });
+        await writeFileAtomic(queueFile, `${JSON.stringify({ current: currentItem, pending, paused }, null, 2)}\n`);
+      } catch {
+        // The next change writes it again.
+      }
     });
 
   const persist = () =>
     mutex("jobs", async () => {
-      await mkdir(dir, { recursive: true });
-      await writeFileAtomic(file, `${JSON.stringify(history.slice(0, HISTORY_LIMIT), null, 2)}\n`);
+      try {
+        await mkdir(dir, { recursive: true });
+        await writeFileAtomic(file, `${JSON.stringify(history.slice(0, HISTORY_LIMIT), null, 2)}\n`);
+      } catch {
+        // The next change writes it again.
+      }
     });
 
   // A job still marked running after a restart lost its owner; its bridge may still hold the GPU lock.
