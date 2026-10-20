@@ -15,14 +15,14 @@
 브라우저 UI (React + TS + Vite, :5184 dev)  ── REST/SSE ──  Node 백엔드 (:4314)
                                                               ├ 설정/프로젝트/파일 저장소
                                                               ├ LLM 텍스트 호출 (claude / codex / opencode CLI, ollama)
-                                                              ├ OpenMontage 브릿지 (Python 도구 1회 실행)
-                                                              └ SongYUE2 브릿지 (:4311)
-엔진: E:\Claude\OpenMontage (tools/, pipeline_defs/, skills/, projects/<id>/)
+                                                              ├ 엔진 (server/engine: ComfyUI :8190/:8191 REST+웹소켓, 그래프, 도구)
+                                                              └ SongYUE2 (:4311: 음악, 효과음, 음성 엔진)
+프로젝트: projects/<id>/ (기본 위치는 기존 OpenMontage projects 폴더)
 ```
 
 - **UI**: SongYUE2 스타일. 미니멀, 아이콘(lucide) 중심. 좌측 아이콘 메뉴 / 상단 메뉴(프로젝트, 단계 표시, LLM 선택) / 하단 시스템 메시지 줄(진행, 오류, 에이전트 로그 요약). 한국어 UI, 라이트/다크.
 - **백엔드**: Node(웹 프레임워크 없음), MemoReader/MusicAutomation과 같은 구조(`server/`, `shared/`). LLM 선택 계층은 MusicAutomation의 `llm.mjs`, `llm-cli.mjs`를 복사해 사용(순서: claude-cli, codex-cli, opencode-cli, ollama, 기본 claude-cli). 코드는 이 저장소로 복사하고 원본 커밋을 주석에 남긴다(경로 import 금지).
-- **OpenMontage 브릿지**: `bridge/om_tool.py`(OpenMontage venv로 실행)가 `tools.tool_registry`에서 도구를 이름으로 찾아 JSON 입력으로 1회 실행하고 JSON을 돌려준다. GUI의 "이 장면만 다시 생성" 같은 직접 실행에 쓴다. 에이전트도 같은 도구를 쓴다.
+- **엔진**: `server/engine/`가 ComfyUI(그래프 제출, 진행률, 취소, 다운로드)와 SongYUE2를 Node에서 직접 호출한다. 2026-10-20에 OpenMontage와 Python 브릿지를 걷어냈다(`docs/engine.md`).
 - **진행 상황**: LLM 호출과 도구 실행의 상태, 그리고 `projects/<id>/`에 쓰이는 파일을 백엔드가 감시해 SSE로 UI에 전달한다.
 - **접근 보호**: 서버는 `127.0.0.1`만 열고, 요청의 `Origin`/`Host`가 앱 주소와 다르면 거부하며, 시작 시 만든 토큰을 쓰기/실행 요청에 요구한다(SongYUE2 백엔드의 외부 Origin 차단 방식 참고).
 

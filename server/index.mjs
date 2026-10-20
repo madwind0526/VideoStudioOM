@@ -8,7 +8,6 @@ import { ensureWorkFolders, folderPaths } from "./folders.mjs";
 import { createGuard } from "./guard.mjs";
 import { HttpError, sendJson } from "./http.mjs";
 import { createJobQueue } from "./jobs.mjs";
-import { pythonFor } from "./om-bridge.mjs";
 import { createDurationProbe, ffprobeFor } from "./probe.mjs";
 import { createProjectStore } from "./projects.mjs";
 import { handleApi } from "./routes.mjs";
@@ -58,7 +57,7 @@ async function serveStatic(url, res) {
  * because the allowed Host values depend on the real port.
  * `dataDir` holds settings.json; `projectsRoot` overrides the projects folder (tests).
  */
-export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.join(ROOT_DIR, "data"), projectsRoot, bridge = {}, readGpu, appRoot = ROOT_DIR } = {}) {
+export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.join(ROOT_DIR, "data"), projectsRoot, runTool: runToolOverride, readGpu, appRoot = ROOT_DIR } = {}) {
   // Saving settings creates the input/output folders (SongYUE2 does the same for its folders).
   // Relative folder settings resolve against `appRoot` (tests pass a temp folder).
   const settings = createSettingsStore({ dir: dataDir, onSaved: (effective) => ensureWorkFolders(effective, appRoot) });
@@ -78,18 +77,11 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
     events,
     // Keep how a generated file was made, so it can be made again from the screen.
     onFinished: (job) => (job.meta?.output && job.meta?.record ? projects.setAssetRecord(job.meta.project, job.meta.output, job.meta.record) : undefined),
-    // `bridge` overrides the defaults (tests point it at a fake OpenMontage).
+    // `runTool` replaces the tool runner (tests use a fake one that only writes a file).
+    run: runToolOverride,
     getConfig: async () => {
       const { connections } = await settings.get();
-      return {
-        omDir: connections.openmontageDir,
-        python: pythonFor(connections.openmontageDir),
-        bridgePath: path.join(ROOT_DIR, "bridge", "om_tool.py"),
-        lockFile: path.join(dataDir, "runtime", "gpu.lock"),
-        songyueUrl: connections.songyueUrl,
-        timeoutMs: 3_600_000,
-        ...bridge,
-      };
+      return { connections, ffmpegPath: connections.ffmpegPath };
     },
   });
   let guard;

@@ -43,9 +43,9 @@
 Node 백엔드 (:4314, 웹 프레임워크 없음)
    ├─ 설정 / 프로젝트 / 파일 저장소
    ├─ LLM 텍스트 호출   claude → codex → opencode → ollama (중립 폴더, stdin, 도구 권한 없음)
-   ├─ OpenMontage 브릿지  bridge/om_tool.py (Python 도구 1회 실행)
-   └─ SongYUE2 브릿지     http://127.0.0.1:4311
-엔진: E:\Claude\OpenMontage  (tools/, pipeline_defs/, skills/, projects/<id>/)
+   ├─ 엔진               server/engine (ComfyUI 8190/8191 REST+웹소켓, 그래프, 도구)
+   └─ SongYUE2           http://127.0.0.1:4311 (음악, 효과음, 음성)
+프로젝트: projects/<id>/  (기본 위치는 기존 OpenMontage projects 폴더)
 ```
 
 ## 폴더 구조
@@ -61,7 +61,6 @@ VideoStudioOM/
 ├─ server/              Node 백엔드
 │  └─ prompts/          에이전트 프롬프트 템플릿
 ├─ shared/              서버/클라이언트 공용 (설정 스키마, 기본값)
-├─ bridge/              om_tool.py: OpenMontage 도구 실행 브릿지
 ├─ test/                node --test
 ├─ data/                사용자 설정 (git 제외)
 ├─ docs/                design.md(설계), plan.md(계획), 이후 spike-agent.md
@@ -104,7 +103,7 @@ E:\Claude\OpenMontage\projects\<id>\
 
 - **접근 보호**: 모든 쓰기/실행 요청에 시작 시 생성한 토큰을 요구하고, `Origin`/`Host`가 앱 주소와 다르면 거부한다. 브라우저의 다른 페이지나 tailnet 내 다른 기기가 호출하지 못하게 한다.
 - **LLM은 텍스트만**: 도구 권한이 없는 호출만 쓴다. 호출마다 타임아웃을 두고 종료할 때 자식 프로세스까지 `taskkill /T`로 끈다.
-- **GPU 락**: 잠금은 백엔드 메모리가 아니라 `bridge/om_tool.py`의 락 파일로 두고, SongYUE2의 생성 상태(진행 중이면 409)도 함께 확인한다.
+- **GPU 한 번에 하나**: 작업 큐가 한 번에 하나만 돌리고, ComfyUI의 `/queue`(다른 실행 중이면 409)와 SongYUE2의 생성 상태(진행 중이면 409)도 확인한다. 취소는 ComfyUI `/interrupt`로 바로 멈춘다.
 - **저장 충돌 방지**: 파일을 불러올 때의 수정 시각을 저장 때 비교해 다르면 거부한다.
 - **승인 기록**: 승인할 때 입력 파일의 해시를 `studio/approvals.json`에 남기고, 앞 단계가 바뀌면 뒤 단계는 다시 승인해야 한다.
 - **경로 검증**: 프로젝트 id는 `^[a-z0-9가-힣_-]{1,60}$`만 허용하고, 파일 경로는 `realpath`로 풀어 프로젝트 루트 안인지 대소문자 구분 없이 확인한다. `:`가 든 이름은 거부한다.

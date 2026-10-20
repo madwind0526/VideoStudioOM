@@ -33,3 +33,6 @@ pose, camera and park background stayed as in the reference video. Face swap and
 - Krea 그래프를 API JSON으로 저장해 실행: 15초, `models.diffusion` 덮어쓰기 적용. 없는 노드(`NoSuchNodeXYZ`)는 "ComfyUI에 설치되지 않은 노드가 필요합니다: NoSuchNodeXYZ"로 중단, UI 형식 JSON은 "Save (API Format)" 안내.
 - 채우는 규칙: 긍정 프롬프트 = 샘플러의 positive 입력으로 이어지는 텍스트 노드, 시드 = `seed`/`noise_seed`, 크기·길이 = Latent 계열 노드의 `width/height/length`, 입력 파일 = LoadImage/LoadVideo/LoadAudio를 노드 번호 순서로, LoRA = diffusion 로더 뒤에 `LoraLoaderModelOnly`를 이어 붙임.
 - 한계: 자동 설치는 하지 않는다(어떤 커스텀 노드가 필요한지 이름만 알려 줌). 모델·LoRA 덮어쓰기는 워크플로를 지정했을 때만 적용되고, 기본 도구(Krea, H3)는 코드에 고정된 모델을 쓴다.
+
+## 2026-10-20: 더 이상 쓰지 않음
+VideoStudioOM은 이 브랜치의 도구를 실행하지 않는다. 같은 일을 Node(`server/engine/`)가 직접 한다(`docs/engine.md`). 이 문서와 브랜치는 기록으로 남긴다. `skills/`는 프롬프트 작성 참고 자료, `projects/`는 기존 프로젝트 폴더로만 쓰인다.

@@ -59,7 +59,12 @@ add({ path: "llm.timeoutSec", label: "호출 제한 시간(초)", kind: "number"
 
 add({ path: "connections.songyueUrl", label: "SongYUE2 연결 주소", kind: "text", wide: true });
 add({ path: "connections.comfyUrl", label: "ComfyUI 연결 주소", kind: "text", wide: true });
-add({ path: "connections.openmontageDir", label: "OpenMontage 폴더", kind: "text", wide: true });
+add({ path: "connections.songyueDir", label: "SongYUE2 폴더", kind: "text", wide: true, hint: "SongYUE2의 ComfyUI(Krea, H3)와 음성 엔진을 켤 때 씁니다." });
+add({ path: "connections.rtxUrl", label: "RTX ComfyUI 연결 주소", kind: "text", wide: true });
+add({ path: "connections.rtxRoot", label: "RTX ComfyUI 폴더", kind: "text", wide: true });
+add({ path: "connections.rtxApp", label: "RTX ComfyUI 프로그램 폴더", kind: "text", wide: true });
+add({ path: "connections.rtxOutputDir", label: "RTX ComfyUI 결과 폴더", kind: "text", wide: true });
+add({ path: "connections.openmontageDir", label: "프로젝트 기본 위치(기존 OpenMontage 폴더)", kind: "text", wide: true, hint: "프로젝트 폴더를 따로 정하지 않았을 때 이 폴더의 projects를 씁니다. 영상 만들기에는 더 이상 필요하지 않습니다." });
 add({ path: "connections.ffmpegPath", label: "ffmpeg 경로", kind: "text", wide: true, placeholder: "PATH의 ffmpeg" });
 add({ path: "storage.projectsDir", label: "프로젝트 폴더", kind: "text", wide: true, placeholder: "OpenMontage 폴더의 projects", hint: "바꾸면 서버를 다시 시작해야 새 폴더를 지켜봅니다." });
 add({ path: "storage.inputDir", label: "입력 폴더", kind: "text", wide: true, placeholder: "input", hint: "가져올 노래, 참조 이미지·영상을 두는 곳입니다." });

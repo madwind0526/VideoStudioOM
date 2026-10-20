@@ -53,6 +53,7 @@ export default function JobList({ projectId, jobs, outputs, pending, paused, onC
           <div className="job-head">
             <strong>{TOOL_LABELS[job.tool] ?? job.tool}</strong>
             <span className="chip">{STATUS_LABELS[job.status]}</span>
+            {job.status === "running" && job.progress && job.progress.max > 0 && <span className="chip">{Math.round((job.progress.value / job.progress.max) * 100)}%</span>}
             {job.meta.batch && job.meta.batch.total > 1 && <span className="chip">{job.meta.batch.index}/{job.meta.batch.total}</span>}
             {job.durationSeconds != null && <span className="chip">{formatTime(job.durationSeconds)}</span>}
             <span className="job-label" title={job.meta.label}>

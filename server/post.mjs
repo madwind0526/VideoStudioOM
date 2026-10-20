@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { ffmpegFor } from "./concat.mjs";
 import { HttpError } from "./http.mjs";
+import { killTree } from "./proc.mjs";
 import { buildMixFilter, ROLES } from "./mixfilter.mjs";
 
 const clock = (seconds) => {
@@ -32,21 +33,33 @@ export function srtFromScript(script, kinds = {}) {
     .join("\n");
 }
 
-function runCapture(command, args, { cwd, timeoutMs = 900_000 } = {}) {
+export function runCapture(command, args, { cwd, timeoutMs = 900_000, signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error("사용자가 취소했습니다."), { cancelled: true }));
     const child = spawn(command, args, { cwd, windowsHide: true });
     const chunks = [];
     let stderr = "";
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    let cancelled = false;
+    const timer = setTimeout(() => killTree(child), timeoutMs);
+    const onAbort = () => {
+      cancelled = true;
+      killTree(child);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (chunk) => chunks.push(chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.once("error", (error) => {
+    const done = () => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    child.once("error", (error) => {
+      done();
       reject(error);
     });
     child.once("close", (code) => {
-      clearTimeout(timer);
-      code === 0 ? resolve({ stdout: Buffer.concat(chunks), stderr }) : reject(new Error(stderr.trim().slice(-600) || `종료 코드 ${code}`));
+      done();
+      if (cancelled) reject(Object.assign(new Error("사용자가 취소했습니다."), { cancelled: true }));
+      else code === 0 ? resolve({ stdout: Buffer.concat(chunks), stderr }) : reject(new Error(stderr.trim().slice(-600) || `종료 코드 ${code}`));
     });
   });
 }

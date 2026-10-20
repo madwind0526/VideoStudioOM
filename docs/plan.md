@@ -56,7 +56,7 @@
 
 | # | 작업 |
 |---|---|
-| 2.1 | `bridge/om_tool.py`: OpenMontage venv로 도구를 이름 + JSON 입력으로 1회 실행, JSON 출력. `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8` |
+| 2.1 | (폐지: Node `server/engine/`로 대체됨, `docs/engine.md`) `bridge/om_tool.py`: OpenMontage venv로 도구를 이름 + JSON 입력으로 1회 실행, JSON 출력. `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8` |
 | 2.2 | **GPU 락**: 락 파일(독점 생성)을 브릿지에서 잡는다. 백엔드 작업 큐는 이 락과 SongYUE2의 `/api/generate/status`를 함께 확인하고, 진행 중이면 409. 작업 상태/로그 SSE, 서버 재시작 후 파일로 복구. 상태 표시에는 SongYUE2의 `/api/system/stats`(GPU, CPU, RAM)를 재사용 |
 | 2.3 | **설정 화면**(가끔 바꾸는 전역 기본값, `design.md` 4.2, SongYUE2 스타일 섹션 카드와 섹션별 저장): LLM 타일 선택과 폴백 순서(대본 도우미), 영상/이미지/오디오 기본값, 로컬 실행 환경(연결 주소, 프로젝트·입력·출력 폴더와 폴더 상태 표시). 값 제약(32의 배수, 17k+5 프레임) 표시. 기본값은 SongYUE2/MusicAutomation 설정과 맞춘다(Krea 2 Turbo, ComfyUI `http://127.0.0.1:8190`, 저장 형식 flac) |
 | 2.3b | **시작(작업) 페이지**(자주 바꾸는 값, Wave 2에서 만든 틀에 채움): 주제, 영상 크기(프리셋 드롭다운 + 직접 입력), 목표 길이, 영상 모드, 오디오 원천, 이미지 모델 선택, "고급 옵션"(접힘). LLM 선택은 설정 화면의 "대본 도우미"에서만 한다. 화면은 SongYUE2처럼 `메뉴 | 작업 설정 패널 | 프로젝트 카드` 구성이고, 카드 썸네일을 누르면 재생, 정보를 누르면 줄거리/시나리오/대본/이미지/동영상을 보는 정보 창이 열린다(구현됨). 값은 `studio/settings.json`에 저장하고 없으면 전역 기본값을 따른다. 어느 쪽 값을 쓰는지 화면에 표시한다 |

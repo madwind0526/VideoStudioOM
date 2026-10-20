@@ -48,6 +48,14 @@ export const DEFAULTS = {
   connections: {
     songyueUrl: "http://127.0.0.1:4311",
     comfyUrl: "http://127.0.0.1:8190",
+    // Where SongYUE2 lives (its backend, its ComfyUI with Krea and H3, its speech engine).
+    songyueDir: "C:\\Claude\\SongYUE2",
+    // The second ComfyUI with the RTX upscale nodes: address, install folder, program folder and where it writes results.
+    rtxUrl: "http://127.0.0.1:8191",
+    rtxRoot: "C:\\Users\\madwi\\Documents\\ComfyUI",
+    rtxApp: "C:\\Users\\madwi\\AppData\\Local\\Programs\\@comfyorgcomfyui-electron\\resources\\ComfyUI",
+    rtxOutputDir: "G:\\output",
+    // Only the default place of the projects folder now (the old OpenMontage folder holds the existing projects).
     openmontageDir: "E:\\Claude\\OpenMontage",
     ffmpegPath: "",
   },
@@ -147,7 +155,12 @@ const RULES = {
   "llm.timeoutSec": intBetween("LLM 호출 제한 시간(초)", 30, 900),
   "connections.songyueUrl": localUrl("SongYUE2 주소"),
   "connections.comfyUrl": localUrl("ComfyUI 주소"),
-  "connections.openmontageDir": text("OpenMontage 폴더"),
+  "connections.songyueDir": folder("SongYUE2 폴더"),
+  "connections.rtxUrl": localUrl("RTX ComfyUI 주소"),
+  "connections.rtxRoot": folder("RTX ComfyUI 폴더"),
+  "connections.rtxApp": folder("RTX ComfyUI 프로그램 폴더"),
+  "connections.rtxOutputDir": folder("RTX ComfyUI 결과 폴더"),
+  "connections.openmontageDir": text("프로젝트 기본 위치(기존 OpenMontage 폴더)"),
   "connections.ffmpegPath": text("ffmpeg 경로"),
   "engine.image.workflowT2I": folder("image T2I 워크플로"),
   "engine.image.workflowI2I": folder("image I2I 워크플로"),

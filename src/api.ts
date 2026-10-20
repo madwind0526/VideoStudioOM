@@ -64,6 +64,8 @@ export interface Job {
   error?: string | null;
   code?: string | null;
   durationSeconds?: number | null;
+  /** Sampler step of the running job (ComfyUI progress). */
+  progress?: { value: number; max: number };
   meta: { project?: string; output?: string; label?: string; batch?: { id: string; index: number; total: number } };
 }
 

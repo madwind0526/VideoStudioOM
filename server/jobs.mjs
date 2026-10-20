@@ -4,23 +4,27 @@ import path from "node:path";
 
 import { createMutex, writeFileAtomic } from "./fs-util.mjs";
 import { HttpError } from "./http.mjs";
-import { killTree, readGpuLock, runBridge } from "./om-bridge.mjs";
+import { createComfy } from "./engine/comfy.mjs";
+import { outsideRoots, runTool } from "./engine/tools.mjs";
 
 const HISTORY_LIMIT = 40;
 
+// Tools that use the ComfyUI of SongYUE2: a run of the user's own in that ComfyUI blocks starting another.
+const COMFY_TOOLS = new Set(["comfyui_krea_image", "h3_local_video", "h3_reference_video", "comfyui_workflow"]);
+
 /**
- * One GPU job at a time. The bridge holds the real lock (a file, so tools started from anywhere
- * respect it); this queue adds the current job's metadata, history, cancellation, and batches:
- * a batch runs its jobs one after another and stops at the first one that fails or is cancelled.
- * `getConfig()` returns { python, bridgePath, omDir, lockFile, songyueUrl, timeoutMs }.
+ * One GPU job at a time, run inside this server (no helper process). The queue keeps the current job's metadata and
+ * progress, the history, cancellation, and batches: a batch runs its jobs one after another and stops at the first one
+ * that fails or is cancelled (the rest can be resumed).
+ * `getConfig()` returns { connections, ffmpegPath }; `run` is the tool runner (tests replace it).
  * `onFinished(job)` is called after every finished job (the server uses it to save how a file was made).
  */
-export function createJobQueue({ dir, getConfig, events, onFinished }) {
+export function createJobQueue({ dir, getConfig, events, onFinished, run = runTool }) {
   const file = path.join(dir, "jobs.json");
   const mutex = createMutex();
   let history = [];
   let current = null;
-  let currentChild = null;
+  let controller = null;
   let pending = [];
   // Work of a batch that stopped (a failure, a cancel, a restart): kept so the rest can be made later ("resume").
   let paused = [];
@@ -126,9 +130,8 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
     await ready();
     const config = await getConfig();
     if (current) throw new HttpError(409, "다른 작업이 진행 중입니다.", { job: current });
-    const lock = await readGpuLock(config.lockFile);
-    if (lock.busy) throw new HttpError(409, "GPU를 다른 작업이 쓰고 있습니다.", { lock: lock.holder });
-    if (await songyueBusy(config.songyueUrl)) throw new HttpError(409, "SongYUE2가 곡을 만드는 중입니다.");
+    if (COMFY_TOOLS.has(tool) && (await createComfy(config.connections.comfyUrl).busy())) throw new HttpError(409, "ComfyUI가 다른 작업을 하고 있습니다.");
+    if (await songyueBusy(config.connections.songyueUrl)) throw new HttpError(409, "SongYUE2가 곡을 만드는 중입니다.");
 
     const job = { id: randomUUID().slice(0, 8), tool, status: "running", startedAt: Date.now(), meta };
     current = job;
@@ -138,17 +141,24 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
     publish(job);
     void persist();
 
-    runBridge({
-      python: config.python,
-      bridgePath: config.bridgePath,
-      omDir: config.omDir,
-      timeoutMs: config.timeoutMs,
-      args: ["--lock-file", config.lockFile, ...[allowRoot].flat().flatMap((root) => ["--allow-root", root]), "run", tool],
-      stdin: JSON.stringify(inputs),
-      onSpawn: (child) => (currentChild = child),
-    }).then(async (result) => {
+    controller = new AbortController();
+    let lastSent = 0;
+    const onProgress = ({ value, max }) => {
+      job.progress = { value, max };
+      // The sampler reports every step; the screen needs a few updates per second at most.
+      if (Date.now() - lastSent > 400 || value === max) {
+        lastSent = Date.now();
+        publish(job);
+      }
+    };
+    const offending = outsideRoots(inputs, [allowRoot].flat());
+    const finished = offending
+      ? Promise.resolve({ ok: false, code: "path_outside", error: `허용된 폴더 밖의 경로입니다: ${offending}`, artifacts: [] })
+      : run({ tool, inputs, connections: config.connections, ffmpegPath: config.ffmpegPath, signal: controller.signal, onProgress });
+    finished.then(async (result) => {
       const cancelled = job.status === "cancelled";
       if (!cancelled) job.status = result.ok ? "done" : "failed";
+      delete job.progress;
       Object.assign(job, {
         finishedAt: Date.now(),
         artifacts: result.artifacts ?? [],
@@ -158,7 +168,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
         seed: result.seed ?? null,
       });
       current = null;
-      currentChild = null;
+      controller = null;
       void persist();
       await afterJob(job);
       publish(job);
@@ -173,8 +183,10 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
     },
 
     async gpu() {
-      const config = await getConfig();
-      return { lock: await readGpuLock(config.lockFile), songyueBusy: await songyueBusy(config.songyueUrl), current };
+      const { connections } = await getConfig();
+      const comfyBusy = current === null && (await createComfy(connections.comfyUrl).busy());
+      const busy = current !== null || comfyBusy;
+      return { lock: { busy, holder: current ? { tool: current.tool } : comfyBusy ? { tool: "comfyui" } : undefined }, songyueBusy: await songyueBusy(connections.songyueUrl), current };
     },
 
     start,
@@ -184,8 +196,15 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
       if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, "만들 항목이 없습니다.");
       const id = randomUUID().slice(0, 8);
       const tagged = items.map((item, index) => ({ ...item, meta: { ...item.meta, batch: { id, index: index + 1, total: items.length } } }));
-      const first = await start(tagged[0]);
+      // The rest must be waiting before the first job starts: a job that fails at once ends its batch right away.
       pending = tagged.slice(1);
+      let first;
+      try {
+        first = await start(tagged[0]);
+      } catch (error) {
+        pending = [];
+        throw error;
+      }
       await persistQueue();
       return { job: first, queued: pending.length };
     },
@@ -216,7 +235,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
       await ready();
       if (!current || current.id !== id) throw new HttpError(404, "진행 중인 작업이 아닙니다.");
       current.status = "cancelled"; // a cancelled job ends its batch; afterJob moves the rest to the paused list
-      killTree(currentChild);
+      controller?.abort();
       return current;
     },
   };
