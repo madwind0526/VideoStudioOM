@@ -212,7 +212,7 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
                       <Trash2 size={15} />
                     </button>
                   </div>
-                  <textarea rows={2} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
+                  <textarea rows={4} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
                   <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <span className="hint">이 장면만 쓰는 LoRA:</span>
                     {lorasOf(scene.id).map((lora, loraIndex) => (
