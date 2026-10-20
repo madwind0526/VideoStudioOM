@@ -273,3 +273,42 @@ test("API: a batch runs in order, saves how each file was made, and a file can b
     await f.cleanup();
   }
 });
+
+test("a batch that stops keeps the rest (the stopped item first); resume makes it again, discard drops it", async () => {
+  const f = await fixture();
+  try {
+    const good = (name) => ({ tool: "comfyui_krea_image", inputs: gpuInputs(f.project, { output_path: path.join(f.project, "assets", `${name}.png`) }), allowRoot: f.project, meta: { project: "demo", output: `assets/${name}.png` } });
+    // The middle item writes outside the allowed folder, so it fails (path_outside).
+    const bad = { ...good("b"), inputs: { output_path: path.join(f.base, "elsewhere.png") } };
+    await f.queue.startBatch([good("a"), bad, good("c")]);
+    for (let i = 0; i < 200 && ((await f.queue.list()).current || (await f.queue.list()).pending > 0); i += 1) await sleep(50);
+    assert.equal((await f.queue.list()).paused, 2);
+    // Resuming runs the bad item again (fails again) and keeps "c" paused behind it.
+    await f.queue.resume();
+    for (let i = 0; i < 200 && ((await f.queue.list()).current || (await f.queue.list()).pending > 0); i += 1) await sleep(50);
+    assert.equal((await f.queue.list()).paused, 2);
+    await f.queue.discardPaused();
+    assert.equal((await f.queue.list()).paused, 0);
+    await assert.rejects(f.queue.resume(), { status: 404 });
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("work left over from a stopped server is offered for resume", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(path.join(f.dataDir, "runtime"), { recursive: true });
+    const item = (name) => ({ tool: "comfyui_krea_image", inputs: gpuInputs(f.project, { output_path: path.join(f.project, "assets", `${name}.png`) }), allowRoot: f.project, meta: { project: "demo", batch: { id: "x", index: 1, total: 3 } } });
+    await writeFile(path.join(f.dataDir, "runtime", "queue.json"), JSON.stringify({ current: item("a"), pending: [item("b")], paused: [] }));
+    assert.equal((await f.queue.list()).paused, 2);
+    await f.queue.resume();
+    for (let i = 0; i < 200 && ((await f.queue.list()).current || (await f.queue.list()).pending > 0); i += 1) await sleep(50);
+    const history = (await f.queue.list()).history;
+    assert.equal(history.filter((job) => job.status === "done").length, 2);
+    await stat(path.join(f.project, "assets", "a.png"));
+    await stat(path.join(f.project, "assets", "b.png"));
+  } finally {
+    await f.cleanup();
+  }
+});

@@ -210,6 +210,16 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
+  if (pathname === "/api/jobs/resume" || pathname === "/api/jobs/discard") {
+    if (method !== "POST") methodNotAllowed();
+    if (pathname === "/api/jobs/resume") sendJson(res, 202, await jobs.resume());
+    else {
+      await jobs.discardPaused();
+      sendJson(res, 200, { ok: true });
+    }
+    return true;
+  }
+
   const cancel = /^\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname);
   if (cancel) {
     if (method !== "POST") methodNotAllowed();

@@ -22,7 +22,17 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
   let current = null;
   let currentChild = null;
   let pending = [];
+  // Work of a batch that stopped (a failure, a cancel, a restart): kept so the rest can be made later ("resume").
+  let paused = [];
+  let currentItem = null;
   let loaded = null;
+  const queueFile = path.join(dir, "queue.json");
+
+  const persistQueue = () =>
+    mutex("queue", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFileAtomic(queueFile, `${JSON.stringify({ current: currentItem, pending, paused }, null, 2)}\n`);
+    });
 
   const persist = () =>
     mutex("jobs", async () => {
@@ -46,6 +56,14 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
         }
       }
       if (changed) await persist();
+      // Whatever was running or waiting when the server stopped goes to the paused list, the running item first.
+      try {
+        const saved = JSON.parse(await readFile(queueFile, "utf8"));
+        paused = [...(saved.current?.meta?.batch ? [saved.current] : []), ...(saved.pending ?? []), ...(saved.paused ?? [])];
+        if (paused.length !== (saved.paused ?? []).length) await persistQueue();
+      } catch {
+        paused = [];
+      }
     })());
 
   async function songyueBusy(url) {
@@ -69,9 +87,23 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
         // Not being able to save the record must not stop the batch; the file itself exists.
       }
     }
-    if (pending.length === 0) return;
+    if (job.status !== "done" && job.meta?.batch && currentItem) {
+      // The item that did not finish is made again on resume, together with what was waiting behind it.
+      paused = [...paused, currentItem, ...pending];
+      pending = [];
+      currentItem = null;
+      await persistQueue();
+      publish(job);
+      return;
+    }
+    if (pending.length === 0) {
+      currentItem = null;
+      await persistQueue();
+      return;
+    }
     if (job.status !== "done") {
       pending = [];
+      await persistQueue();
       publish(job);
       return;
     }
@@ -79,7 +111,9 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
     try {
       await start(next);
     } catch (error) {
+      paused = [...paused, next, ...pending];
       pending = [];
+      await persistQueue();
       const failed = { id: randomUUID().slice(0, 8), tool: next.tool, status: "failed", startedAt: Date.now(), finishedAt: Date.now(), error: error.message, meta: next.meta };
       history.unshift(failed);
       publish(failed);
@@ -98,6 +132,8 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
 
     const job = { id: randomUUID().slice(0, 8), tool, status: "running", startedAt: Date.now(), meta };
     current = job;
+    currentItem = { tool, inputs, allowRoot, meta };
+    void persistQueue();
     history.unshift(job);
     publish(job);
     void persist();
@@ -133,7 +169,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
   return {
     async list() {
       await ready();
-      return { current, history: history.slice(0, HISTORY_LIMIT), pending: pending.length };
+      return { current, history: history.slice(0, HISTORY_LIMIT), pending: pending.length, paused: paused.length };
     },
 
     async gpu() {
@@ -150,14 +186,36 @@ export function createJobQueue({ dir, getConfig, events, onFinished }) {
       const tagged = items.map((item, index) => ({ ...item, meta: { ...item.meta, batch: { id, index: index + 1, total: items.length } } }));
       const first = await start(tagged[0]);
       pending = tagged.slice(1);
+      await persistQueue();
       return { job: first, queued: pending.length };
+    },
+
+    /** Starts the paused work again (the stopped item first, then the rest one after another). */
+    async resume() {
+      await ready();
+      if (paused.length === 0) throw new HttpError(404, "이어서 만들 작업이 없습니다.");
+      const items = paused;
+      paused = [];
+      await persistQueue();
+      try {
+        return await this.startBatch(items.map(({ meta, ...item }) => ({ ...item, meta: { ...meta, batch: undefined } })));
+      } catch (error) {
+        paused = items;
+        await persistQueue();
+        throw error;
+      }
+    },
+
+    async discardPaused() {
+      await ready();
+      paused = [];
+      await persistQueue();
     },
 
     async cancel(id) {
       await ready();
       if (!current || current.id !== id) throw new HttpError(404, "진행 중인 작업이 아닙니다.");
-      current.status = "cancelled";
-      pending = []; // a cancelled job ends its batch
+      current.status = "cancelled"; // a cancelled job ends its batch; afterJob moves the rest to the paused list
       killTree(currentChild);
       return current;
     },

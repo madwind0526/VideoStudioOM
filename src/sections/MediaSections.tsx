@@ -196,7 +196,7 @@ function Top({ props, kinds, outputs, creating, bible }: { props: SectionProps; 
   return (
     <>
       {creating && <GenerateForm projectId={project.id} kinds={kinds} view={view} media={{ images: detail?.media.images ?? [], audio: detail?.media.audio ?? [] }} bible={bible} running={jobs.current !== null} notify={notify} onStarted={onJobsChanged} />}
-      <JobList projectId={project.id} jobs={jobs.history} outputs={outputs} pending={jobs.pending} onChanged={onJobsChanged} />
+      <JobList projectId={project.id} jobs={jobs.history} outputs={outputs} pending={jobs.pending} paused={jobs.paused} onChanged={onJobsChanged} />
     </>
   );
 }

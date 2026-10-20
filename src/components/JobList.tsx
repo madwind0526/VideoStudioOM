@@ -12,21 +12,42 @@ interface Props {
   outputs: string[];
   /** Jobs of a batch that are still waiting for their turn. */
   pending: number;
+  /** Work of a stopped batch that can be made again. */
+  paused: number;
   onChanged: () => void;
 }
 
 /** Jobs of one project that are running or did not finish well. Finished results appear in the section's own list. */
-export default function JobList({ projectId, jobs, outputs, pending, onChanged }: Props) {
+export default function JobList({ projectId, jobs, outputs, pending, paused, onChanged }: Props) {
   const mine = jobs.filter((job) => job.meta.project === projectId && outputs.some((prefix) => job.meta.output?.startsWith(prefix)) && job.status !== "done").slice(0, 5);
-  if (mine.length === 0) return null;
+  if (mine.length === 0 && paused === 0) return null;
 
   async function cancel(id: string) {
     await api("POST", `/api/jobs/${id}/cancel`).catch(() => undefined);
     onChanged();
   }
 
+  async function resume(discard: boolean) {
+    await api("POST", discard ? "/api/jobs/discard" : "/api/jobs/resume").catch(() => undefined);
+    onChanged();
+  }
+
   return (
     <div className="jobs" aria-label="최근 작업">
+      {paused > 0 && (
+        <article className="job interrupted">
+          <div className="job-head">
+            <strong>중단된 작업 {paused}개</strong>
+            <span className="job-label">멈춘 곳부터 이어서 만들 수 있어요.</span>
+            <button className="btn primary" type="button" onClick={() => void resume(false)}>
+              이어서 만들기
+            </button>
+            <button className="btn" type="button" onClick={() => void resume(true)}>
+              버리기
+            </button>
+          </div>
+        </article>
+      )}
       {mine.map((job) => (
         <article key={job.id} className={`job ${job.status}`}>
           <div className="job-head">

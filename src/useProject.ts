@@ -25,9 +25,9 @@ export function useProjectDetail(id: string, ...reloadOn: number[]) {
 
 /** The job queue: the running job and the recent history. */
 export function useJobs(jobTick: number) {
-  const [jobs, setJobs] = useState<{ current: Job | null; history: Job[]; pending: number }>({ current: null, history: [], pending: 0 });
+  const [jobs, setJobs] = useState<{ current: Job | null; history: Job[]; pending: number; paused: number }>({ current: null, history: [], pending: 0, paused: 0 });
   const reload = useCallback(async () => {
-    setJobs(await api<{ current: Job | null; history: Job[]; pending: number }>("GET", "/api/jobs").catch(() => ({ current: null, history: [], pending: 0 })));
+    setJobs(await api<{ current: Job | null; history: Job[]; pending: number; paused: number }>("GET", "/api/jobs").catch(() => ({ current: null, history: [], pending: 0, paused: 0 })));
   }, []);
   useEffect(() => {
     void reload();
