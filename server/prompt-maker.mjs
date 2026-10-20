@@ -56,6 +56,7 @@ export async function makePrompt({ target, mode, text, duration, title, firstPro
   const videoMode = VIDEO_MODES.includes(mode) ? mode : "i2v";
   const seconds = snapFrames(Number(duration) > 0 ? Number(duration) : 5).seconds;
   const user = `${MODE_TASKS[videoMode]}\nCLIP LENGTH: ${seconds.toFixed(2)} seconds (24 fps)\n\n${refLines ? `REFERENCES (in this order):\n${refLines}\n\n` : ""}IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`;
+  if (videoMode === "r2v") return referenceVideoPrompt(await serial(async () => ask(await read("h3-ref-video.md"), user)));
   const answer = await serial(async () => ask(await read("h3-video.md"), user));
   // The music field is the last one; a remark after its paragraph is dropped.
   const start = Math.max(0, answer.indexOf("integrated_multimodal_description:"));
@@ -67,6 +68,26 @@ export async function makePrompt({ target, mode, text, duration, title, firstPro
   }
   const lead = videoMode === "i2v" || videoMode === "s2v" ? `${FIRST_FRAME}\n\n` : videoMode === "fl2v" ? `${firstAndLast(seconds)}\n\n` : "";
   return `${lead}${body.trim()}`;
+}
+
+// The six sections of the official full-reference (Ref2VA) prompt, in their order.
+export const REF_SECTIONS = ["subject_definitions", "summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music"];
+
+/** Checks an answer in the official Ref2VA format and drops anything before the first section or after the last paragraph. */
+export function referenceVideoPrompt(answer) {
+  const start = answer.indexOf("subject_definitions:");
+  if (start < 0) throw new HttpError(502, "LLM이 H3 참조 형식(subject_definitions ...)으로 쓰지 않았습니다. 다시 시도하세요.");
+  const music = answer.indexOf("non_diegetic_music:", start);
+  const gap = music < 0 ? -1 : answer.indexOf("\n\n", music);
+  const body = answer.slice(start, gap < 0 ? answer.length : gap).trim();
+  let at = -1;
+  for (const name of REF_SECTIONS) {
+    const next = body.indexOf(`${name}:`, at + 1);
+    if (next <= at) throw new HttpError(502, `LLM이 H3 참조 형식의 ${name} 섹션을 빠뜨렸거나 순서가 다릅니다. 다시 시도하세요.`);
+    at = next;
+  }
+  if (!/detailed_description:[\s\S]*\[Shot 1\]/.test(body)) throw new HttpError(502, "detailed_description에 [Shot 1]이 없습니다. 다시 시도하세요.");
+  return body;
 }
 
 export const askWith = (llm) => (system, user) => askLlm(llm, system, user).then((result) => result.text);

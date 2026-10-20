@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { cleanOutput, askLlm } from "../server/llm.mjs";
-import { makePrompt } from "../server/prompt-maker.mjs";
+import { makePrompt, referenceVideoPrompt } from "../server/prompt-maker.mjs";
 
+const REF_OK = [
+  "subject_definitions:\n<Subject 1> is the woman in <Picture 1>, with long black hair and a white lace gown.",
+  "summary:\n[reference generation] <Subject 1> stands in a white studio.",
+  "retention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - face, hair and gown are retained.",
+  "detailed_description:\nThe target video is a fashion editorial in a white studio.\n[Shot 1] <Subject 1> stands at the centre of the frame.",
+  "overall_soundscape:\nSoft room tone.",
+  "non_diegetic_music: N/A",
+].join("\n\n");
 const H3_OK = "integrated_multimodal_description: [Shot 1] Live-action, cinematic, a woman walks.\n\noverall_soundscape: Footsteps on gravel.\n\nnon_diegetic_music: N/A";
 
 test("image prompt: the LLM gets the idea and the project context, quotes are stripped", async () => {
@@ -89,11 +97,23 @@ test("sheet prompt uses the sheet instructions; R2V lists the reference pictures
   assert.match(seen.system, /CHARACTER REFERENCE SHEET/);
   assert.match(seen.user, /CHARACTER:\nMina/);
   assert.match(seen.user, /warm film look/);
-  await makePrompt({ target: "video", mode: "r2v", text: "x", refs: ["character sheet of Mina", "scene picture"] }, async (_s, user) => {
-    seen = { user };
-    return H3_OK;
+  await makePrompt({ target: "video", mode: "r2v", text: "x", refs: ["character sheet of Mina", "scene picture"] }, async (system, user) => {
+    seen = { system, user };
+    return REF_OK;
   });
   assert.match(seen.user, /<Picture 1> = character sheet of Mina\n<Picture 2> = scene picture/);
+  // Reference clips use the official full-reference (Ref2VA) prompt, not the three-field one.
+  assert.match(seen.system, /FULL-REFERENCE mode/);
+});
+
+test("reference video prompt: the six official sections in order; remarks around them are dropped; a missing section is refused", () => {
+  const out = referenceVideoPrompt(`Here is the prompt:\n${REF_OK}\n\nNote: I kept it short.`);
+  assert.ok(out.startsWith("subject_definitions:") && out.endsWith("non_diegetic_music: N/A"));
+  assert.throws(() => referenceVideoPrompt(REF_OK.replace("retention_analysis:", "retention:")), { status: 502 });
+  assert.throws(() => referenceVideoPrompt("just a paragraph"), { status: 502 });
+  assert.throws(() => referenceVideoPrompt(REF_OK.replaceAll("[Shot 1]", "Shot one")), { status: 502 });
+  // Sections in the wrong order are refused too.
+  assert.throws(() => referenceVideoPrompt(REF_OK.replace("summary:", "XX:").replace("overall_soundscape:", "summary:")), { status: 502 });
 });
 
 test("bible: an outfit named in the text replaces the default clothes for that scene only", () => {

@@ -14,7 +14,12 @@ export const H3 = {
   refUnets: {
     turbo: "MiniMaxH3\\10Eros_Max_h3_TURBO_ref2va_beta2_int8_convrot.safetensors",
     official: "MiniMaxH3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    // The model of the Deno R2V workflow (Singularity ref2va v1.3), run with its 8-step DMD LoRA and sigma shift 12/3.
+    deno: "MiniMaxH3\\Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
   },
+  denoClip: "MiniMaxH3\\qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+  latentUpscaler: "MiniMaxH3\\minimax_h3_latent_upscaler_3d_fp16.safetensors",
+  denoLora: "MiniMaxH3\\minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors",
 };
 export const NEGATIVE_SUFFIX = " No text, no subtitles, no watermark.";
 
@@ -30,7 +35,7 @@ export function h3Frames(seconds) {
  */
 export const h3Prompt = (prompt) => {
   const text = prompt.trim();
-  return text.includes("integrated_multimodal_description:") || text.includes(NEGATIVE_SUFFIX.trim()) ? text : text + NEGATIVE_SUFFIX;
+  return text.includes("integrated_multimodal_description:") || text.includes("detailed_description:") || text.includes(NEGATIVE_SUFFIX.trim()) ? text : text + NEGATIVE_SUFFIX;
 };
 
 const KREA_PATTERNS = {
@@ -109,22 +114,30 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
   return wf;
 }
 
-const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20] };
+const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20], deno: ["euler", 8] };
 
 /**
  * H3 reference to video: up to 9 reference pictures, a reference video (edit or restyle a clip) and reference audio.
  * Reference nodes use ids from 40 up so they never collide with the fixed ids below. The result is node "15".
  */
-export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", images = [], video, audio, useVideoAudio = false }) {
+export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false }) {
   const frames = h3Frames(seconds);
   const [sampler, defaultSteps] = REF_SAMPLERS[model];
   const cond = { clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0], prompt: h3Prompt(prompt), width, height, length: frames, ref_image_size: "match" };
+  const deno = model === "deno";
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: H3.refUnets[model], weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: H3.clip, type: "minimax", device: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: deno ? H3.denoClip : H3.clip, type: "minimax", device: "default" } },
     3: { class_type: "VAELoader", inputs: { vae_name: H3.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: H3.audioVae } },
   };
+  // The Deno workflow's model chain (single stage): quantised attention, the 8-step DMD LoRA, then the H3 sigma shift 12/3.
+  if (deno) {
+    wf[21] = { class_type: "ModelAttentionBackend", inputs: { model: ["1", 0], attention: "comfy kitchen attention" } };
+    wf[22] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["21", 0], lora_name: H3.denoLora, strength_model: 1.0 } };
+    wf[23] = { class_type: "MiniMaxH3SigmaShift", inputs: { model: ["22", 0], shift_video: 12, shift_audio: 3 } };
+  }
+  const sampled = deno ? ["23", 0] : ["1", 0];
   images.forEach((image, index) => {
     wf[String(40 + index)] = { class_type: "LoadImage", inputs: { image } };
     // Dynamic inputs of this node are named "<group>.<prefix><index>" in the API graph.
@@ -143,15 +156,27 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     wf[34] = { class_type: "LoadAudio", inputs: { audio } };
     cond["ref_audios.ref_audio_0"] = ["34", 0];
   }
+  // Deno two-stage: sample all but the last step small, enlarge the video latent 2x, then finish the last step at full size.
+  let final = ["11", 0];
+  if (twoStage) {
+    final = ["53", 0];
+    Object.assign(wf, {
+      50: { class_type: "SplitSigmas", inputs: { sigmas: ["8", 0], step: (steps || defaultSteps) - 1 } },
+      51: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["11", 1] } },
+      52: { class_type: "MinimaxH3LatentUpscaler3D", inputs: { latent: ["51", 0], model_name: H3.latentUpscaler, mode: "scale by multiplier", "mode.scale": 2, align: 32, enable_temporal_chunking: true, force_unload: true, device: "cuda", precision: "fp16" } },
+      54: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["52", 0], audio_latent: ["51", 1] } },
+      53: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: ["50", 1], latent_image: ["54", 0] } },
+    });
+  }
   Object.assign(wf, {
     6: { class_type: "MiniMaxH3ReferenceToVideo", inputs: cond },
     7: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
-    8: { class_type: "BasicScheduler", inputs: { model: ["1", 0], scheduler: "simple", steps: steps || defaultSteps, denoise: 1.0 } },
+    8: { class_type: "BasicScheduler", inputs: { model: sampled, scheduler: "simple", steps: steps || defaultSteps, denoise: 1.0 } },
     9: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
-    20: { class_type: "BasicGuider", inputs: { model: ["1", 0], conditioning: ["6", 0] } },
-    11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: ["8", 0], latent_image: ["6", 1] } },
-    12: { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } },
-    13: { class_type: "VAEDecodeAudio", inputs: { samples: ["11", 0], vae: ["4", 0] } },
+    20: { class_type: "BasicGuider", inputs: { model: sampled, conditioning: ["6", 0] } },
+    11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: twoStage ? ["50", 0] : ["8", 0], latent_image: ["6", 1] } },
+    12: { class_type: "VAEDecode", inputs: { samples: final, vae: ["3", 0] } },
+    13: { class_type: "VAEDecodeAudio", inputs: { samples: final, vae: ["4", 0] } },
     14: { class_type: "CreateVideo", inputs: { images: ["12", 0], audio: ["13", 0], fps: 24 } },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: "video/vsom_h3_ref", format: "mp4", codec: "h264" } },
   });

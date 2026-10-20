@@ -7,6 +7,7 @@ import { ffprobeFor } from "../probe.mjs";
 import { runCapture } from "../post.mjs";
 import { createComfy } from "./comfy.mjs";
 import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, rtxGraph } from "./graphs.mjs";
+import { composeSheet, extractFrame, SHEET_SECONDS, SHEET_SHOTS, sheetPrompt, sheetReferencePrompt } from "./sheet.mjs";
 import { ensureService } from "./services.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "./workflow-patch.mjs";
 
@@ -23,6 +24,7 @@ const REQUIRED = {
   h3_local_video: ["prompt", "output_path"],
   h3_reference_video: ["prompt", "output_path"],
   comfyui_workflow: ["workflow_path", "output_path"],
+  character_sheet: ["prompt", "output_path"],
   qwen3_tts: ["text", "output_path"],
   songyue_music: ["prompt", "output_path"],
   songyue_sfx: ["prompt", "output_path"],
@@ -56,7 +58,11 @@ export async function runTool({ tool, inputs, connections, ffmpegPath = "", sign
     signal,
     onProgress,
     comfy: (url) => (deps.comfyFor ?? createComfy)(url),
-    ensure: (name) => (deps.ensure ?? ensureService)(name, connections, { signal }),
+    ensure: deps.ensure ?? (async (name) => {
+      await ensureService(name, connections, { signal });
+      // One 12 GB card serves all three ComfyUI servers: release the others before this one loads its models.
+      for (const other of ["comfy", "ref", "rtx"]) if (other !== name && connections[`${other}Url`]) await createComfy(connections[`${other}Url`]).free();
+    }),
     capture: deps.capture ?? runCapture,
     fetchImpl: deps.fetchImpl ?? fetch,
   };
@@ -196,22 +202,29 @@ const HANDLERS = {
     for (const [label, file] of [...images.map((item) => ["참조 이미지", item]), ["참조 영상", video], ["참조 오디오", audio]]) {
       if (file && !(await exists(file))) throw new ToolError(`${label} 파일이 없습니다: ${file}`, "bad_input");
     }
-    const model = inputs.model ?? "turbo";
-    if (!(model in H3.refUnets)) throw new ToolError("model은 turbo 또는 official이어야 합니다.", "bad_input");
+    const model = inputs.model ?? "deno";
+    if (!(model in H3.refUnets)) throw new ToolError("model은 turbo, official, deno 중 하나여야 합니다.", "bad_input");
     const output = await prepareOutput(inputs);
     const stem = output.slice(0, -path.extname(output).length);
-    const upscale = inputs.upscale ?? true;
+    const twoStage = model === "deno" && (inputs.two_stage ?? true);
+    // Two-stage: width and height are the FINAL size; the first stage runs at half of it (multiples of 32) and the latent is enlarged 2x.
+    const half = (value) => Math.max(32, Math.round(Number(value) / 2 / 32) * 32);
+    const [width, height] = [Number(inputs.width ?? 736), Number(inputs.height ?? 416)];
+    const upscale = inputs.upscale ?? !twoStage;
     const seed = inputs.seed ?? randomSeed();
     const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`];
     try {
-      await context.ensure("comfy");
-      const comfy = context.comfy(context.connections.comfyUrl);
+      // The Deno profile runs on the Rev0 ComfyUI (it has the H3 latent upscaler); the other profiles stay on SongYUE2's.
+      const server = model === "deno" ? "ref" : "comfy";
+      await context.ensure(server);
+      const comfy = context.comfy(context.connections[`${server}Url`]);
       await h3Models(comfy, [H3.refUnets[model]]);
+      if (model === "deno" && !(await comfy.options("LoraLoaderModelOnly", "lora_name")).includes(H3.denoLora)) throw new ToolError(`ComfyUI에 LoRA가 없습니다: ${H3.denoLora}`, "unavailable");
       const uploaded = [];
       for (const image of images) uploaded.push(await comfy.upload(image, path.basename(image)));
       const graph = applyOverrides(
         h3RefGraph({
-          prompt: inputs.prompt, width: Number(inputs.width ?? 736), height: Number(inputs.height ?? 416), seconds: Number(inputs.duration_seconds ?? 5), steps: inputs.steps, seed, model,
+          prompt: inputs.prompt, width: twoStage ? half(width) : width, height: twoStage ? half(height) : height, seconds: Number(inputs.duration_seconds ?? 5), steps: inputs.steps, seed, model, twoStage,
           images: uploaded, video: video ? await comfy.upload(video, path.basename(video)) : null, audio: audio ? await comfy.upload(audio, path.basename(audio)) : null, useVideoAudio: Boolean(inputs.use_video_audio),
         }),
         inputs.overrides,
@@ -227,6 +240,52 @@ const HANDLERS = {
       await cleanup(temps);
     }
     return { artifacts: [output], seed, model: `minimax-h3-ref2va-${model}${upscale ? "+rtx-2pass" : ""}`, data: { provider: "minimax-h3-local", output, seed, images: images.length, reference_video: Boolean(video), reference_audio: Boolean(audio) } };
+  },
+
+  /**
+   * A character sheet the MICW way: a full-body picture (a photo, or one made by Krea from the description) is the reference
+   * of one H3 reference clip whose eight timed shots show the person from every side and with three expressions; one frame
+   * is taken per shot and the sheet is laid out by code. Writes the sheet to `output_path` and the two frames the videos
+   * use as references next to it (`<name>-front.png`, `<name>-face.png`).
+   */
+  async character_sheet(inputs, context) {
+    const output = await prepareOutput(inputs);
+    const stem = output.slice(0, -path.extname(output).length);
+    const description = String(inputs.prompt);
+    const style = String(inputs.style ?? "");
+    const photos = inputs.reference_image_paths ?? [];
+    for (const photo of [inputs.reference_image_path, ...photos].filter(Boolean)) if (!(await exists(photo))) throw new ToolError(`참조 사진이 없습니다: ${photo}`, "bad_input");
+    const work = await mkdtemp(path.join(os.tmpdir(), "vsom-sheet-"));
+    try {
+      // 1) <Picture 1>: the character's own full-body picture, or one drawn from the description.
+      let body = inputs.reference_image_path;
+      if (!body) {
+        body = path.join(work, "body.png");
+        const drawn = await HANDLERS.comfyui_krea_image({ prompt: sheetReferencePrompt({ description, style }), width: 1280, height: 704, seed: inputs.seed, output_path: body }, context);
+        if (!drawn.artifacts?.length) throw new ToolError("전신 참조 그림을 만들지 못했습니다.");
+      }
+      // 2) the clip: eight shots, one per second (extra photos only fix the face).
+      const clip = path.join(work, "turnaround.mp4");
+      const result = await HANDLERS.h3_reference_video(
+        { prompt: sheetPrompt({ description, style, faceReferences: photos.length }), reference_image_paths: [body, ...photos].slice(0, 9), model: inputs.model, width: 1472, height: 832, duration_seconds: SHEET_SECONDS, upscale: inputs.upscale ?? false, upscale_scale: Number(inputs.upscale_scale ?? 2.6), seed: inputs.seed, overrides: inputs.overrides, output_path: clip },
+        context,
+      );
+      // 3) one frame per shot, then the sheet.
+      const frames = [];
+      for (const shot of SHEET_SHOTS) {
+        const frame = path.join(work, `${shot.id}.png`);
+        await extractFrame({ ffmpegPath: context.ffmpegPath, clip, shot, output: frame, capture: context.capture });
+        frames.push(frame);
+      }
+      await composeSheet({ ffmpegPath: context.ffmpegPath, frames, output, capture: context.capture });
+      const front = `${stem}-front.png`;
+      const face = `${stem}-face.png`;
+      await copyFile(frames[SHEET_SHOTS.findIndex((shot) => shot.id === "front")], front);
+      await copyFile(frames[SHEET_SHOTS.findIndex((shot) => shot.id === "face-neutral")], face);
+      return { artifacts: [output, front, face], seed: result.seed, model: "minimax-h3-ref2va (character sheet)", data: { provider: "minimax-h3-local", output, front, face, shots: SHEET_SHOTS.length } };
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
   },
 
   async comfyui_workflow(inputs, context) {

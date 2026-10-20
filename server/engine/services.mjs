@@ -10,6 +10,7 @@ const portOf = (url) => new URL(url).port || "80";
  * The local services the tools depend on and how to start them when they are not running:
  *   songyue - SongYUE2 backend (music, sound effects, speech engine files)
  *   comfy   - SongYUE2's ComfyUI (Krea 2 Turbo, MiniMax H3), the main generator
+ *   ref     - the Rev0 portable ComfyUI (H3 latent upscaler, Deno nodes) for two-stage reference video
  *   rtx     - the main ComfyUI desktop install (RTX 2-pass upscale nodes)
  * `connections` is settings.connections.
  */
@@ -32,6 +33,14 @@ export function serviceSpecs(connections) {
       cwd: path.join(songyue, "engine", "ComfyUI"),
       log: path.join(songyue, "engine", "ComfyUI", "comfy_videostudio.log"),
       waitSeconds: 120,
+    },
+    ref: {
+      url: `${connections.refUrl}/system_stats`,
+      command: path.join(connections.refDir, "python_embeded", "python.exe"),
+      args: ["-I", "-W", "ignore::FutureWarning", "ComfyUI/main.py", "--windows-standalone-build", "--listen", "127.0.0.1", "--port", portOf(connections.refUrl), "--disable-auto-launch"],
+      cwd: connections.refDir,
+      log: path.join(connections.refDir, "comfy_videostudio.log"),
+      waitSeconds: 180,
     },
     rtx: {
       url: `${connections.rtxUrl}/system_stats`,

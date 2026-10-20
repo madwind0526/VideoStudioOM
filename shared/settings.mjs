@@ -51,6 +51,9 @@ export const DEFAULTS = {
     // Where SongYUE2 lives (its backend, its ComfyUI with Krea and H3, its speech engine).
     songyueDir: "C:\\Claude\\SongYUE2",
     // The second ComfyUI with the RTX upscale nodes: address, install folder, program folder and where it writes results.
+    // The third ComfyUI (Rev0 portable) with the H3 latent upscaler and the Deno nodes: the two-stage reference video and character sheet run here.
+    refUrl: "http://127.0.0.1:8188",
+    refDir: "C:\ComfyUI-Portable\ComfyUI-Rev0",
     rtxUrl: "http://127.0.0.1:8191",
     rtxRoot: "C:\\Users\\madwi\\Documents\\ComfyUI",
     rtxApp: "C:\\Users\\madwi\\AppData\\Local\\Programs\\@comfyorgcomfyui-electron\\resources\\ComfyUI",
@@ -156,6 +159,8 @@ const RULES = {
   "connections.songyueUrl": localUrl("SongYUE2 주소"),
   "connections.comfyUrl": localUrl("ComfyUI 주소"),
   "connections.songyueDir": folder("SongYUE2 폴더"),
+  "connections.refUrl": localUrl("참조 영상 ComfyUI 주소"),
+  "connections.refDir": folder("참조 영상 ComfyUI 폴더"),
   "connections.rtxUrl": localUrl("RTX ComfyUI 주소"),
   "connections.rtxRoot": folder("RTX ComfyUI 폴더"),
   "connections.rtxApp": folder("RTX ComfyUI 프로그램 폴더"),

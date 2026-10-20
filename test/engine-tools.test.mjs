@@ -121,7 +121,7 @@ test("paths outside the allowed folders are found; speech is split in sentences 
 });
 
 const run = (tool, inputs, comfy, extra = {}) =>
-  runTool({ tool, inputs, connections: { comfyUrl: comfy.url, rtxUrl: comfy.url, songyueUrl: "http://127.0.0.1:9", songyueDir: "x" }, deps: { ensure: async () => undefined, ...extra } });
+  runTool({ tool, inputs, connections: { comfyUrl: comfy.url, rtxUrl: comfy.url, refUrl: comfy.url, songyueUrl: "http://127.0.0.1:9", songyueDir: "x" }, deps: { ensure: async () => undefined, ...extra } });
 
 test("Krea image: models are picked from ComfyUI, overrides add a LoRA, the result is saved", async () => {
   const comfy = await fakeComfy({
@@ -201,7 +201,7 @@ test("H3 reference video: pictures become reference inputs, limits and missing f
     }
     const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.refUnets.turbo]) }, outputs: { 15: { video: [{ filename: "r.mp4" }] } }, files: { "r.mp4": await readFile(clip) } });
     const out = path.join(dir, "r2v.mp4");
-    const result = await run("h3_reference_video", { prompt: "swap", reference_image_paths: pictures, duration_seconds: 3, width: 64, height: 48, upscale: false, output_path: out }, comfy);
+    const result = await run("h3_reference_video", { prompt: "swap", reference_image_paths: pictures, duration_seconds: 3, width: 64, height: 48, upscale: false, model: "turbo", output_path: out }, comfy);
     comfy.close();
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.deepEqual(comfy.seen.uploads, ["a.png", "b.png"]);
@@ -318,4 +318,92 @@ test("final_size: a clip of another size is scaled to cover and cropped to exact
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+import { composeSheet, SHEET_SHOTS, sheetPrompt, sheetReferencePrompt } from "../server/engine/sheet.mjs";
+import { referenceVideoPrompt } from "../server/prompt-maker.mjs";
+
+test("sheet prompt: official Ref2VA sections, eight timed shots one second apart, photos only fix the face", () => {
+  const prompt = sheetPrompt({ description: "a woman with long black hair in a white lace gown.", style: "photorealistic", faceReferences: 1 });
+  // The same six sections the prompt maker demands for reference clips.
+  assert.doesNotThrow(() => referenceVideoPrompt(prompt));
+  assert.match(prompt, /<Subject 1> is the person in <Picture 1>, a woman with long black hair/);
+  assert.match(prompt, /face, eye shape and facial features come from <Picture 2>/);
+  assert.match(prompt, /\[Shot 2\] At 00:01\.000, the shot cuts to a full-body three-quarter front view/);
+  assert.match(prompt, /\[Shot 8\] At 00:07\.000, the shot cuts to a head-and-shoulders close-up/);
+  assert.equal(SHEET_SHOTS.map((shot) => shot.at).join(), "0,1,2,3,4,5,6,7");
+  assert.ok(!/\[Shot 1\] At/.test(prompt), "the first shot has no timestamp");
+  assert.match(sheetReferencePrompt({ description: "a woman.", style: "anime" }), /^Full-body front view of a woman\./);
+});
+
+test("sheet layout: five portrait strips above three centred squares, one clean image", async () => {
+  const dir = await tmp();
+  try {
+    const frames = [];
+    for (const [i, shot] of SHEET_SHOTS.entries()) {
+      const file = path.join(dir, `${shot.id}.png`);
+      ffmpeg("-f", "lavfi", "-i", `testsrc=s=320x180:r=1,hue=h=${i * 40}`, "-frames:v", "1", file);
+      frames.push(file);
+    }
+    const output = path.join(dir, "sheet.png");
+    const layout = await composeSheet({ ffmpegPath: "", frames, output, capture: (await import("../server/post.mjs")).runCapture, panelHeight: 200 });
+    const size = execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", output]).toString().trim();
+    // 5 strips of 0.62 x 200 = 124 px each; two rows of 200 px.
+    assert.equal(size, `${layout.width},${layout.height}`);
+    assert.equal(size, "620,400");
+    await assert.rejects(composeSheet({ ffmpegPath: "", frames: frames.slice(0, 3), output, capture: async () => undefined }), /8장/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("character sheet: a drawn full-body reference, one H3 clip with the sheet prompt, frames cut and laid out", async () => {
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    // 8 seconds with something different in every second, so each shot's frame can be told apart.
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:d=8:r=24", "-pix_fmt", "yuv420p", clip);
+    const png = path.join(dir, "ref.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=gray:s=64x36", "-frames:v", "1", png);
+    const comfy = await fakeComfy({
+      nodes: { UNETLoader: loader("unet_name", ["Krea\krea2_turbo_nvfp4.safetensors", H3.refUnets.turbo]), CLIPLoader: loader("clip_name", ["Qwen\qwen3vl_4b_fp8_scaled.safetensors"]), VAELoader: loader("vae_name", ["qwen\qwen_image_vae.safetensors"]) },
+      outputs: { 10: { images: [{ filename: "ref.png", type: "temp" }] }, 15: { video: [{ filename: "turn.mp4" }] } },
+      files: { "ref.png": await readFile(png), "turn.mp4": await readFile(clip) },
+    });
+    const out = path.join(dir, "assets", "images", "sheet-c1.png");
+    const result = await run("character_sheet", { prompt: "a woman with long black hair in a white lace gown.", style: "photorealistic", upscale: false, model: "turbo", output_path: out }, comfy);
+    comfy.close();
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.artifacts.length, 3);
+    for (const file of result.artifacts) await stat(file);
+    assert.ok(result.artifacts[1].endsWith("sheet-c1-front.png") && result.artifacts[2].endsWith("sheet-c1-face.png"));
+    // Two ComfyUI runs: the Krea picture, then the reference clip with that picture as <Picture 1>.
+    assert.equal(comfy.seen.prompts.length, 2);
+    const ref = comfy.seen.prompts[1];
+    assert.equal(ref[6].class_type, "MiniMaxH3ReferenceToVideo");
+    assert.equal(ref[6].inputs.length, 192);
+    assert.match(ref[6].inputs.prompt, /^subject_definitions:/);
+    assert.deepEqual(comfy.seen.uploads.length, 1);
+    // The working folder is gone and only the three files are left next to the sheet.
+    const left = (await (await import("node:fs/promises")).readdir(path.dirname(out))).sort();
+    assert.deepEqual(left, ["sheet-c1-face.png", "sheet-c1-front.png", "sheet-c1.png"]);
+    // A reference photo that does not exist is refused before anything runs.
+    const missing = await run("character_sheet", { prompt: "x", reference_image_path: path.join(dir, "none.png"), output_path: out }, { url: "http://127.0.0.1:9" });
+    assert.equal(missing.code, "bad_input");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deno reference graph: two stages split the sigmas, enlarge the video latent 2x and decode the second stage", () => {
+  const graph = h3RefGraph({ prompt: "x", seed: 1, model: "deno", twoStage: true, seconds: 5, images: ["a.png"] });
+  assert.deepEqual(graph[11].inputs.sigmas, ["50", 0]);
+  assert.equal(graph[50].inputs.step, 7);
+  assert.deepEqual(graph[51].inputs.av_latent, ["11", 1]);
+  assert.equal(graph[52].inputs["mode.scale"], 2);
+  assert.deepEqual(graph[53].inputs.sigmas, ["50", 1]);
+  assert.deepEqual(graph[12].inputs.samples, ["53", 0]);
+  const single = h3RefGraph({ prompt: "x", seed: 1, model: "deno", seconds: 5, images: ["a.png"] });
+  assert.equal(single[50], undefined);
+  assert.deepEqual(single[12].inputs.samples, ["11", 0]);
 });

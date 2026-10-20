@@ -60,6 +60,8 @@ add({ path: "llm.timeoutSec", label: "호출 제한 시간(초)", kind: "number"
 add({ path: "connections.songyueUrl", label: "SongYUE2 연결 주소", kind: "text", wide: true });
 add({ path: "connections.comfyUrl", label: "ComfyUI 연결 주소", kind: "text", wide: true });
 add({ path: "connections.songyueDir", label: "SongYUE2 폴더", kind: "text", wide: true, hint: "SongYUE2의 ComfyUI(Krea, H3)와 음성 엔진을 켤 때 씁니다." });
+add({ path: "connections.refUrl", label: "참조 영상 ComfyUI 연결 주소", kind: "text", wide: true, hint: "2단계 참조 영상(Deno)과 캐릭터 시트를 만드는 ComfyUI입니다." });
+add({ path: "connections.refDir", label: "참조 영상 ComfyUI 폴더", kind: "text", wide: true });
 add({ path: "connections.rtxUrl", label: "RTX ComfyUI 연결 주소", kind: "text", wide: true });
 add({ path: "connections.rtxRoot", label: "RTX ComfyUI 폴더", kind: "text", wide: true });
 add({ path: "connections.rtxApp", label: "RTX ComfyUI 프로그램 폴더", kind: "text", wide: true });
