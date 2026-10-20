@@ -1,7 +1,9 @@
-import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { concatMedia, ffmpegFor } from "../concat.mjs";
+import { ffprobeFor } from "../probe.mjs";
 import { runCapture } from "../post.mjs";
 import { createComfy } from "./comfy.mjs";
 import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, rtxGraph } from "./graphs.mjs";
@@ -79,9 +81,26 @@ async function fitImage(context, source, width, height, dest) {
   return dest;
 }
 
-/** Puts the final file in place: the clip's own sound dropped, kept, or replaced by the given audio file. */
-async function finishVideo(context, source, dest, { keepAudio, audio }) {
+/** Width and height of a video file. */
+async function videoSize(context, file) {
+  const { stdout } = await context.capture(ffprobeFor(context.ffmpegPath), ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
+  const [width, height] = stdout.toString().trim().split(",").map(Number);
+  return { width, height };
+}
+
+/**
+ * Puts the final file in place: the clip's own sound dropped, kept, or replaced by the given audio file. With `fit`
+ * ([width, height]) a clip of another size is scaled to cover that size and centre-cropped: the RTX upscale rounds its
+ * result to multiples of 32 (1280x736 for a wanted 1280x704).
+ */
+async function finishVideo(context, source, dest, { keepAudio, audio, fit }) {
   const ffmpeg = ffmpegFor(context.ffmpegPath);
+  const size = fit ? await videoSize(context, source) : null;
+  if (fit && (size.width !== fit[0] || size.height !== fit[1])) {
+    const sound = audio ? ["-i", audio, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"] : ["-map", "0:v:0", ...(keepAudio ? ["-map", "0:a:0?", "-c:a", "copy"] : ["-an"])];
+    await context.capture(ffmpeg, ["-loglevel", "error", "-y", "-i", source, ...sound, "-vf", `scale=${fit[0]}:${fit[1]}:force_original_aspect_ratio=increase:flags=lanczos,crop=${fit[0]}:${fit[1]}`, "-c:v", "libx264", "-crf", "14", "-preset", "medium", "-pix_fmt", "yuv420p", dest]);
+    return;
+  }
   if (audio) {
     // The given audio replaces whatever H3 generated; -shortest trims it to the clip length.
     await context.capture(ffmpeg, ["-loglevel", "error", "-y", "-i", source, "-i", audio, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-shortest", dest]);
@@ -160,7 +179,7 @@ const HANDLERS = {
         await rtxUpscale(context, clip, temps[1], Number(inputs.upscale_scale ?? 2.6));
         clip = temps[1];
       }
-      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null });
+      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
     } finally {
       await cleanup(temps);
     }
@@ -203,7 +222,7 @@ const HANDLERS = {
         await rtxUpscale(context, clip, temps[1], Number(inputs.upscale_scale ?? 2.6));
         clip = temps[1];
       }
-      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null });
+      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
     } finally {
       await cleanup(temps);
     }
@@ -250,11 +269,13 @@ const HANDLERS = {
     const voice = inputs.voice ?? "Sohee";
     const language = { ko: "korean", en: "english", auto: "auto" }[inputs.language ?? "ko"] ?? "korean";
     const output = await prepareOutput(inputs);
-    const stem = output.slice(0, -path.extname(output).length);
+    // The speech engine cannot open a file whose path has Korean letters (a project folder named after its title), so
+    // the pieces are written to a plain ASCII folder and only the finished file goes to the project.
+    const work = await mkdtemp(path.join(os.tmpdir(), "vsom-tts-"));
     const parts = [];
     try {
       for (const [index, chunk] of chunks.entries()) {
-        const part = `${stem}.part${index}.wav`;
+        const part = path.join(work, `part${index}.wav`);
         parts.push(part);
         // audiocpp_cli looks up its model specs relative to the audio.cpp source root.
         await context.capture(cli, ["--backend", "cuda", "--task", "tts", "--family", "qwen3_tts", "--model", model, "--speaker", voice, ...(inputs.style ? ["--instruct", inputs.style] : []), "--language", language, "--text", chunk, "--out", part], {
@@ -267,7 +288,7 @@ const HANDLERS = {
       if (parts.length === 1) await copyFile(parts[0], output);
       else await concatMedia({ ffmpegPath: context.ffmpegPath, kind: "audio", inputs: parts, output });
     } finally {
-      await cleanup(parts);
+      await rm(work, { recursive: true, force: true });
     }
     return { artifacts: [output], seed: null, model: "qwen3-tts-12hz-1.7b-customvoice-q8_0", data: { provider: "qwen3", voice, language, text_length: inputs.text.length, output, format: "wav" } };
   },

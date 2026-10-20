@@ -87,14 +87,17 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   }
   const duration = recipe.duration ?? 5;
   if (!(duration >= 2 && duration <= 15)) return "길이는 2~15초로 입력하세요.";
+  // Only the RTX pass is wired to the tool; other settings mean "no enlargement" for now.
+  const upscale = settings.video.upscale === "rtx-2pass" && size.final[0] > size.generate[0];
   const inputs: Record<string, unknown> = {
     prompt: text,
     width: size.generate[0],
     height: size.generate[1],
     duration_seconds: duration,
-    // Only the RTX pass is wired to the tool; other settings mean "no enlargement" for now.
-    upscale: settings.video.upscale === "rtx-2pass" && size.final[0] > size.generate[0],
+    upscale,
     upscale_scale: size.final[0] / size.generate[0],
+    // The upscale rounds to multiples of 32; the finished clip is cut to exactly the chosen size.
+    ...(upscale ? { final_size: size.final } : {}),
     ...sceneLoras,
     output_path: output,
   };

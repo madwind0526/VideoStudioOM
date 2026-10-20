@@ -136,7 +136,8 @@ export async function exportVideo({ ffmpegPath, video, audio, subtitles, codec =
     }
     if (filters.length) args.push("-vf", filters.join(","));
     args.push("-map", "0:v:0");
-    if (audio) args.push("-map", "1:a:0", "-shortest");
+    // The sound track is padded with silence so a track shorter than the picture never cuts the end of the video.
+    if (audio) args.push("-map", "1:a:0", "-af", "apad", "-shortest");
     else args.push("-map", "0:a:0?");
     args.push("-c:v", choice.encoder, ...choice.args, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temp);
     await mkdir(path.dirname(output), { recursive: true });

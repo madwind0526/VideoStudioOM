@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -266,6 +266,55 @@ test("SongYUE2 music and sound effects call its API and save the file", async ()
     const failing = await runTool({ tool: "songyue_sfx", inputs: { prompt: "x", output_path: path.join(dir, "x.wav") }, connections, deps: { ensure: async () => undefined, fetchImpl: async () => new Response(JSON.stringify({ error: "모델이 없습니다" }), { status: 409 }) } });
     assert.equal(failing.ok, false);
     assert.match(failing.error, /모델이 없습니다/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("speech: the engine only ever gets plain ASCII file paths, even for a project folder with Korean letters", async () => {
+  const dir = await tmp();
+  try {
+    // A fake SongYUE2 install: the executable and the model only need to exist.
+    const songyue = path.join(dir, "songyue");
+    const cli = path.join(songyue, "engine", "audio.cpp", "build", "windows-cuda-release", "bin", "audiocpp_cli.exe");
+    const model = path.join(songyue, "models", "audio-cpp", "audio.cpp-gguf", "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF", "qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf");
+    for (const file of [cli, model]) {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, "x");
+    }
+    const seen = [];
+    const capture = async (_command, args) => {
+      const out = args[args.indexOf("--out") + 1];
+      seen.push(out);
+      await writeFile(out, "RIFFfake");
+      return { stdout: Buffer.alloc(0), stderr: "" };
+    };
+    const output = path.join(dir, "명화-속의-춤", "assets", "audio", "s5.wav");
+    const result = await runTool({ tool: "qwen3_tts", inputs: { text: "손을 잡아도 될까요?", output_path: output }, connections: { songyueDir: songyue }, deps: { capture } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(await readFile(output, "utf8"), "RIFFfake");
+    assert.ok(seen.length === 1 && /^[\x20-\x7e]+$/.test(seen[0]), `engine path: ${seen[0]}`);
+    // The working folder is removed afterwards.
+    await assert.rejects(stat(path.dirname(seen[0])));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("final_size: a clip of another size is scaled to cover and cropped to exactly that size (the RTX upscale rounds to 32)", async () => {
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=1:r=24", "-pix_fmt", "yuv420p", clip);
+    const first = path.join(dir, "first.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x48", "-frames:v", "1", first);
+    const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.unet]) }, outputs: { 15: { video: [{ filename: "c.mp4" }] } }, files: { "c.mp4": await readFile(clip) } });
+    const out = path.join(dir, "fit.mp4");
+    const result = await run("h3_local_video", { prompt: "x", reference_image_path: first, width: 64, height: 48, duration_seconds: 3, upscale: false, final_size: [60, 32], output_path: out }, comfy);
+    comfy.close();
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const size = execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", out]).toString().trim();
+    assert.equal(size, "60,32");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

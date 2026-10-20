@@ -88,3 +88,18 @@ test("export: new sound track, burned subtitles and a codec check", async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("export: a sound track shorter than the picture does not cut the end of the video", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-export2-"));
+  try {
+    const video = path.join(root, "v.mp4");
+    const sound = path.join(root, "a.wav");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=160x96:d=3:r=24", "-pix_fmt", "yuv420p", video);
+    ffmpeg("-f", "lavfi", "-i", "sine=frequency=330:duration=1", sound);
+    const output = path.join(root, "out.mp4");
+    await exportVideo({ ffmpegPath: "", video, audio: sound, codec: "h264", output });
+    assert.ok(duration(output) > 2.8, `duration ${duration(output)}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
