@@ -1,9 +1,12 @@
 import { createReadStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
 import { concatMedia, mixAudio } from "./concat.mjs";
+import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, colorGains, exportVideo, ROLES, srtFromScript } from "./post.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, makePrompt } from "./prompt-maker.mjs";
@@ -11,6 +14,7 @@ import { generateBible, generateScenario, generateScript, generateSynopses } fro
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
+import { writeFileAtomic } from "./fs-util.mjs";
 import { resolveInside } from "./paths.mjs";
 
 function decodeId(raw) {
@@ -46,6 +50,7 @@ async function streamMedia(req, res, file) {
 
 // Projects whose files are being joined right now (one join per project at a time).
 const joining = new Set();
+const exporting = new Set();
 
 /** Handles /api/* requests. Returns false when no route matches. */
 export async function handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot }) {
@@ -54,6 +59,51 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   const methodNotAllowed = () => {
     throw new HttpError(405, "허용되지 않은 메서드입니다.");
   };
+
+  /** Subtitles, the finished export and the clip check of one project. */
+  async function postProduce(id, what, method, body) {
+    if (method !== "POST") methodNotAllowed();
+    const dir = await projects.dir(id);
+    const ffmpegPath = (await settings.get()).connections.ffmpegPath;
+    const readJson = async (rel) => {
+      try {
+        return JSON.parse((await projects.readText(id, rel, { optional: true })).content ?? "null");
+      } catch {
+        return null;
+      }
+    };
+    const subtitles = async () => srtFromScript(await readJson("artifacts/script.json"), (await readJson("studio/audio_kinds.json")) ?? {});
+    if (what === "subtitles") {
+      const srt = await subtitles();
+      if (!srt) throw new HttpError(400, "자막으로 만들 대화가 대본에 없습니다.");
+      const target = await resolveInside(dir, "renders/subtitles.srt");
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFileAtomic(target, srt);
+      return { output: "renders/subtitles.srt" };
+    }
+    if (what === "qa") {
+      const names = (await projects.get(id)).media.videos.map((file) => file.path);
+      const results = [];
+      for (const name of names) results.push({ path: name, ...(await checkClip(ffmpegPath, (await projects.statMedia(id, name)).target)) });
+      return { results };
+    }
+    // export
+    if (exporting.has(id)) throw new HttpError(409, "이미 내보내는 중입니다.");
+    const codec = CODEC_IDS.includes(body.codec) ? body.codec : "h264";
+    const video = await projects.statMedia(id, "renders/final.mp4").catch(() => {
+      throw new HttpError(400, "먼저 동영상 화면에서 구간 영상을 이어 붙여 완성본을 만드세요.");
+    });
+    const sound = body.sound !== false ? await projects.statMedia(id, "assets/audio/narration.wav").catch(() => null) : null;
+    const srt = body.burnSubtitles === true ? await subtitles() : "";
+    if (body.burnSubtitles === true && !srt) throw new HttpError(400, "자막으로 만들 대화가 대본에 없습니다.");
+    exporting.add(id);
+    try {
+      await exportVideo({ ffmpegPath, video: video.target, audio: sound?.target, subtitles: srt, codec, output: await resolveInside(dir, "renders/export.mp4") });
+    } finally {
+      exporting.delete(id);
+    }
+    return { output: "renders/export.mp4", codec, sound: Boolean(sound), subtitles: Boolean(srt) };
+  }
 
   /** Joins audio pieces into assets/audio/narration.wav, or video clips into renders/final.mp4. */
   async function joinMedia(id, body) {
@@ -66,6 +116,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     // "mix": the pieces are [{ path, start }] placed at their start second instead of one after another.
     const list = Array.isArray(body.inputs) ? body.inputs : [];
     const starts = body.kind === "mix" ? list.map((item) => Number(item?.start) || 0) : [];
+    const roles = body.kind === "mix" ? list.map((item) => (ROLES.includes(item?.role) ? item.role : "dialogue")) : [];
     const names = body.kind === "mix" ? list.map((item) => item?.path) : list;
     if (!Array.isArray(names) || names.length === 0 || names.length > 60 || names.some((name) => typeof name !== "string")) {
       throw new HttpError(400, "이어 붙일 파일 목록이 올바르지 않습니다.");
@@ -82,8 +133,12 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     try {
       const ffmpegPath = (await settings.get()).connections.ffmpegPath;
       const output = await resolveInside(dir, kind.output);
-      if (body.kind === "mix") await mixAudio({ ffmpegPath, pieces: inputs.map((file, i) => ({ file, startSeconds: starts[i] })), output });
-      else await concatMedia({ ffmpegPath, kind: body.kind, inputs, output });
+      if (body.kind === "mix") await mixAudio({ ffmpegPath, pieces: inputs.map((file, i) => ({ file, startSeconds: starts[i], role: roles[i] })), duck: body.duck === true, output });
+      else {
+        // colorMatch: every clip is moved towards the average colour of all clips, so a long video does not flicker in tone.
+        const gains = body.kind === "video" && body.colorMatch === true ? colorGains(await Promise.all(inputs.map((file) => averageRgb(ffmpegPath, file)))) : [];
+        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains });
+      }
     } finally {
       joining.delete(id);
     }
@@ -206,6 +261,12 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     sendJson(res, 200, { prompt });
     return true;
   }
+  if (pathname === "/api/export/codecs") {
+    if (method !== "GET") methodNotAllowed();
+    const usable = await availableCodecs((await settings.get()).connections.ffmpegPath);
+    sendJson(res, 200, { codecs: usable.map((id) => ({ id, label: codecLabels()[id] })) });
+    return true;
+  }
   if (pathname === "/api/fs") {
     if (method !== "GET") methodNotAllowed();
     sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? "", { projectsDir: folderPaths(await settings.get(), appRoot).projects }));
@@ -235,7 +296,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
@@ -252,6 +313,8 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     } else if (method === "GET") {
       await streamMedia(req, res, await projects.statMedia(id, url.searchParams.get("path")));
     } else methodNotAllowed();
+  } else if (match[2] === "subtitles" || match[2] === "export" || match[2] === "qa") {
+    sendJson(res, 200, await postProduce(id, match[2], method, requireObject(method === "POST" ? await readJsonBody(req) : {})));
   } else if (match[2] === "concat") {
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));

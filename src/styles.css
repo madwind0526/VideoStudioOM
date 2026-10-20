@@ -2048,3 +2048,9 @@ textarea.big {
 .option-card .btn {
   justify-self: start;
 }
+
+.chip.warn {
+  border-color: #b45309;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f5b14c;
+}

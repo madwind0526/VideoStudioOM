@@ -120,12 +120,28 @@ export async function makePrompt(projectId: string, body: { target: "image" | "v
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
 
-export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[]) =>
-  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs });
+export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: { colorMatch?: boolean } = {}) =>
+  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs, ...options });
 
 /** Audio pieces laid on one timeline: each starts at its own second. */
-export const mixMedia = (projectId: string, inputs: { path: string; start: number }[]) =>
-  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind: "mix", inputs });
+export const mixMedia = (projectId: string, inputs: { path: string; start: number; role: "dialogue" | "sfx" | "music" }[], duck: boolean) =>
+  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind: "mix", inputs, duck });
+
+const projectUrl = (projectId: string, what: string) => `/api/projects/${encodeURIComponent(projectId)}/${what}`;
+
+export interface ClipCheck {
+  path: string;
+  durationSeconds: number;
+  issues: { type: "black" | "freeze"; start: number; seconds: number }[];
+}
+
+/** Black and frozen stretches of every video file of the project. */
+export const checkClips = (projectId: string) => api<{ results: ClipCheck[] }>("POST", projectUrl(projectId, "qa"), {}).then((data) => data.results);
+/** SRT of the spoken lines of the script, saved as renders/subtitles.srt. */
+export const makeSubtitles = (projectId: string) => api<{ output: string }>("POST", projectUrl(projectId, "subtitles"), {});
+export const exportFinal = (projectId: string, options: { codec: string; burnSubtitles: boolean; sound: boolean }) =>
+  api<{ output: string; codec: string; sound: boolean; subtitles: boolean }>("POST", projectUrl(projectId, "export"), options);
+export const listCodecs = () => api<{ codecs: { id: string; label: string }[] }>("GET", "/api/export/codecs").then((data) => data.codecs);
 
 /** Rewrites an item's prompt with the prompt maker (images, video clips, non-English sound effects). Items it cannot improve come back unchanged. */
 export async function refineItem(projectId: string, settings: Settings, item: MakeItem, describeRef?: (path: string) => string): Promise<MakeItem> {

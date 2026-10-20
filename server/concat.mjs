@@ -3,6 +3,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { HttpError } from "./http.mjs";
+import { buildMixFilter } from "./mixfilter.mjs";
 import { ffprobeFor } from "./probe.mjs";
 
 /** `ffmpegPath` may name ffmpeg itself, its folder, or be empty (use PATH). */
@@ -42,7 +43,7 @@ function run(command, args, { timeoutMs = 600_000 } = {}) {
  * - video: every clip is scaled to the first clip's size and 24 fps; sound is kept only when every clip has it.
  * The result is written next to the target first and renamed over it, so a failure never damages an old file.
  */
-export async function concatMedia({ ffmpegPath, kind, inputs, output }) {
+export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = [] }) {
   if (!Array.isArray(inputs) || inputs.length === 0) throw new HttpError(400, "이어 붙일 파일을 고르세요.");
   const ffmpeg = ffmpegFor(ffmpegPath);
   const ffprobe = ffprobeFor(ffmpegPath);
@@ -61,7 +62,9 @@ export async function concatMedia({ ffmpegPath, kind, inputs, output }) {
     const [width, height] = (await probe(inputs[0], "stream=width,height", "v:0")).split(",").map(Number);
     if (!(width > 0 && height > 0)) throw new HttpError(400, "첫 영상의 크기를 읽을 수 없습니다.");
     const audible = (await Promise.all(inputs.map((file) => probe(file, "stream=codec_type", "a:0")))).every(Boolean);
-    const parts = inputs.map((_, i) => `[${i}:v:0]scale=${width}:${height}:flags=lanczos,setsar=1,fps=24[v${i}]${audible ? `;[${i}:a:0]aresample=44100[a${i}]` : ""}`);
+    // `gains` (per clip, optional) pull the colours of the clips towards one look before they are joined.
+    const tint = (i) => (gains[i] ? `colorchannelmixer=rr=${gains[i][0].toFixed(3)}:gg=${gains[i][1].toFixed(3)}:bb=${gains[i][2].toFixed(3)},` : "");
+    const parts = inputs.map((_, i) => `[${i}:v:0]${tint(i)}scale=${width}:${height}:flags=lanczos,setsar=1,fps=24[v${i}]${audible ? `;[${i}:a:0]aresample=44100[a${i}]` : ""}`);
     const joined = inputs.map((_, i) => `[v${i}]${audible ? `[a${i}]` : ""}`).join("");
     filter = `${parts.join(";")};${joined}concat=n=${inputs.length}:v=1:a=${audible ? 1 : 0}[v]${audible ? "[a]" : ""}`;
     maps = ["-map", "[v]", ...(audible ? ["-map", "[a]"] : [])];
@@ -81,22 +84,19 @@ export async function concatMedia({ ffmpegPath, kind, inputs, output }) {
 
 /**
  * Mixes audio pieces onto one timeline: every piece starts at its own second (dialogue, effects and music may overlap).
- * `pieces` is [{ file, startSeconds }]. The result is a stereo wav at 44.1 kHz with a limiter against clipping.
+ * `pieces` is [{ file, startSeconds, role }]; with `duck` the music gets quieter while someone speaks.
+ * The result is a stereo wav at 44.1 kHz with a limiter against clipping.
  */
-export async function mixAudio({ ffmpegPath, pieces, output }) {
+export async function mixAudio({ ffmpegPath, pieces, output, duck = false }) {
   if (!Array.isArray(pieces) || pieces.length === 0) throw new HttpError(400, "합칠 오디오를 고르세요.");
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
   for (const piece of pieces) args.push("-i", piece.file);
-  const delayed = pieces.map((piece, i) => {
-    const ms = Math.max(0, Math.round(piece.startSeconds * 1000));
-    return `[${i}:a:0]aresample=44100,aformat=channel_layouts=stereo,adelay=${ms}|${ms}[a${i}]`;
-  });
-  const filter = `${delayed.join(";")};${pieces.map((_, i) => `[a${i}]`).join("")}amix=inputs=${pieces.length}:normalize=0:duration=longest,alimiter=limit=0.95[a]`;
+  const { filter, label } = buildMixFilter(pieces, { duck });
   const ext = path.extname(output);
   const temp = `${output.slice(0, -ext.length)}.part${ext}`;
   await mkdir(path.dirname(output), { recursive: true });
   try {
-    await run(ffmpegFor(ffmpegPath), [...args, "-filter_complex", filter, "-map", "[a]", "-c:a", "pcm_s16le", temp]);
+    await run(ffmpegFor(ffmpegPath), [...args, "-filter_complex", filter, "-map", label, "-c:a", "pcm_s16le", temp]);
     await rename(temp, output);
   } catch (error) {
     await rm(temp, { force: true });

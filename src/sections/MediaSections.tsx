@@ -1,12 +1,13 @@
 import { Combine, Layers, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
+import ExportPanel from "../components/ExportPanel";
 import GenerateForm from "../components/GenerateForm";
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
 import { BIBLE_FILE, charactersIn, sheetPath, type Bible } from "../bible";
-import { AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
+import { type ClipCheck, AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -250,6 +251,8 @@ export function ImagesSection(props: SectionProps) {
 export function AudioSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  // While someone speaks, the music gets quieter (side-chain compression).
+  const [duck, setDuck] = useState(true);
   const script = useJsonFile<{ sections?: Part[] }>(props.project.id, "artifacts/script.json", props.notify);
   const kinds = useJsonFile<Record<string, string>>(props.project.id, AUDIO_KINDS_FILE, props.notify);
   const audio = props.detail?.media.audio ?? [];
@@ -278,7 +281,13 @@ export function AudioSection(props: SectionProps) {
     setJoining(true);
     try {
       const startOf = (path: string) => sections.find((part) => fileOf(part) === path)?.start_seconds ?? 0;
-      await mixMedia(props.project.id, selection.picked.map((path) => ({ path, start: startOf(path) })));
+      const roleOf = (path: string): "dialogue" | "sfx" | "music" => {
+        const section = sections.find((part) => fileOf(part) === path);
+        if (!section) return path.startsWith("assets/music/") ? "music" : "dialogue";
+        const kind = audioKindOf(kinds.data, section.id);
+        return kind === "sfx" ? "sfx" : kind === "dialogue" ? "dialogue" : "music";
+      };
+      await mixMedia(props.project.id, selection.picked.map((path) => ({ path, start: startOf(path), role: roleOf(path) })), duck);
       props.notify("대본 시간에 맞춰 오디오를 합쳤습니다. (narration.wav)");
       props.onJobsChanged();
     } catch (e) {
@@ -299,6 +308,9 @@ export function AudioSection(props: SectionProps) {
         all={{ items, note: "대본의 구간 중 아직 소리가 없는 구간을 종류에 맞게 차례로 모두 만듭니다. 대화는 TTS, 효과음·연주곡·보컬은 SongYUE2가 만들어요." }}
         join={{ count: selection.picked.length, busy: joining, label: "체크한 소리를 대본의 시작 시간에 맞춰 겹쳐서 narration.wav를 만듭니다.", name: "시간에 맞춰 합치기", onJoin: () => void join() }}
       />
+      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }}>
+        <input type="checkbox" checked={duck} onChange={(event) => setDuck(event.target.checked)} /> 대사가 나올 때 음악 소리를 줄여서 합치기
+      </label>
       <Top props={props} kinds={["voice", "sfx", "instrumental", "vocal"]} outputs={["assets/audio/", "assets/music/"]} creating={creating} />
       {audio.length === 0 ? (
         <p className="muted">아직 오디오가 없습니다. 대본에서 구간마다 소리 종류를 고른 뒤 "전체 만들기"를 눌러 보세요.</p>
@@ -329,6 +341,8 @@ export function VideosSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
+  const [colorMatch, setColorMatch] = useState(true);
+  const [qa, setQa] = useState<ClipCheck[]>([]);
   const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
   const bible = bibleFile.data;
   const videos = props.detail?.media.videos ?? [];
@@ -369,7 +383,7 @@ export function VideosSection(props: SectionProps) {
   async function join() {
     setJoining(true);
     try {
-      await joinMedia(props.project.id, "video", selection.picked);
+      await joinMedia(props.project.id, "video", selection.picked, { colorMatch });
       props.notify("영상을 이어 붙였습니다. (renders/final.mp4)");
       props.onJobsChanged();
     } catch (e) {
@@ -391,7 +405,18 @@ export function VideosSection(props: SectionProps) {
         all={{ items, note: "이미지를 1-2, 2-3, 3-4 ... 두 장씩 짝지어 아직 없는 구간의 영상을 차례로 만듭니다. 장면 설명에 등장인물 이름이 있고 시트가 있으면 시트를 참조해(R2V) 만듭니다. 한 구간에 약 1분 걸립니다." }}
         join={{ count: selection.picked.length, busy: joining, label: "체크한 구간 영상을 순서대로 이어 붙여 renders/final.mp4를 만듭니다.", onJoin: () => void join() }}
       />
+      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }}>
+        <input type="checkbox" checked={colorMatch} onChange={(event) => setColorMatch(event.target.checked)} /> 이어 붙일 때 구간마다 색을 맞추기
+      </label>
       <Top props={props} kinds={["auto", "i2v", "fl2v", "s2v", "r2v"]} outputs={["assets/video/"]} creating={creating} bible={bible} />
+      <ExportPanel
+        projectId={props.project.id}
+        hasFinal={videos.some((file) => file.path === "renders/final.mp4")}
+        hasSound={(props.detail?.media.audio ?? []).some((file) => file.path === "assets/audio/narration.wav")}
+        notify={props.notify}
+        onChecked={setQa}
+        onExported={props.onJobsChanged}
+      />
       {videos.length === 0 ? (
         <p className="muted">아직 동영상이 없습니다. 이미지가 2장 이상이면 "전체 만들기"로 구간 영상을 만들 수 있어요.</p>
       ) : (
@@ -401,6 +426,11 @@ export function VideosSection(props: SectionProps) {
               <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>
                 {clips.includes(file) && <input type="checkbox" aria-label="이어 붙일 파일" checked={selection.isOn(file.path)} onChange={() => selection.toggle(file.path)} style={{ marginRight: 8 }} />}
                 {file.path} · {sizeLabel(file.size)}
+                {qa.find((item) => item.path === file.path)?.issues.map((issue, index) => (
+                  <span key={index} className="chip warn" title={`${issue.start.toFixed(1)}초부터`} style={{ marginLeft: 6 }}>
+                    {issue.type === "black" ? "검은 화면" : "멈춘 화면"} {issue.seconds.toFixed(1)}초
+                  </span>
+                ))}
               </div>
               <video controls preload="metadata" src={mediaUrl(props.project.id, file.path, file.mtimeMs)} />
               <ItemTools props={props} file={file} kind={null} />
