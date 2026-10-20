@@ -13,5 +13,7 @@ Rules:
 4. Include one background music section (kind "instrumental", or "vocal" when a sung passage is part of the story) on the first scene, unless the story is meant to be silent. Do not add more than one music section unless the mood changes.
 5. Add 2-4 "sfx" sections for the key physical events that carry the story (a door, rain on glass, footsteps on gravel, an object dropped), each on the scene where it happens.
 
+Where the words go: "text" is ALWAYS filled. For dialogue it is the spoken line, for sfx the English sound description, for instrumental the English style tags, for vocal the Korean lyrics. "style" is only for vocal (English style tags) and is empty for the other kinds.
+
 Return only JSON:
-{"sections":[{"scene":1,"kind":"dialogue","text":"...","style":""}]}
+{"sections":[{"scene":1,"kind":"dialogue","text":"...","style":""},{"scene":1,"kind":"sfx","text":"canvas surface rippling like disturbed water, soft magical shimmer","style":""}]}

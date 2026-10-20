@@ -67,3 +67,17 @@ test("script: sections follow the scenes, kinds are kept apart from the script, 
   assert.equal(result.script.total_duration_seconds, 12);
   await assert.rejects(generateScript({ synopsis: "s", scenario: { scenes: [] } }, ask), { status: 400 });
 });
+
+test("script: a sound effect or instrumental described only in \"style\" is kept (models often fill that field instead of text)", async () => {
+  const scenario = { version: "1.0", scenes: [{ id: "scene-1", type: "generated", description: "a", start_seconds: 0, end_seconds: 6 }] };
+  const ask = answer({
+    sections: [
+      { scene: 1, kind: "instrumental", text: "", style: "romantic waltz, strings" },
+      { scene: 1, kind: "sfx", text: "", style: "canvas rippling" },
+      { scene: 1, kind: "dialogue", text: "", style: "ignored: dialogue needs its line" },
+      { scene: 1, kind: "vocal", text: "", style: "a vocal without lyrics is dropped" },
+    ],
+  });
+  const result = await generateScript({ synopsis: "s", scenario, title: "T" }, ask);
+  assert.deepEqual(result.script.sections.map((section) => [section.text, result.kinds[section.id]]), [["romantic waltz, strings", "instrumental"], ["canvas rippling", "sfx"]]);
+});

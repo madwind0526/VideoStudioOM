@@ -354,25 +354,36 @@ export function VideosSection(props: SectionProps) {
   const selection = useSelection(clips.map((file) => file.path));
   const describeRef = (path: string) => describeReference(bible, path, images);
 
-  // Clip n joins image n and image n+1: 1-2, 2-3, 3-4, ...
+  // One picture per scene, in scene order (character sheets and photos are not scenes). Without a scenario: every other image.
+  const scenes = plan.data?.scenes ?? [];
+  const sceneImages = scenes.length
+    ? scenes.flatMap((scene) => {
+        const image = images.find((item) => item.path === `assets/images/${safeName(scene.id)}.png`);
+        return image ? [{ image, scene }] : [];
+      })
+    : images.filter((item) => !/\/(sheet|photo)-/.test(item.path)).map((image) => ({ image, scene: undefined as Scene | undefined }));
+  // A scene with people uses their character sheets as references (R2V, one sheet per person, 8 at most) together with its
+  // own picture; the clip is its own. Other scenes go from picture to picture (FL2V: 1-2, 2-3, ...); the last one is I2V.
   const items: MakeItem[] = [];
   if (settings) {
-    for (let i = 0; i + 1 < images.length; i += 1) {
-      const [a, b] = [images[i], images[i + 1]];
-      const output = `assets/video/clip-${safeName(baseName(a.path))}-${safeName(baseName(b.path))}.mp4`;
-      if (videos.some((file) => file.path === output)) continue;
-      const scene = plan.data?.scenes?.find((item) => safeName(item.id) === baseName(a.path));
+    sceneImages.forEach(({ image: a, scene }, i) => {
+      const next = sceneImages[i + 1]?.image;
       const seconds = scene?.start_seconds != null && scene.end_seconds != null ? scene.end_seconds - scene.start_seconds : 5;
       const prompt = scene?.description?.trim() || "부드러운 카메라 이동으로 다음 장면으로 이어진다.";
       const duration = Math.min(15, Math.max(2, Math.round(seconds * 2) / 2));
-      // A scene with people uses their character sheets as references (R2V, one sheet per person, 8 at most);
-      // the scene picture comes along as the ninth. Other scenes go from picture to picture (FL2V).
       const sheets = referencesFor(charactersIn(bible, prompt), images, 8);
       const loras = scene ? sceneOpts?.[scene.id]?.loras?.filter((lora) => lora.name) : undefined;
-      const recipe: Recipe = sheets.length > 0 ? { kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id, loras } : { kind: "fl2v", prompt, first: a.path, last: b.path, duration, source: scene?.id, loras };
+      const name = safeName(baseName(a.path));
+      const [recipe, output]: [Recipe, string] =
+        sheets.length > 0
+          ? [{ kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id, loras }, `assets/video/clip-${name}.mp4`]
+          : next
+            ? [{ kind: "fl2v", prompt, first: a.path, last: next.path, duration, source: scene?.id, loras }, `assets/video/clip-${name}-${safeName(baseName(next.path))}.mp4`]
+            : [{ kind: "i2v", prompt, first: a.path, duration, source: scene?.id, loras }, `assets/video/clip-${name}.mp4`];
+      if (videos.some((file) => file.path === output)) return;
       const item = makeItem(settings, recipe, output);
       if (typeof item !== "string") items.push(item);
-    }
+    });
   }
 
   async function join() {

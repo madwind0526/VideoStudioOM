@@ -131,7 +131,9 @@ export async function generateScript({ synopsis, scenario, bible, title = "" }, 
     for (const item of Array.isArray(data.sections) ? data.sections : []) {
       const index = Math.round(Number(item?.scene)) - 1;
       const kind = KINDS.has(item?.kind) ? item.kind : "dialogue";
-      const body = text(item?.text, 2000);
+      // A sound effect or an instrumental is described in "text"; models often put that description into "style" and leave
+      // "text" empty, so the style is taken as the description for those two kinds.
+      const body = text(item?.text, 2000) || (kind === "sfx" || kind === "instrumental" ? text(item?.style, 2000) : "");
       if (!(index >= 0 && index < scenes.length) || !body) continue;
       const id = `s${sections.length + 1}`;
       const scene = scenes[index];
