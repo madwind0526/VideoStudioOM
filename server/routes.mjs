@@ -169,7 +169,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const bible = await readBible(projects, body.project);
     // A sheet is about one character: only the style is shared. Other prompts take every bible entry the idea names.
     const bibleText = body.target === "sheet" ? (bible.style.trim() ? `Visual style: ${bible.style.trim()}` : "") : typeof body.text === "string" ? bibleContext(bible, body.text) : "";
-    const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 4).map((ref) => ref.slice(0, 600)) : [];
+    const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 9).map((ref) => ref.slice(0, 600)) : [];
     const prompt = await makePrompt(
       { target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined },
       askWith((await settings.get()).llm),

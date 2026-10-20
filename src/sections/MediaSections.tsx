@@ -354,12 +354,12 @@ export function VideosSection(props: SectionProps) {
       const seconds = scene?.start_seconds != null && scene.end_seconds != null ? scene.end_seconds - scene.start_seconds : 5;
       const prompt = scene?.description?.trim() || "부드러운 카메라 이동으로 다음 장면으로 이어진다.";
       const duration = Math.min(15, Math.max(2, Math.round(seconds * 2) / 2));
-      // A scene with people uses their character sheets as references (R2V, one sheet per person, 3 at most);
-      // the scene picture comes along as the fourth. Other scenes go from picture to picture (FL2V).
+      // A scene with people uses their character sheets as references (R2V, one sheet per person, 8 at most);
+      // the scene picture comes along as the ninth. Other scenes go from picture to picture (FL2V).
       const sheets = charactersIn(bible, prompt)
         .map((character) => sheetPath(character))
         .filter((path) => images.some((image) => image.path === path))
-        .slice(0, 3);
+        .slice(0, 8);
       const recipe: Recipe = sheets.length > 0 ? { kind: "r2v", prompt, refs: [...sheets, a.path], duration, source: scene?.id } : { kind: "fl2v", prompt, first: a.path, last: b.path, duration, source: scene?.id };
       const item = makeItem(settings, recipe, output);
       if (typeof item !== "string") items.push(item);

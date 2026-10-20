@@ -19,7 +19,7 @@ const KINDS: Record<Kind, { label: string; hint: string }> = {
   i2v: { label: "I2V", hint: "고른 이미지를 첫 장면으로 영상을 만듭니다." },
   fl2v: { label: "FL2V", hint: "첫 이미지에서 마지막 이미지로 이어지는 영상을 만듭니다." },
   s2v: { label: "S2V", hint: "Sound → Video: 얼굴 이미지와 음성을 고르면 입이 음성을 따라 움직이는 영상을 만듭니다." },
-  r2v: { label: "R2V", hint: "Reference → Video: 인물 시트나 장면 그림(4장까지)을 참조해, 같은 인물이 나오는 새 영상을 만듭니다." },
+  r2v: { label: "R2V", hint: "Reference → Video: 인물 시트나 장면 그림(9장까지)을 참조해, 같은 인물이 나오는 새 영상을 만듭니다." },
 };
 
 interface Props {
@@ -64,7 +64,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
     kind !== "auto" ? kind : audio && first ? "s2v" : refs.length > 0 ? "r2v" : first && last && first !== last ? "fl2v" : first ? "i2v" : null;
   const isVideo = kind === "auto" || kind === "i2v" || kind === "fl2v" || kind === "s2v" || kind === "r2v";
   /** R2V references: the picked ones, plus the first image when one is picked as well (the scene picture). */
-  const refList = resolved === "r2v" ? [...new Set([...refs, ...(first ? [first] : [])])].slice(0, 4) : [];
+  const refList = resolved === "r2v" ? [...new Set([...refs, ...(first ? [first] : [])])].slice(0, 9) : [];
 
   const describeRef = (path: string): string => {
     const owner = bible?.characters.find((character) => sheetPath(character) === path);
@@ -137,7 +137,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
       .filter((path) => media.images.some((file) => file.path === path));
     if (sheets.length === 0) return setError("설명에 이름이 나오는 인물의 캐릭터 시트가 없습니다. 등장인물 탭에서 시트를 먼저 만드세요.");
     setError("");
-    setRefs((list) => [...new Set([...list, ...sheets])].slice(0, 4));
+    setRefs((list) => [...new Set([...list, ...sheets])].slice(0, 9));
   }
 
   const picker = (label: string, value: string, set: (v: string) => void, files: MediaFile[], empty: string, optional = false) => (
@@ -209,14 +209,14 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
         {showAudio && picker("음성", audio, setAudio, media.audio, "음성이 없습니다", optional)}
         {showRefs && (
           <div className="field wide">
-            <label>참조 그림 (4장까지: 인물마다 캐릭터 시트 한 장씩)</label>
+            <label>참조 그림 (9장까지: 인물마다 캐릭터 시트 한 장씩)</label>
             <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
               {media.images.map((file) => {
                 const on = refs.includes(file.path);
                 const owner = bible?.characters.find((character) => sheetPath(character) === file.path);
                 return (
                   <label key={file.path} className="chip" style={{ cursor: "pointer" }}>
-                    <input type="checkbox" checked={on} disabled={!on && refs.length >= 4} onChange={() => setRefs((list) => (on ? list.filter((path) => path !== file.path) : [...list, file.path]))} /> {owner ? `시트: ${owner.name || owner.id}` : file.path.replace("assets/images/", "")}
+                    <input type="checkbox" checked={on} disabled={!on && refs.length >= 9} onChange={() => setRefs((list) => (on ? list.filter((path) => path !== file.path) : [...list, file.path]))} /> {owner ? `시트: ${owner.name || owner.id}` : file.path.replace("assets/images/", "")}
                   </label>
                 );
               })}

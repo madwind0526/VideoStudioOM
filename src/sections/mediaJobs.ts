@@ -27,7 +27,7 @@ export interface Recipe {
   first?: string;
   last?: string;
   audio?: string;
-  /** Reference pictures of an R2V clip (character sheets, a scene picture), at most four. */
+  /** Reference pictures of an R2V clip (character sheets, a scene picture), at most nine. */
   refs?: string[];
   duration?: number;
   /** Scene or script section this file belongs to. */
@@ -89,7 +89,7 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   if (recipe.kind === "r2v") {
     const refs = recipe.refs ?? [];
     if (refs.length === 0) return "참조할 그림(인물 시트나 장면 이미지)을 하나 이상 고르세요.";
-    if (refs.length > 4) return "참조 그림은 4장까지입니다.";
+    if (refs.length > 9) return "참조 그림은 9장까지입니다.";
     inputs.reference_image_paths = refs;
     return { tool: "h3_reference_video", label: text, record: recipe, inputs };
   }

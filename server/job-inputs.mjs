@@ -18,7 +18,7 @@ export async function prepareInputs(projectDir, inputs) {
     if (key.endsWith("_dir")) throw new HttpError(400, `지원하지 않는 입력입니다: ${key}`);
     if (key.endsWith("_paths")) {
       // A list of project-relative files (e.g. several reference images); each one is checked like a single path.
-      if (!Array.isArray(value) || value.length > 8 || value.some((item) => typeof item !== "string")) throw new HttpError(400, `${key}는 경로 문자열 목록이어야 합니다.`);
+      if (!Array.isArray(value) || value.length > 9 || value.some((item) => typeof item !== "string")) throw new HttpError(400, `${key}는 경로 문자열 목록이어야 합니다.`);
       prepared[key] = await Promise.all(value.map((item) => resolveInside(projectDir, item)));
       continue;
     }
