@@ -61,7 +61,8 @@ export async function runTool({ tool, inputs, connections, ffmpegPath = "", sign
     ensure: deps.ensure ?? (async (name) => {
       await ensureService(name, connections, { signal });
       // One 12 GB card serves all three ComfyUI servers: release the others before this one loads its models.
-      for (const other of ["comfy", "ref", "rtx"]) if (other !== name && connections[`${other}Url`]) await createComfy(connections[`${other}Url`]).free();
+      // A service that shares this one's address (rtx on the Rev0 server) is the same server, so it stays loaded.
+      for (const other of ["comfy", "ref", "rtx"]) if (other !== name && connections[`${other}Url`] && connections[`${other}Url`] !== connections[`${name}Url`]) await createComfy(connections[`${other}Url`]).free();
     }),
     capture: deps.capture ?? runCapture,
     fetchImpl: deps.fetchImpl ?? fetch,

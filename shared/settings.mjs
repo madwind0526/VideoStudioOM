@@ -53,7 +53,7 @@ export const DEFAULTS = {
     // The second ComfyUI with the RTX upscale nodes: address, install folder, program folder and where it writes results.
     // The third ComfyUI (Rev0 portable) with the H3 latent upscaler and the Deno nodes: the two-stage reference video and character sheet run here.
     refUrl: "http://127.0.0.1:8188",
-    refDir: "C:\ComfyUI-Portable\ComfyUI-Rev0",
+    refDir: "C:\\ComfyUI-Portable\\ComfyUI-Rev0",
     rtxUrl: "http://127.0.0.1:8191",
     rtxRoot: "C:\\Users\\madwi\\Documents\\ComfyUI",
     rtxApp: "C:\\Users\\madwi\\AppData\\Local\\Programs\\@comfyorgcomfyui-electron\\resources\\ComfyUI",

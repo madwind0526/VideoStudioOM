@@ -17,6 +17,13 @@ const portOf = (url) => new URL(url).port || "80";
 export function serviceSpecs(connections) {
   const songyue = connections.songyueDir;
   const venvPython = (root) => path.join(root, ".venv", "Scripts", "python.exe");
+  const specs = baseSpecs(connections, songyue, venvPython);
+  // Pointing rtxUrl at the Rev0 address makes that one server do the RTX upscale too (it has the same nodes).
+  if (connections.rtxUrl === connections.refUrl) specs.rtx = specs.ref;
+  return specs;
+}
+
+function baseSpecs(connections, songyue, venvPython) {
   return {
     songyue: {
       url: `${connections.songyueUrl}/api/health`,
