@@ -13,3 +13,8 @@
 ```
 
 -->
+
+## H3 continuity frame calculation
+
+- H3 output lengths use the 24 fps `17n+5` frame grid.
+- For a continuation clip, generate the normal snapped clip length plus the 22-frame context prefix, then trim the prefix from the delivered result.

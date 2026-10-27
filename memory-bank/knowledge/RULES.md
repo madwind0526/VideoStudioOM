@@ -38,3 +38,16 @@
 
 **규칙:** 포트는 `C:\Claude\PORTS.md`에서만 배정(백엔드 4314, 프론트엔드 5184). Vite는 `strictPort: true`. 백엔드는 dev에서 `node --watch`로 실행한다.
 **이유:** 전역 KB `node-backend-no-hot-reload.md`, `windows-port-reclaim-so-reuseaddr.md`.
+
+## ComfyUI workflow and generation contracts
+
+- Treat ComfyUI UI workflows (`nodes`/`links`), API workflows (node IDs with `class_type`), and Flagship plans (`settings`/`references`/`scenes`/`clips`) as separate formats. Convert explicitly at import boundaries.
+- Keep source audio used for final mux separate from model-conditioning audio when exact speech continuity matters.
+- Report custom-node registration/static-asset checks separately from model, CUDA, GPU inference, and output-quality checks.
+- Validate ComfyUI installations with `main.py --cpu --offline --quick-test-for-ci`; use `--disable-all-custom-nodes --whitelist-custom-nodes <folder>` for isolated binary-node loading when needed.
+
+## Regeneration safety
+
+- Preserve the current media file and its recipe as a revision until replacement output completes successfully.
+- If a regenerated clip feeds later clips through image or AV context, mark dependent outputs stale through the next independent boundary.
+- Lock output geometry and FPS after the first dependent video result, or branch the project before changing them.
