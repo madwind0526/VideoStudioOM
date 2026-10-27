@@ -5,6 +5,7 @@ import { ApiError, mediaUrl } from "../api";
 import { BIBLE_FILE, emptyBible, sheetPath, type Bible, type Character } from "../bible";
 import FileNavigator from "../components/FileNavigator";
 import Lightbox from "../components/Lightbox";
+import PromptLog from "../components/PromptLog";
 import { storyApi } from "../story";
 import { useJsonFile } from "../useFile";
 import { deleteMedia, importImage, makeItem, makePrompt, startItems } from "./mediaJobs";
@@ -289,6 +290,7 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
         />
       )}
       {open && <Lightbox src={mediaUrl(project.id, open, images.find((image) => image.path === open)?.mtimeMs)} alt={open} onClose={() => setOpen(null)} />}
+      <PromptLog projectId={project.id} stages={["bible", "prompt-sheet"]} refreshKey={(extracting ? 1 : 0) + (making ? 2 : 0)} />
     </div>
   );
 }

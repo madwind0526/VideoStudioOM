@@ -1,4 +1,4 @@
-import { Combine, Layers, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Combine, FileText, Layers, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
 import ExportPanel from "../components/ExportPanel";
@@ -29,11 +29,17 @@ interface Part {
   speaker_directions?: string;
 }
 
+/** The texts the model was really given, stored in the file's record when it was made. */
+function sentOf(record: Record<string, unknown> | null | undefined): { node: string; key: string; text: string }[] {
+  const sent = record?.sent;
+  return Array.isArray(sent) ? sent.filter((entry): entry is { node: string; key: string; text: string } => typeof entry?.text === "string") : [];
+}
+
 /** Re-make and delete icons for one generated file (top right of its tile or row). */
 function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile; kind: MakeKind | null }) {
   const { project, view, jobs, onJobsChanged, notify } = props;
   const recipe = recipeOf(file.record);
-  const [mode, setMode] = useState<"edit" | "delete" | null>(null);
+  const [mode, setMode] = useState<"edit" | "delete" | "sent" | null>(null);
   const [text, setText] = useState("");
   const [lyrics, setLyrics] = useState("");
   const running = jobs.current !== null;
@@ -81,10 +87,30 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
       >
         <RefreshCw size={15} />
       </button>
+      <button className="icon-btn" type="button" aria-label="최종 프롬프트" title="모델에 실제로 보낸 프롬프트" disabled={!recipe} onClick={() => setMode(mode === "sent" ? null : "sent")}>
+        <FileText size={15} />
+      </button>
       <button className="icon-btn" type="button" aria-label="지우기" title="지우기" onClick={() => setMode(mode === "delete" ? null : "delete")}>
         <Trash2 size={15} />
       </button>
       </div>
+      {mode === "sent" && recipe && (
+        <div className="item-pop">
+          {sentOf(file.record).length > 0 ? (
+            sentOf(file.record).map((entry, index) => (
+              <div key={index}>
+                <label>{entry.node} · {entry.key}</label>
+                <textarea readOnly rows={Math.min(12, Math.max(3, entry.text.split(String.fromCharCode(10)).length + 1))} value={entry.text} />
+              </div>
+            ))
+          ) : (
+            <>
+              <label>기록된 프롬프트 (이 파일은 보낸 내용이 따로 기록되지 않았습니다)</label>
+              <textarea readOnly rows={4} value={recipe.lyrics ? [recipe.prompt, "[가사]", recipe.lyrics].join(String.fromCharCode(10, 10)) : recipe.prompt} />
+            </>
+          )}
+        </div>
+      )}
       {mode === "delete" && (
         <div className="item-pop">
           <p>이 파일을 지울까요?</p>

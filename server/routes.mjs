@@ -18,6 +18,35 @@ import { llmStatus } from "./llm-status.mjs";
 import { writeFileAtomic } from "./fs-util.mjs";
 import { resolveInside } from "./paths.mjs";
 
+const PROMPT_LOG = "studio/llm_prompts.json";
+
+/**
+ * Runs `run(ask)` and keeps every LLM call it made (system prompt, user prompt, answer) in studio/llm_prompts.json under
+ * `stage`, so the screen can show what was sent. A failed run is kept too: the rejected answer is what explains the error.
+ */
+async function withPromptLog(projects, id, stage, ask, run) {
+  const calls = [];
+  const logged = async (system, user) => {
+    const answer = await ask(system, user);
+    calls.push({ system, user, answer });
+    return answer;
+  };
+  try {
+    return await run(logged);
+  } finally {
+    if (calls.length) {
+      try {
+        const { content, mtimeMs } = await projects.readText(id, PROMPT_LOG, { optional: true });
+        const all = { ...JSON.parse(content || "{}"), [stage]: { at: new Date().toISOString(), calls } };
+        await projects.writeText(id, PROMPT_LOG, `${JSON.stringify(all, null, 2)}
+`, mtimeMs);
+      } catch {
+        // The log is a convenience; it must never fail the generation itself.
+      }
+    }
+  }
+}
+
 function decodeId(raw) {
   try {
     return decodeURIComponent(raw);
@@ -234,7 +263,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const body = requireObject(await readJsonBody(req));
     const id = body.project;
     const detail = await projects.get(id);
-    const ask = askWith((await settings.get()).llm);
+    const baseAsk = askWith((await settings.get()).llm);
     const readFileText = async (rel) => (await projects.readText(id, rel, { optional: true })).content ?? "";
     const synopsis = await readFileText("studio/synopsis.md");
     const bible = await readBible(projects, id);
@@ -242,18 +271,20 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const { value: effective } = resolveSettings(await settings.get(), await projects.getSettings(id));
     const totalSeconds = Number(body.totalSeconds) > 0 ? Number(body.totalSeconds) : effective.defaults.durationSeconds;
     const hasBible = bible.characters.length > 0;
-    if (story[1] === "synopsis") sendJson(res, 200, { options: await generateSynopses({ idea: body.idea, preset, count: body.count, totalSeconds }, ask) });
-    else if (story[1] === "bible") sendJson(res, 200, { bible: { ...(await generateBible({ synopsis, preset }, ask)), preset: preset ?? "" } });
-    else if (story[1] === "scenario") sendJson(res, 200, { scenario: await generateScenario({ synopsis, bible: hasBible ? bible : null, preset, totalSeconds }, ask) });
-    else {
-      let scenario = null;
-      try {
-        scenario = JSON.parse(await readFileText("artifacts/scene_plan.json"));
-      } catch {
-        scenario = null;
+    await withPromptLog(projects, id, story[1], baseAsk, async (ask) => {
+      if (story[1] === "synopsis") sendJson(res, 200, { options: await generateSynopses({ idea: body.idea, preset, count: body.count, totalSeconds }, ask) });
+      else if (story[1] === "bible") sendJson(res, 200, { bible: { ...(await generateBible({ synopsis, preset }, ask)), preset: preset ?? "" } });
+      else if (story[1] === "scenario") sendJson(res, 200, { scenario: await generateScenario({ synopsis, bible: hasBible ? bible : null, preset, totalSeconds }, ask) });
+      else {
+        let scenario = null;
+        try {
+          scenario = JSON.parse(await readFileText("artifacts/scene_plan.json"));
+        } catch {
+          scenario = null;
+        }
+        sendJson(res, 200, await generateScript({ synopsis, scenario, bible: hasBible ? bible : null, title: detail.title }, ask));
       }
-      sendJson(res, 200, await generateScript({ synopsis, scenario, bible: hasBible ? bible : null, title: detail.title }, ask));
-    }
+    });
     return true;
   }
   if (pathname === "/api/prompt") {
@@ -265,9 +296,8 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     // A sheet is about one character: only the style is shared. Other prompts take every bible entry the idea names.
     const bibleText = body.target === "sheet" ? (bible.style.trim() ? `Visual style: ${bible.style.trim()}` : "") : typeof body.text === "string" ? bibleContext(bible, body.text) : "";
     const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 9).map((ref) => ref.slice(0, 600)) : [];
-    const prompt = await makePrompt(
-      { target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined },
-      askWith((await settings.get()).llm),
+    const prompt = await withPromptLog(projects, body.project, `prompt-${body.target}`, askWith((await settings.get()).llm), (ask) =>
+      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined }, ask),
     );
     sendJson(res, 200, { prompt });
     return true;

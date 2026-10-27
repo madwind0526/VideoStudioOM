@@ -2,6 +2,7 @@ import { Save, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { DIRECTION_PRESETS } from "../../shared/presets.mjs";
 import { ApiError } from "../api";
+import PromptLog from "../components/PromptLog";
 import { BIBLE_FILE, type Bible } from "../bible";
 import { storyApi, type SynopsisOption } from "../story";
 import { useJsonFile, useTextFile } from "../useFile";
@@ -81,6 +82,7 @@ export default function SynopsisSection({ project, onChanged, notify }: SectionP
             ))}
           </div>
         )}
+        <PromptLog projectId={project.id} stages={["synopsis"]} refreshKey={busy ? 1 : 0} />
       </div>
 
       <textarea className="big" rows={14} disabled={!file.ready} value={file.text} maxLength={20000} onChange={(event) => file.setText(event.target.value)} placeholder="아직 줄거리가 없습니다. 이야기를 적거나 위에서 제안을 받아 보세요." />

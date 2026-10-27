@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import TimelineBar from "../components/TimelineBar";
 import { SCENE_OPTS_FILE, type SceneLora, type SceneOpts } from "./mediaJobs";
+import PromptLog from "../components/PromptLog";
 import { storyApi } from "../story";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
@@ -234,6 +235,7 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
           </div>
         </>
       )}
+      <PromptLog projectId={project.id} stages={["scenario"]} refreshKey={busy ? 1 : 0} />
     </div>
   );
 }

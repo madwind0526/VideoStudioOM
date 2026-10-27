@@ -2,6 +2,7 @@ import { Sparkles, UserRound, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { resolveSize } from "../../shared/settings.mjs";
 import { ApiError, type MediaFile, type ProjectSettingsView } from "../api";
+import PromptLog from "./PromptLog";
 import { charactersIn, describeReference, referencesFor, sheetPath, type Bible } from "../bible";
 import { makeItem, makePrompt, startItems, stamp, type MakeItem, type MakeKind } from "../sections/mediaJobs";
 
@@ -190,6 +191,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
               </button>
             </div>
           )}
+          {canDraft && <PromptLog projectId={projectId} stages={[`prompt-${kind === "image" ? "image" : kind === "sfx" ? "sfx" : "video"}`]} refreshKey={drafting ? 1 : 0} />}
         </div>
         {kind === "vocal" && (
           <div className="field wide">

@@ -2150,3 +2150,9 @@ textarea.big {
   cursor: default;
   opacity: 0.5;
 }
+
+details.prompt-log textarea {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}

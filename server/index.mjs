@@ -76,7 +76,7 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
     dir: path.join(dataDir, "runtime"),
     events,
     // Keep how a generated file was made, so it can be made again from the screen.
-    onFinished: (job) => (job.meta?.output && job.meta?.record ? projects.setAssetRecord(job.meta.project, job.meta.output, job.meta.record) : undefined),
+    onFinished: (job, result) => (job.meta?.output && job.meta?.record ? projects.setAssetRecord(job.meta.project, job.meta.output, { ...job.meta.record, ...(result?.sentPrompts?.length ? { sent: result.sentPrompts } : {}) }) : undefined),
     // `runTool` replaces the tool runner (tests use a fake one that only writes a file).
     run: runToolOverride,
     getConfig: async () => {

@@ -46,18 +46,41 @@ export function outsideRoots(inputs, roots) {
 }
 
 /** Runs one tool. Resolves with { ok, artifacts, seed, model, error, code, durationSeconds, data } and never throws. */
+/** The texts a ComfyUI graph really carries (prompt boxes, H3 conditioning), so the screen can show what the model was given. */
+export function promptsOf(graph) {
+  const found = [];
+  for (const node of Object.values(graph ?? {})) {
+    for (const [key, value] of Object.entries(node?.inputs ?? {})) {
+      if ((key === "text" || key === "prompt" || key === "negative_prompt") && typeof value === "string" && value.trim()) found.push({ node: node.class_type ?? "", key, text: value.slice(0, 4000) });
+    }
+  }
+  return found;
+}
+
 export async function runTool({ tool, inputs, connections, ffmpegPath = "", signal, onProgress, deps = {} }) {
   const started = Date.now();
   const handler = HANDLERS[tool];
   if (!handler) return { ok: false, code: "unknown_tool", error: `알 수 없는 도구입니다: ${tool}`, artifacts: [] };
   const missing = REQUIRED[tool].filter((key) => inputs[key] === undefined || inputs[key] === null || inputs[key] === "");
   if (missing.length > 0) return { ok: false, code: "bad_input", error: `필수 입력이 없습니다: ${missing.join(", ")}`, artifacts: [] };
+  // Every graph submitted to ComfyUI during this run; the texts of the last ones end up in the file's record.
+  const sent = [];
   const context = {
     connections,
     ffmpegPath,
     signal,
     onProgress,
-    comfy: (url) => (deps.comfyFor ?? createComfy)(url),
+    comfy: (url) => {
+      const comfy = (deps.comfyFor ?? createComfy)(url);
+      if (typeof comfy.submit === "function") {
+        const submit = comfy.submit;
+        comfy.submit = (graph) => {
+          sent.push(...promptsOf(graph));
+          return submit.call(comfy, graph);
+        };
+      }
+      return comfy;
+    },
     ensure: deps.ensure ?? (async (name) => {
       await ensureService(name, connections, { signal });
       // One 12 GB card serves all three ComfyUI servers: release the others before this one loads its models.
@@ -69,7 +92,7 @@ export async function runTool({ tool, inputs, connections, ffmpegPath = "", sign
   };
   try {
     const result = await handler(inputs, context);
-    return { ok: true, error: null, code: null, durationSeconds: Number(((Date.now() - started) / 1000).toFixed(2)), ...result };
+    return { ok: true, error: null, code: null, durationSeconds: Number(((Date.now() - started) / 1000).toFixed(2)), ...result, sentPrompts: sent.slice(0, 8) };
   } catch (error) {
     const code = error?.cancelled ? "cancelled" : error instanceof WorkflowError ? "workflow" : error instanceof ToolError ? error.code : "failed";
     return { ok: false, code, error: error?.message ?? String(error), artifacts: [], durationSeconds: Number(((Date.now() - started) / 1000).toFixed(2)) };

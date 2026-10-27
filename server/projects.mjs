@@ -290,7 +290,7 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     /** Remembers how a generated file was made. Called when a job finishes, so the file can be made again. */
     async setAssetRecord(id, rel, record) {
       checkAssetPath(rel);
-      if (record === null || typeof record !== "object" || Array.isArray(record) || JSON.stringify(record).length > 20000) {
+      if (record === null || typeof record !== "object" || Array.isArray(record) || JSON.stringify(record).length > 60000) {
         throw new HttpError(400, "기록이 올바르지 않습니다.");
       }
       const dir = await projectDir(id);

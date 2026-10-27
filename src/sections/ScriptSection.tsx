@@ -1,6 +1,7 @@
 import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { ApiError } from "../api";
+import PromptLog from "../components/PromptLog";
 import { storyApi } from "../story";
 import { formatTime } from "../format";
 import { useJsonFile } from "../useFile";
@@ -216,6 +217,7 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
           </div>
         </>
       )}
+      <PromptLog projectId={project.id} stages={["script"]} refreshKey={busy ? 1 : 0} />
     </div>
   );
 }

@@ -92,10 +92,10 @@ export function createJobQueue({ dir, getConfig, events, onFinished, run = runTo
   const publish = (job) => events.broadcast("job", job);
 
   /** After a job: save its record, then start the next job of its batch (a failure or cancel ends the batch). */
-  async function afterJob(job) {
+  async function afterJob(job, result) {
     if (job.status === "done") {
       try {
-        await onFinished?.(job);
+        await onFinished?.(job, result);
       } catch {
         // Not being able to save the record must not stop the batch; the file itself exists.
       }
@@ -179,7 +179,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished, run = runTo
       current = null;
       controller = null;
       void persist();
-      await afterJob(job);
+      await afterJob(job, result);
       publish(job);
     });
     return job;

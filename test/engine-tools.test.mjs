@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { H3, h3Frames, h3Graph, h3Prompt, h3RefGraph, kreaGraph, pickKreaModels } from "../server/engine/graphs.mjs";
-import { outsideRoots, runTool, splitSpeech } from "../server/engine/tools.mjs";
+import { outsideRoots, promptsOf, runTool, splitSpeech } from "../server/engine/tools.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "../server/engine/workflow-patch.mjs";
 import { fakeComfy } from "./helpers/fake-comfy.mjs";
 
@@ -406,4 +406,9 @@ test("deno reference graph: two stages split the sigmas, enlarge the video laten
   const single = h3RefGraph({ prompt: "x", seed: 1, model: "deno", seconds: 5, images: ["a.png"] });
   assert.equal(single[50], undefined);
   assert.deepEqual(single[12].inputs.samples, ["11", 0]);
+});
+
+test("promptsOf collects the texts a graph really carries", () => {
+  const graph = { 4: { class_type: "CLIPTextEncode", inputs: { text: "a cat", clip: ["2", 0] } }, 9: { class_type: "H3", inputs: { prompt: "  ", width: 5 } } };
+  assert.deepEqual(promptsOf(graph), [{ node: "CLIPTextEncode", key: "text", text: "a cat" }]);
 });
