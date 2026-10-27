@@ -412,3 +412,15 @@ test("promptsOf collects the texts a graph really carries", () => {
   const graph = { 4: { class_type: "CLIPTextEncode", inputs: { text: "a cat", clip: ["2", 0] } }, 9: { class_type: "H3", inputs: { prompt: "  ", width: 5 } } };
   assert.deepEqual(promptsOf(graph), [{ node: "CLIPTextEncode", key: "text", text: "a cat" }]);
 });
+
+test("h3RefGraph: references plus a pinned first frame with the song, and a pinned last frame, feed the guider", () => {
+  const graph = h3RefGraph({ prompt: "p", seed: 1, images: ["ref.png"], first: "a.png", last: "b.png", guideAudio: "s.wav" });
+  assert.deepEqual(graph[62].inputs.audio, ["61", 0]);
+  assert.equal(graph[62].inputs.image, undefined);
+  assert.deepEqual(graph[65].inputs.image, ["60", 0]);
+  assert.deepEqual(graph[65].inputs.positive, ["62", 0]);
+  assert.equal(graph[64].inputs.frame_idx, -1);
+  assert.deepEqual(graph[64].inputs.positive, ["65", 0]);
+  assert.deepEqual(graph[20].inputs.conditioning, ["64", 0]);
+  assert.deepEqual(h3RefGraph({ prompt: "p", seed: 1, images: ["ref.png"] })[20].inputs.conditioning, ["6", 0]);
+});

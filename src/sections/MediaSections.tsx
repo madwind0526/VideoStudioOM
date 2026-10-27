@@ -368,7 +368,10 @@ export function VideosSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
-  const [colorMatch, setColorMatch] = useState(true);
+  const [colorMatch, setColorMatch] = useState(false);
+  const [overlapAuto, setOverlapAuto] = useState(true);
+  const [overlap, setOverlap] = useState(0.7);
+  const [seamColor, setSeamColor] = useState(true);
   const [qa, setQa] = useState<ClipCheck[]>([]);
   const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
   const bible = bibleFile.data;
@@ -415,7 +418,7 @@ export function VideosSection(props: SectionProps) {
   async function join() {
     setJoining(true);
     try {
-      await joinMedia(props.project.id, "video", selection.picked, { colorMatch });
+      await joinMedia(props.project.id, "video", selection.picked, { colorMatch, overlapSeconds: overlapAuto ? "auto" : overlap, seamColor });
       props.notify("영상을 이어 붙였습니다. (renders/final.mp4)");
       props.onJobsChanged();
     } catch (e) {
@@ -439,6 +442,18 @@ export function VideosSection(props: SectionProps) {
       />
       <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }}>
         <input type="checkbox" checked={colorMatch} onChange={(event) => setColorMatch(event.target.checked)} /> 이어 붙일 때 구간마다 색을 맞추기
+      </label>
+      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }} title="다음 구간이 앞 구간의 끝에서 앞선 장면에서 시작할 때, 앞 구간의 그 뒤를 잘라 냅니다. 자동은 다음 구간의 첫 장면과 같은 장면을 앞 구간 끝에서 찾아 그 뒤를 자릅니다.">
+        이음새 겹침 시간
+        <select value={overlapAuto ? "auto" : "manual"} onChange={(event) => setOverlapAuto(event.target.value === "auto")}>
+          <option value="auto">시스템 결정</option>
+          <option value="manual">직접 입력</option>
+        </select>
+        {!overlapAuto && <input type="number" min={0} max={5} step={0.1} value={overlap} onChange={(event) => setOverlap(Math.min(5, Math.max(0, Number(event.target.value) || 0)))} style={{ width: 64 }} />}
+        {!overlapAuto && "초"}
+      </label>
+      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }} title="각 구간의 시작 색을 앞 구간의 끝 색에 맞추고 3초에 걸쳐 원래 색으로 되돌립니다.">
+        <input type="checkbox" checked={seamColor} onChange={(event) => setSeamColor(event.target.checked)} /> 이음새 색 보정
       </label>
       <Top props={props} kinds={["auto", "i2v", "fl2v", "s2v", "r2v"]} outputs={["assets/video/"]} creating={creating} bible={bible} />
       <ExportPanel

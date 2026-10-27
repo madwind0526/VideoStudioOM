@@ -221,9 +221,10 @@ const HANDLERS = {
     const images = inputs.reference_image_paths ?? [];
     const video = inputs.reference_video_path;
     const audio = inputs.reference_audio_path;
+    const [first, last, guide] = [inputs.first_frame_path, inputs.last_frame_path, inputs.audio_path];
     if (images.length === 0 && !video && !audio) throw new ToolError("참조 이미지, 영상, 오디오 중 하나는 필요합니다.", "bad_input");
     if (images.length > 9) throw new ToolError("참조 이미지는 9장까지입니다.", "bad_input");
-    for (const [label, file] of [...images.map((item) => ["참조 이미지", item]), ["참조 영상", video], ["참조 오디오", audio]]) {
+    for (const [label, file] of [...images.map((item) => ["참조 이미지", item]), ["참조 영상", video], ["참조 오디오", audio], ["첫 이미지", first], ["마지막 이미지", last], ["오디오", guide]]) {
       if (file && !(await exists(file))) throw new ToolError(`${label} 파일이 없습니다: ${file}`, "bad_input");
     }
     const model = inputs.model ?? "deno";
@@ -236,7 +237,7 @@ const HANDLERS = {
     const [width, height] = [Number(inputs.width ?? 736), Number(inputs.height ?? 416)];
     const upscale = inputs.upscale ?? !twoStage;
     const seed = inputs.seed ?? randomSeed();
-    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`];
+    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`];
     try {
       // The Deno profile runs on the Rev0 ComfyUI (it has the H3 latent upscaler); the other profiles stay on SongYUE2's.
       const server = model === "deno" ? "ref" : "comfy";
@@ -246,9 +247,13 @@ const HANDLERS = {
       if (model === "deno" && !(await comfy.options("LoraLoaderModelOnly", "lora_name")).includes(H3.denoLora)) throw new ToolError(`ComfyUI에 LoRA가 없습니다: ${H3.denoLora}`, "unavailable");
       const uploaded = [];
       for (const image of images) uploaded.push(await comfy.upload(image, path.basename(image)));
+      const [genWidth, genHeight] = twoStage ? [half(width), half(height)] : [width, height];
+      // Pinned pictures must match the generation size.
+      const pinned = async (file, dest) => (file ? comfy.upload(await fitImage(context, file, genWidth, genHeight, dest), path.basename(dest)) : null);
       const graph = applyOverrides(
         h3RefGraph({
-          prompt: inputs.prompt, width: twoStage ? half(width) : width, height: twoStage ? half(height) : height, seconds: Number(inputs.duration_seconds ?? 5), steps: inputs.steps, seed, model, twoStage,
+          prompt: inputs.prompt, width: genWidth, height: genHeight, seconds: Number(inputs.duration_seconds ?? 5), steps: inputs.steps, seed, model, twoStage,
+          first: await pinned(first, temps[2]), last: await pinned(last, temps[3]), guideAudio: guide ? await comfy.upload(guide, path.basename(guide)) : null,
           images: uploaded, video: video ? await comfy.upload(video, path.basename(video)) : null, audio: audio ? await comfy.upload(audio, path.basename(audio)) : null, useVideoAudio: Boolean(inputs.use_video_audio),
         }),
         inputs.overrides,
@@ -259,7 +264,7 @@ const HANDLERS = {
         await rtxUpscale(context, clip, temps[1], Number(inputs.upscale_scale ?? 2.6));
         clip = temps[1];
       }
-      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
+      await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? (audio ?? guide) : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
     } finally {
       await cleanup(temps);
     }

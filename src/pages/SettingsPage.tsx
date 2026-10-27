@@ -22,7 +22,7 @@ const FOLDER_KEYS: Record<string, string> = { "storage.projectsDir": "projects",
 
 const LLM_PATHS = ["llm.provider", "llm.model", "llm.ollama.endpoint", "llm.ollama.model", "llm.chain", "llm.timeoutSec"];
 const SIZE_PATHS = ["defaults.sizeId", "defaults.customSize.generate", "defaults.customSize.final"];
-const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps"];
+const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps", "video.seamRampSeconds"];
 const IMAGE_PATHS = ["defaults.imageModel"];
 const AUDIO_PATHS = ["defaults.audioSource", "audio.musicFormat", "audio.voice.tool", "audio.voice.name", "audio.voice.language"];
 const LOCAL_PATHS = ["connections.songyueUrl", "connections.comfyUrl", "connections.refUrl", "connections.refDir", "connections.songyueDir", "connections.rtxUrl", "connections.rtxRoot", "connections.rtxApp", "connections.rtxOutputDir", "connections.openmontageDir", "connections.ffmpegPath", "storage.projectsDir", "storage.inputDir", "storage.outputDir"];

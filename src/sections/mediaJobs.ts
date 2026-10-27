@@ -138,7 +138,7 @@ export const importImage = (projectId: string, from: string) => api<{ path: stri
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
 
-export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: { colorMatch?: boolean } = {}) =>
+export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: { colorMatch?: boolean; overlapSeconds?: number | "auto"; seamColor?: boolean } = {}) =>
   api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs, ...options });
 
 /** Audio pieces laid on one timeline: each starts at its own second. */

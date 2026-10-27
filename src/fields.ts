@@ -44,6 +44,7 @@ add({ path: "defaults.imageModel", label: "이미지 모델", kind: "select", op
 
 add({ path: "video.model", label: "영상 모델", kind: "select", options: [{ value: "minimax-h3-turbo", label: "MiniMax H3 Turbo" }] });
 add({ path: "video.upscale", label: "확대 방식", kind: "select", options: options(UPSCALES, UPSCALE_LABELS) });
+add({ path: "video.seamRampSeconds", label: "이음새 색 보정 구간(초)", kind: "number", min: 0.5, max: 10, step: 0.5, hint: "이어 붙일 때 각 구간의 시작 색을 앞 구간 끝에 맞춘 뒤, 이 시간에 걸쳐 원래 색으로 되돌립니다." });
 add({ path: "video.finalFps", label: "최종 FPS", kind: "number", min: 12, max: 60, step: 1, hint: "생성은 24fps, 최종 파일에서 변환합니다." });
 
 add({ path: "audio.musicFormat", label: "노래 저장 형식", kind: "select", options: options(MUSIC_FORMATS) });

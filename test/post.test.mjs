@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { mixAudio } from "../server/concat.mjs";
-import { availableCodecs, buildMixFilter, checkClip, colorGains, exportVideo, srtFromScript } from "../server/post.mjs";
+import { autoTrims, availableCodecs, buildMixFilter, checkClip, colorGains, exportVideo, seamGains, srtFromScript } from "../server/post.mjs";
 
 const ffmpeg = (...args) => execFileSync("ffmpeg", ["-v", "error", "-y", ...args]);
 const duration = (file) => Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]).toString());
@@ -99,6 +99,36 @@ test("export: a sound track shorter than the picture does not cut the end of the
     const output = path.join(root, "out.mp4");
     await exportVideo({ ffmpegPath: "", video, audio: sound, codec: "h264", output });
     assert.ok(duration(output) > 2.8, `duration ${duration(output)}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("seam gains make a clip start in the colour the previous clip ended in, within limits", () => {
+  const gains = seamGains([[100, 100, 100], [100, 100, 100], null], [[90, 100, 110], [50, 100, 100], [1, 1, 1]]);
+  assert.equal(gains[0], null);
+  assert.ok(gains[1][0] === 1.25 && Math.abs(gains[1][1] - 1) < 1e-9);
+  assert.ok(gains[2].every((value) => value === 1.25));
+  assert.equal(seamGains([null, [100, 100, 100]], [[1, 1, 1], [1, 1, 1]])[1], null);
+});
+
+test("auto trim finds where the next clip carries on from the previous one, and cuts nothing for unrelated clips", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-auto-"));
+  try {
+    const [a, b, c] = ["a", "b", "c"].map((name) => path.join(root, `${name}.mp4`));
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=128x160:d=4:r=24", "-pix_fmt", "yuv420p", a]);
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-ss", "3", "-i", a, "-pix_fmt", "yuv420p", b]);
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=128x160:d=2:r=24", "-pix_fmt", "yuv420p", c]);
+    const [first, second] = await autoTrims("", [a, b, c]);
+    assert.ok(first > 0.9 && first < 1.1, `trim ${first}`);
+    assert.equal(second, 0);
+    assert.deepEqual(await autoTrims("", [a, c]), [0, 0]);
+    // The recorded length wins over looking at pictures; the last clip is cut like the one before it when it has no record.
+    const byRecord = await autoTrims("", [a, b], [3.5, 0.6]);
+    assert.ok(Math.abs(byRecord[0] - 0.5) < 0.1 && Math.abs(byRecord[1] - 0.4) < 0.1, `trims ${byRecord}`);
+    const long = path.join(root, "long.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=128x160:d=3:r=24", "-pix_fmt", "yuv420p", long]);
+    assert.deepEqual(await autoTrims("", [long, long], [2.5, null]), [0.5, 0.5]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

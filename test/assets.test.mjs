@@ -43,6 +43,21 @@ test("concat joins two tiny clips into one longer clip", async () => {
   }
 });
 
+test("concat cuts the overlap off every clip, the last too, and can tint a seam", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-seam-"));
+  try {
+    const clips = [path.join(root, "a.mp4"), path.join(root, "b.mp4")];
+    for (const clip of clips) execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x48:d=2:r=24", "-pix_fmt", "yuv420p", clip]);
+    const output = path.join(root, "out", "final.mp4");
+    await concatMedia({ ffmpegPath: "", kind: "video", inputs: clips, output, trimEnd: 0.5, seamGains: [null, [1.1, 1, 1]] });
+    const seconds = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", output]).toString());
+    assert.ok(seconds > 2.8 && seconds < 3.2, `duration ${seconds}`);
+    await assert.rejects(concatMedia({ ffmpegPath: "", kind: "video", inputs: clips, output, trimEnd: 1.9 }), { status: 400 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("mix places every piece at its own start second", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vsom-mix-"));
   try {

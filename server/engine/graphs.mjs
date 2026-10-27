@@ -120,7 +120,7 @@ const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20], den
  * H3 reference to video: up to 9 reference pictures, a reference video (edit or restyle a clip) and reference audio.
  * Reference nodes use ids from 40 up so they never collide with the fixed ids below. The result is node "15".
  */
-export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false }) {
+export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false, first, last, guideAudio }) {
   const frames = h3Frames(seconds);
   const [sampler, defaultSteps] = REF_SAMPLERS[model];
   const cond = { clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0], prompt: h3Prompt(prompt), width, height, length: frames, ref_image_size: "match" };
@@ -156,6 +156,24 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     wf[34] = { class_type: "LoadAudio", inputs: { audio } };
     cond["ref_audios.ref_audio_0"] = ["34", 0];
   }
+  // Pinned frames next to the references: the first picture (and a song segment the mouth follows) at frame 0, the last picture at the end.
+  let positive = ["6", 0];
+  // The song gets its own guide node, the way the image-to-video graph pins it; one node for picture and sound did not lip-sync.
+  if (guideAudio) {
+    wf[61] = { class_type: "LoadAudio", inputs: { audio: guideAudio } };
+    wf[62] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: 0, audio_vae: ["4", 0], audio: ["61", 0] } };
+    positive = ["62", 0];
+  }
+  if (first) {
+    wf[60] = { class_type: "LoadImage", inputs: { image: first } };
+    wf[65] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: 0, vae: ["3", 0], image: ["60", 0] } };
+    positive = ["65", 0];
+  }
+  if (last) {
+    wf[63] = { class_type: "LoadImage", inputs: { image: last } };
+    wf[64] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: -1, vae: ["3", 0], image: ["63", 0] } };
+    positive = ["64", 0];
+  }
   // Deno two-stage: sample all but the last step small, enlarge the video latent 2x, then finish the last step at full size.
   let final = ["11", 0];
   if (twoStage) {
@@ -173,7 +191,7 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     7: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
     8: { class_type: "BasicScheduler", inputs: { model: sampled, scheduler: "simple", steps: steps || defaultSteps, denoise: 1.0 } },
     9: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
-    20: { class_type: "BasicGuider", inputs: { model: sampled, conditioning: ["6", 0] } },
+    20: { class_type: "BasicGuider", inputs: { model: sampled, conditioning: positive } },
     11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: twoStage ? ["50", 0] : ["8", 0], latent_image: ["6", 1] } },
     12: { class_type: "VAEDecode", inputs: { samples: final, vae: ["3", 0] } },
     13: { class_type: "VAEDecodeAudio", inputs: { samples: final, vae: ["4", 0] } },

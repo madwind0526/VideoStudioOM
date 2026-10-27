@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
 import { concatMedia, mixAudio } from "./concat.mjs";
-import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, colorGains, exportVideo, ROLES, srtFromScript } from "./post.mjs";
+import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, autoTrims, colorGains, exportVideo, ROLES, seamGainsOf, srtFromScript } from "./post.mjs";
 import { createComfy } from "./engine/comfy.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
@@ -167,7 +167,18 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       else {
         // colorMatch: every clip is moved towards the average colour of all clips, so a long video does not flicker in tone.
         const gains = body.kind === "video" && body.colorMatch === true ? colorGains(await Promise.all(inputs.map((file) => averageRgb(ffmpegPath, file)))) : [];
-        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains });
+        // The length a clip was made for (its record), when the project remembers it.
+        const records = await projects.assetRecords(id);
+        const keeps = names.map((name) => {
+          const record = records[String(name).replace(/\\/g, "/")];
+          return Number(record?.keep ?? record?.duration) || null;
+        });
+        // overlapSeconds: "auto" lets the system decide where each clip ends; a number is the seconds cut off every clip's end.
+        const trimEnd = body.kind === "video" && body.overlapSeconds === "auto" ? await autoTrims(ffmpegPath, inputs, keeps) : Number(body.overlapSeconds ?? 0);
+        if (!(Array.isArray(trimEnd) || (trimEnd >= 0 && trimEnd <= 5))) throw new HttpError(400, "겹침 시간은 0~5초여야 합니다.");
+        const seams = body.kind === "video" && body.seamColor === true ? await seamGainsOf(ffmpegPath, inputs, trimEnd) : [];
+        const seamRamp = resolveSettings(await settings.get(), await projects.getSettings(id)).value.video.seamRampSeconds;
+        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains, trimEnd, seamGains: seams, seamRamp });
       }
     } finally {
       joining.delete(id);

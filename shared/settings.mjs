@@ -36,7 +36,7 @@ export const DEFAULTS = {
     audioSource: "input",
     imageModel: "krea2-turbo",
   },
-  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24 },
+  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3 },
   audio: { musicFormat: "flac", voice: { tool: "qwen3_tts", name: "Sohee", language: "ko" } },
   llm: {
     provider: "claude-cli",
@@ -146,6 +146,7 @@ const RULES = {
   "video.model": oneOf("영상 모델", ["minimax-h3-turbo"]),
   "video.upscale": oneOf("확대 방식", UPSCALES),
   "video.finalFps": intBetween("최종 FPS", 12, 60),
+  "video.seamRampSeconds": numBetween("이음새 색 보정 구간(초)", 0.5, 10),
   "audio.musicFormat": oneOf("노래 저장 형식", MUSIC_FORMATS),
   "audio.voice.tool": text("음성 도구", 60),
   "audio.voice.name": text("음성 이름", 60),

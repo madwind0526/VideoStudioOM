@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { ffmpegFor } from "./concat.mjs";
+import { ffmpegFor, trimOf } from "./concat.mjs";
 import { HttpError } from "./http.mjs";
 import { killTree } from "./proc.mjs";
+import { ffprobeFor } from "./probe.mjs";
 import { buildMixFilter, ROLES } from "./mixfilter.mjs";
 
 const clock = (seconds) => {
@@ -80,6 +81,73 @@ export function colorGains(averages) {
   if (valid.length < 2) return averages.map(() => null);
   const target = [0, 1, 2].map((c) => valid.reduce((total, rgb) => total + rgb[c], 0) / valid.length);
   return averages.map((rgb) => (rgb ? rgb.map((value, c) => Math.min(1.2, Math.max(0.83, target[c] / Math.max(value, 1)))) : null));
+}
+
+/** Seconds of a video file, read with ffprobe. */
+export async function clipSeconds(ffmpegPath, file) {
+  const { stdout } = await runCapture(ffprobeFor(ffmpegPath), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
+  return Number(stdout.toString().trim());
+}
+
+/** Mean colour [r, g, b] of the single frame at `at` seconds. */
+export async function frameRgb(ffmpegPath, file, at) {
+  const { stdout } = await runCapture(ffmpegFor(ffmpegPath), ["-v", "error", "-ss", String(at), "-i", file, "-frames:v", "1", "-vf", "scale=1:1:flags=area,format=rgb24", "-f", "rawvideo", "-"]);
+  return stdout.length >= 3 ? [stdout[0], stdout[1], stdout[2]] : null;
+}
+
+/** Per clip (from the second on): channel gains that make its first frame the colour of the previous clip's last frame. */
+export function seamGains(ends, starts) {
+  return starts.map((start, i) => {
+    const end = ends[i - 1];
+    if (i === 0 || !end || !start) return null;
+    return end.map((value, c) => Math.min(1.25, Math.max(0.8, value / Math.max(start[c], 1))));
+  });
+}
+
+// A clip that continues from the previous one starts with (nearly) a frame of its tail; unrelated clips differ by thousands.
+const MATCH_WINDOW_SECONDS = 3;
+const MATCH_MAX_ERROR = 500;
+
+/**
+ * How many seconds to cut off the end of each clip.
+ * A clip made for a known length (`keeps[i]`, from its record) is cut to that length: this is exact, so it comes first.
+ * Otherwise the system looks for the frame in the last seconds of the clip that looks most like the next clip's first frame;
+ * 0 when nothing looks alike (the clips are not chained). The last clip without a known length is cut like the clip before it.
+ */
+export async function autoTrims(ffmpegPath, files, keeps = []) {
+  const [w, h] = [32, 40];
+  const gray = async (args) => (await runCapture(ffmpegFor(ffmpegPath), ["-v", "error", ...args, "-vf", `fps=24,scale=${w}:${h}:flags=area,format=gray`, "-f", "rawvideo", "-"])).stdout;
+  const trims = [];
+  for (let i = 0; i < files.length; i += 1) {
+    const length = await clipSeconds(ffmpegPath, files[i]);
+    const keep = Number(keeps[i]);
+    if (keep > 0) {
+      trims.push(length - keep > 0.02 ? Number((length - keep).toFixed(3)) : 0);
+    } else if (i === files.length - 1) {
+      const like = trims[i - 1] ?? 0;
+      trims.push(length - like >= 0.5 ? like : 0);
+    } else {
+      const from = Math.max(0, length - MATCH_WINDOW_SECONDS);
+      const tail = await gray(["-ss", String(from), "-i", files[i]]);
+      const head = await gray(["-i", files[i + 1], "-frames:v", "1"]);
+      const size = w * h;
+      let best = { error: Infinity, index: 0 };
+      for (let frame = 0; frame < Math.floor(tail.length / size); frame += 1) {
+        let sum = 0;
+        for (let j = 0; j < size; j += 1) sum += (tail[frame * size + j] - head[j]) ** 2;
+        if (sum / size < best.error) best = { error: sum / size, index: frame };
+      }
+      trims.push(best.error <= MATCH_MAX_ERROR ? Math.max(0, Number((length - from - best.index / 24).toFixed(3))) : 0);
+    }
+  }
+  return trims;
+}
+
+/** Seam gains of a list of clips whose last `trimEnd` seconds (a number, or one per clip) will be cut before they are joined. */
+export async function seamGainsOf(ffmpegPath, files, trimEnd = 0) {
+  const ends = await Promise.all(files.map(async (file, i) => frameRgb(ffmpegPath, file, Math.max(0, (await clipSeconds(ffmpegPath, file)) - trimOf(trimEnd, i) - 0.1))));
+  const starts = await Promise.all(files.map((file) => frameRgb(ffmpegPath, file, 0)));
+  return seamGains(ends, starts);
 }
 
 /** What the quality check looks for in a clip: black frames and frozen frames. */

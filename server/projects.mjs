@@ -287,6 +287,11 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       return { content: await readFile(target, "utf8"), mtimeMs: info.mtimeMs };
     },
 
+    /** How each generated file was made, by project path (empty when nothing was recorded). */
+    async assetRecords(id) {
+      return readAssets(await projectDir(id));
+    },
+
     /** Remembers how a generated file was made. Called when a job finishes, so the file can be made again. */
     async setAssetRecord(id, rel, record) {
       checkAssetPath(rel);
