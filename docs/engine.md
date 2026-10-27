@@ -18,10 +18,10 @@
 - GPU: ComfyUI `/queue`에 다른 실행이 있으면 시작하지 않는다(409). SongYUE2가 곡을 만드는 중이어도 시작하지 않는다.
 
 ## 설정(연결)
-`connections`: ComfyUI 주소, SongYUE2 주소·폴더, RTX ComfyUI 주소·폴더·프로그램 폴더·결과 폴더, ffmpeg 경로. `openmontageDir`는 프로젝트 폴더 기본 위치로만 남았다(기존 프로젝트가 거기 있음).
+`connections`: ComfyUI 주소, SongYUE2 주소·폴더, RTX ComfyUI 주소·폴더·프로그램 폴더·결과 폴더, ffmpeg 경로. 프로젝트 폴더의 기본 위치는 앱 폴더의 `projects/`이다(2026-10-27에 `OpenMontage\projects`에서 옮기고 `openmontageDir` 설정은 없앴다).
 
 ## 실측 (RTX 5070 12GB, 736×416)
 Krea 이미지 12초, FL2V 3초 37초, R2V(그림 3장) 43초, S2V 45초, FL2V + RTX 확대(1920×1088) 90초, 효과음 7초, 한국어 음성 5초.
 
 ## OpenMontage에 남은 것
-`E:\Claude\OpenMontage`는 더 이상 실행에 쓰이지 않는다. 그 안의 `skills/`는 줄거리·시나리오 프롬프트를 만들 때 참고한 자료이고, `projects/`는 기존 프로젝트 폴더다. 로컬 브랜치 `videostudio-local`과 `docs/openmontage-changes.md`는 기록으로 남긴다.
+`E:\Claude\OpenMontage`는 더 이상 실행에도 데이터에도 쓰이지 않는다. 그 안의 `skills/`는 줄거리·시나리오 프롬프트를 만들 때 참고한 자료이고, `projects/`는 비어 있다(프로젝트는 VideoStudioOM의 `projects/`로 옮김). OpenMontage의 Backlot 보드로 새 위치를 보려면 `OPENMONTAGE_PROJECTS_DIR=E:\Claude\VideoStudioOM\projects`를 지정해 실행한다. 로컬 브랜치 `videostudio-local`과 `docs/openmontage-changes.md`는 기록으로 남긴다.

@@ -4,7 +4,7 @@
 
 // Video size presets: the size the video model renders (`generate`) and the size of the finished file
 // (`final`); the RTX pass scales one into the other. Every side is a multiple of 32. Only the 16:9 1080p
-// pair was tried end to end (OpenMontage h3_local_video defaults); the others are untested until P5.
+// pair was tried end to end (the h3_local_video defaults of the old OpenMontage engine); the others are untested until P5.
 export const SIZE_PRESETS = [
   { id: "s169-1080", group: "가로 16:9", label: "1080p (1920×1088)", generate: [736, 416], final: [1920, 1088], tested: true },
   { id: "s169-720", group: "가로 16:9", label: "720p (1280×704)", generate: [736, 416], final: [1280, 704], tested: false },
@@ -58,8 +58,6 @@ export const DEFAULTS = {
     rtxRoot: "C:\\Users\\madwi\\Documents\\ComfyUI",
     rtxApp: "C:\\Users\\madwi\\AppData\\Local\\Programs\\@comfyorgcomfyui-electron\\resources\\ComfyUI",
     rtxOutputDir: "G:\\output",
-    // Only the default place of the projects folder now (the old OpenMontage folder holds the existing projects).
-    openmontageDir: "E:\\Claude\\OpenMontage",
     ffmpegPath: "",
   },
   // Advanced: empty means the built-in workflow and models. A workflow file (ComfyUI API format) replaces the built-in
@@ -166,7 +164,6 @@ const RULES = {
   "connections.rtxRoot": folder("RTX ComfyUI 폴더"),
   "connections.rtxApp": folder("RTX ComfyUI 프로그램 폴더"),
   "connections.rtxOutputDir": folder("RTX ComfyUI 결과 폴더"),
-  "connections.openmontageDir": text("프로젝트 기본 위치(기존 OpenMontage 폴더)"),
   "connections.ffmpegPath": text("ffmpeg 경로"),
   "engine.image.workflowT2I": folder("image T2I 워크플로"),
   "engine.image.workflowI2I": folder("image I2I 워크플로"),

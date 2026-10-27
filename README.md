@@ -1,7 +1,7 @@
 # VideoStudioOM
 
 주제 한 줄에서 시작해 **시나리오 → 대본 → 장면 이미지 → 영상(+노래/음성) → 최종 합성**까지 화면에서 조종하는 영상 제작 GUI.
-영상 제작 엔진은 [OpenMontage](E:\Claude\OpenMontage), 음악은 SongYUE2를 그대로 쓰고, 이 프로젝트는 그 위의 **조종석**이다.
+이미지·영상은 ComfyUI, 음악·효과음·음성은 SongYUE2를 Node 백엔드가 직접 호출하고, 이 프로젝트는 그 위의 **조종석**이다. (OpenMontage는 쓰지 않는다. `docs/engine.md`)
 
 > 상태: 설계/계획 단계(Wave 0 완료). 아직 실행 가능한 코드는 없다. 다음 단계는 스파이크(Wave 1).
 
@@ -10,7 +10,7 @@
 | 항목 | 내용 |
 |---|---|
 | 하는 일 | 주제에서 줄거리, 시나리오, 대본을 LLM으로 만들고, 단계마다 사람이 보고 고치고 승인한 뒤 이미지, 영상, 음악을 만들어 합성한다 |
-| 하지 않는 일 | 도구 권한을 가진 에이전트에게 제작을 맡기는 것. LLM은 텍스트만 만들고, OpenMontage는 제작 도구로만 쓴다 |
+| 하지 않는 일 | 도구 권한을 가진 에이전트에게 제작을 맡기는 것. LLM은 텍스트만 만들고, 이미지·영상·음악은 ComfyUI와 SongYUE2를 직접 호출해 만든다 |
 | 비용 | 유료 API 없음. 로컬 모델(Krea, H3, RTX 확대, Qwen3-TTS, SongYUE2)과 CLI 구독만 사용 |
 | 사용자 | 본인 1명, PC에서 실행하고 폰은 Tailscale로 접속 |
 | 포트 | 백엔드 `4314`, Vite dev `5184` (`C:\Claude\PORTS.md`에서만 배정) |
@@ -19,16 +19,16 @@
 
 1. **줄거리/시나리오/대본은 LLM 텍스트 호출로 만든다** (규칙 P-01, MusicAutomation이 주제로 가사를 만드는 방식). 도구 권한이 필요 없다.
 2. **모든 중간 산출물은 폴더의 파일**이다. GUI와 파일 탐색기 어느 쪽에서 고쳐도 반영된다.
-3. **저장 위치는 OpenMontage 프로젝트 폴더** (`projects/<id>/`). 정본은 `artifacts/*.json`이고 GUI 전용 파일은 `studio/`에 둔다.
+3. **저장 위치는 앱 폴더의 `projects/<id>/`** (설정에서 바꿈, git에는 올리지 않음). 정본은 `artifacts/*.json`이고 GUI 전용 파일은 `studio/`에 둔다.
 4. **승인 지점마다 멈춘다.** 사람이 고치고 승인해야 다음 단계로 가고, 수정본이 다음 단계의 입력이 된다. 앞 단계를 바꾸면 뒤 단계는 다시 승인해야 한다.
-5. 구조화 출력(시나리오, 대본)은 OpenMontage 스키마와 시간 규칙으로 검증하고, 어기면 이유를 알려 다시 요청한다.
+5. 구조화 출력(시나리오, 대본)은 OpenMontage에서 따온 필드 형식과 시간 규칙을 Node에서 직접 검증하고, 어기면 이유를 알려 다시 요청한다.
 
 ## 작업 흐름
 
 ```
 주제 ─▶ 줄거리 ─▶ 시나리오 ─▶ 대본 ─▶ 장면 이미지 ─▶ 영상 + 오디오 ─▶ 합성 ─▶ 라이브러리
 (직접/제안/자동)  [승인]      [승인]    [승인]      [승인]          [승인]     renders/final.mp4
-        └── LLM 텍스트 호출 ──┘          └──── OpenMontage 도구 / SongYUE2 ────┘
+        └── LLM 텍스트 호출 ──┘          └──── ComfyUI / SongYUE2 ────┘
 ```
 
 - 영상 모드: **T2V**(텍스트), **I2V**(첫 이미지), **FL2V**(첫+끝 이미지), **R2V**(참조 영상/이미지/오디오)
@@ -45,7 +45,7 @@ Node 백엔드 (:4314, 웹 프레임워크 없음)
    ├─ LLM 텍스트 호출   claude → codex → opencode → ollama (중립 폴더, stdin, 도구 권한 없음)
    ├─ 엔진               server/engine (ComfyUI 8190/8191 REST+웹소켓, 그래프, 도구)
    └─ SongYUE2           http://127.0.0.1:4311 (음악, 효과음, 음성)
-프로젝트: projects/<id>/  (기본 위치는 기존 OpenMontage projects 폴더)
+프로젝트: projects/<id>/  (기본 위치는 앱 폴더의 projects)
 ```
 
 ## 폴더 구조
@@ -67,11 +67,11 @@ VideoStudioOM/
 └─ memory-bank/         프로젝트 컨텍스트와 축적 지식
 ```
 
-### 프로젝트 데이터 (OpenMontage 쪽, 라이브러리의 실체)
+### 프로젝트 데이터 (라이브러리의 실체)
 
 ```
-E:\Claude\OpenMontage\projects\<id>\
-├─ project.json                      OpenMontage 프로젝트 표식
+E:\Claude\VideoStudioOM\projects\<id>\
+├─ project.json                      프로젝트 표식(OpenMontage 형식)
 ├─ studio/                           GUI 전용
 │  ├─ settings.json                  프로젝트 설정(전역 기본값 덮어쓰기)
 │  ├─ topic.md, synopsis.md          주제, 전체 줄거리

@@ -17,7 +17,7 @@
                                                               ├ LLM 텍스트 호출 (claude / codex / opencode CLI, ollama)
                                                               ├ 엔진 (server/engine: ComfyUI :8190/:8191 REST+웹소켓, 그래프, 도구)
                                                               └ SongYUE2 (:4311: 음악, 효과음, 음성 엔진)
-프로젝트: projects/<id>/ (기본 위치는 기존 OpenMontage projects 폴더)
+프로젝트: projects/<id>/ (기본 위치는 앱 폴더의 projects)
 ```
 
 - **UI**: SongYUE2 스타일. 미니멀, 아이콘(lucide) 중심. 좌측 아이콘 메뉴 / 상단 메뉴(프로젝트, 단계 표시, LLM 선택) / 하단 시스템 메시지 줄(진행, 오류, 에이전트 로그 요약). 한국어 UI, 라이트/다크.
@@ -26,9 +26,9 @@
 - **진행 상황**: LLM 호출과 도구 실행의 상태, 그리고 `projects/<id>/`에 쓰이는 파일을 백엔드가 감시해 SSE로 UI에 전달한다.
 - **접근 보호**: 서버는 `127.0.0.1`만 열고, 요청의 `Origin`/`Host`가 앱 주소와 다르면 거부하며, 시작 시 만든 토큰을 쓰기/실행 요청에 요구한다(SongYUE2 백엔드의 외부 Origin 차단 방식 참고).
 
-## 3. 프로젝트 폴더 (단일 진실 원천 = OpenMontage 프로젝트)
+## 3. 프로젝트 폴더 (단일 진실 원천)
 
-`E:\Claude\OpenMontage\projects\<id>\` 를 그대로 쓰고 GUI 전용 `studio/`만 추가한다. Backlot 보드와 에이전트 모두 같은 폴더를 본다.
+`E:\Claude\VideoStudioOM\projects\<id>\`(2026-10-27에 `E:\Claude\OpenMontage\projects`에서 옮김)에 OpenMontage 형식의 프로젝트 폴더를 두고 GUI 전용 `studio/`를 추가한다. OpenMontage의 Backlot 보드는 읽기 전용이라 환경변수 `OPENMONTAGE_PROJECTS_DIR`를 이 폴더로 지정하면 같은 폴더를 볼 수 있다.
 
 ```
 projects/<id>/

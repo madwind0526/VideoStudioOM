@@ -120,7 +120,7 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
       const actual = server.address().port;
       guard = createGuard({ ports: [actual, WEB_PORT], extraHosts });
       try {
-        // Never create the folder here: a wrong OpenMontage path would otherwise leave stray folders.
+        // Never create the folder here: a wrong projects path would otherwise leave stray folders.
         const root = await projects.root();
         if ((await stat(root).catch(() => null))?.isDirectory()) {
           watcher = watchProjects({ root, onChange: (change) => events.broadcast("file", change) });

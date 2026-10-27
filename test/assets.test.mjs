@@ -54,7 +54,8 @@ test("concat cuts the overlap off every clip, the last too, and can tint a seam"
     assert.ok(seconds > 2.8 && seconds < 3.2, `duration ${seconds}`);
     await assert.rejects(concatMedia({ ffmpegPath: "", kind: "video", inputs: clips, output, trimEnd: 1.9 }), { status: 400 });
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // The failed join may still hold b.mp4 for a moment on Windows.
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

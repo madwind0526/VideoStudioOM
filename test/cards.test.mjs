@@ -119,9 +119,8 @@ test("folders: defaults, relative to the app, absolute kept, created on demand",
   const app = await mkdtemp(path.join(os.tmpdir(), "vsom-folders-"));
   try {
     const settings = structuredClone(DEFAULTS);
-    settings.connections.openmontageDir = path.join(app, "om");
     const defaults = folderPaths(settings, app);
-    assert.equal(defaults.projects, path.join(app, "om", "projects"));
+    assert.equal(defaults.projects, path.join(app, "projects"));
     assert.equal(defaults.input, path.join(app, "input"));
     assert.equal(defaults.output, path.join(app, "output"));
 

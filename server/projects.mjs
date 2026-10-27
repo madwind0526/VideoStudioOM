@@ -56,7 +56,7 @@ function unsetPath(object, dotted) {
   }
 }
 
-/** Projects live as folders under the OpenMontage projects directory (`getRoot()`). */
+/** Projects live as folders under the projects directory (`getRoot()`, `projects/` in the app folder by default). */
 export function createProjectStore({ getRoot, probeDuration = async () => null }) {
   const mutex = createMutex();
 

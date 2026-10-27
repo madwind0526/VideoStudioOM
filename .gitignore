@@ -8,3 +8,6 @@ data/
 # Default input/output folders for user media (Settings > folders)
 input/
 output/
+
+# Video projects (large media; see Settings > folders)
+projects/

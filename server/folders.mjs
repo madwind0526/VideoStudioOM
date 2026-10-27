@@ -3,7 +3,7 @@ import path from "node:path";
 
 // Folders the user can point elsewhere in Settings. Empty value = default, shown as a placeholder.
 export const FOLDER_DEFAULTS = {
-  projects: { setting: "storage.projectsDir", label: "프로젝트 폴더", hint: "OpenMontage 폴더의 projects" },
+  projects: { setting: "storage.projectsDir", label: "프로젝트 폴더", hint: "projects" },
   input: { setting: "storage.inputDir", label: "입력 폴더", hint: "input" },
   output: { setting: "storage.outputDir", label: "출력 폴더", hint: "output" },
 };
@@ -17,7 +17,7 @@ export function resolveFolder(value, fallback, appRoot) {
 /** The absolute folders for the current settings. */
 export function folderPaths(settings, appRoot) {
   return {
-    projects: resolveFolder(settings.storage.projectsDir, path.join(settings.connections.openmontageDir, "projects"), appRoot),
+    projects: resolveFolder(settings.storage.projectsDir, "projects", appRoot),
     input: resolveFolder(settings.storage.inputDir, "input", appRoot),
     output: resolveFolder(settings.storage.outputDir, "output", appRoot),
   };
