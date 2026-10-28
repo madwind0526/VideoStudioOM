@@ -477,8 +477,8 @@ export function VideosSection(props: SectionProps) {
   async function join(order: string[], options: JoinOptions) {
     setJoining(true);
     try {
-      await joinMedia(props.project.id, "video", order, options);
-      props.notify("영상을 이어 붙였습니다. (renders/final.mp4)");
+      const { resized } = await joinMedia(props.project.id, "video", order, options);
+      props.notify(resized > 0 ? `영상을 이어 붙였습니다. 크기가 다른 영상 ${resized}개를 첫 영상 크기에 맞췄습니다. (renders/final.mp4)` : "영상을 이어 붙였습니다. (renders/final.mp4)");
       props.onJobsChanged();
       setJoinOpen(false);
     } catch (e) {

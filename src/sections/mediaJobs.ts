@@ -171,7 +171,7 @@ export interface JoinOptions {
   seamColor?: boolean;
 }
 export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: JoinOptions = {}) =>
-  api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs, ...options });
+  api<{ output: string; count: number; resized: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs, ...options });
 
 /** Audio pieces laid on one timeline: each starts at its own second. */
 export const mixMedia = (projectId: string, inputs: { path: string; start: number; role: "dialogue" | "sfx" | "music" }[], duck: boolean) =>

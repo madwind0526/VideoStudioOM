@@ -19,6 +19,8 @@ Temporary findings live here during a wave. Flush them to `knowledge/` when the 
 | Bug or fix | `.modal` had `max-height: 100%` inside a grid backdrop, so a long list (37 clips) made the details window taller than the screen and it could not scroll; use `calc(100vh - 48px)` | `knowledge/trouble-shooting.md` |
 | Bug or fix | `/api/fs` (built-in file picker) answered 500 "서버 오류" since it was added: routes.mjs used `folderPaths` without importing it. The route had no test; one now lists a folder through the real server | `knowledge/trouble-shooting.md` |
 | Rule or convention | Size settings: `defaults.sizeMegapixels` x one wide ratio (`defaults.aspect`: 16x9, 21x9, 4x3, 5x4, 1x1 or custom) x `defaults.orientation` (landscape/portrait, turns the ratio around) | `knowledge/RULES.md` |
+| Code pattern | Scene-centred flow (branch feature/scene-card-ui): one scene = one clip `assets/video/clip-<scene id>.mp4`; per-scene options in `studio/scene_opts.json` (continuePrevious default on, song, refs, prompt); rules in `shared/scenes.mjs` (clip path, continue, song range, stale = scene time moved or the clip before was remade after this one). Tools take `audio_range` [start, length] (a scene's piece of the song) and `first_frame_video_path` (last picture of the clip before, taken 0.4 s before its end) | `knowledge/PATTERNS.md` |
+| Bug or fix | A scene card that matched images by `path.includes(scene.id)` marks scene-1 done for scene-10..16 files; compare the exact path | `knowledge/trouble-shooting.md` |
 
 ## Classification
 

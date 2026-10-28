@@ -43,6 +43,18 @@ test("concat joins two tiny clips into one longer clip", async () => {
   }
 });
 
+test("concat tells how many clips had another size than the first one", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vsom-sizes-"));
+  try {
+    const clips = [path.join(root, "a.mp4"), path.join(root, "b.mp4"), path.join(root, "c.mp4")];
+    ["64x48", "64x48", "32x24"].forEach((size, i) => execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=red:s=${size}:d=1:r=24`, "-pix_fmt", "yuv420p", clips[i]]));
+    assert.deepEqual(await concatMedia({ ffmpegPath: "", kind: "video", inputs: clips, output: path.join(root, "out", "final.mp4") }), { resized: 1 });
+    assert.deepEqual(await concatMedia({ ffmpegPath: "", kind: "video", inputs: clips.slice(0, 2), output: path.join(root, "out", "two.mp4") }), { resized: 0 });
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("concat cuts the overlap off every clip, the last too, and can tint a seam", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vsom-seam-"));
   try {

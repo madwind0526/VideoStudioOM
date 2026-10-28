@@ -60,13 +60,17 @@ export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = []
   let filter;
   let maps;
   let codec;
+  // Clips of another size than the first one are scaled to it (and cropped by the scale filter's aspect): the caller can warn.
+  let resized = 0;
   if (kind === "audio") {
     filter = `${inputs.map((_, i) => `[${i}:a:0]`).join("")}concat=n=${inputs.length}:v=0:a=1[a]`;
     maps = ["-map", "[a]"];
     codec = ["-c:a", "pcm_s16le"];
   } else {
-    const [width, height] = (await probe(inputs[0], "stream=width,height", "v:0")).split(",").map(Number);
+    const sizes = await Promise.all(inputs.map((file) => probe(file, "stream=width,height", "v:0")));
+    const [width, height] = sizes[0].split(",").map(Number);
     if (!(width > 0 && height > 0)) throw new HttpError(400, "첫 영상의 크기를 읽을 수 없습니다.");
+    resized = sizes.filter((size) => size !== sizes[0]).length;
     const audible = (await Promise.all(inputs.map((file) => probe(file, "stream=codec_type", "a:0")))).every(Boolean);
     // `gains` (per clip, optional) pull the colours of the clips towards one look before they are joined.
     const tint = (i) => (gains[i] ? `colorchannelmixer=rr=${gains[i][0].toFixed(3)}:gg=${gains[i][1].toFixed(3)}:bb=${gains[i][2].toFixed(3)},` : "");
@@ -105,6 +109,7 @@ export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = []
     await rm(temp, { force: true });
     throw new HttpError(500, `이어 붙이지 못했습니다: ${error.message}`);
   }
+  return { resized };
 }
 
 /**

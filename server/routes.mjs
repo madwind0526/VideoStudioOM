@@ -160,6 +160,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       inputs.push(target);
     }
     if (joining.has(id)) throw new HttpError(409, "이미 이어 붙이는 중입니다.");
+    let resized = 0;
     joining.add(id);
     try {
       const ffmpegPath = (await settings.get()).connections.ffmpegPath;
@@ -180,13 +181,13 @@ export async function handleApi(req, res, url, { settings, projects, events, job
         const seams = body.kind === "video" && body.seamColor === true ? await seamGainsOf(ffmpegPath, inputs, trimEnd) : [];
         const { seamRampSeconds: seamRamp, codec: videoCodec } = resolveSettings(await settings.get(), await projects.getSettings(id)).value.video;
         if (body.kind === "video" && !(await availableCodecs(ffmpegPath)).includes(videoCodec)) throw new HttpError(400, `이 PC의 ffmpeg에서 ${codecLabels()[videoCodec]}을(를) 쓸 수 없습니다. 영상 저장 방식을 바꾸세요.`);
-        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains, trimEnd, seamGains: seams, seamRamp, videoCodec });
+        resized = (await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains, trimEnd, seamGains: seams, seamRamp, videoCodec })).resized;
       }
     } finally {
       joining.delete(id);
     }
     if (body.kind !== "video") await projects.setAssetRecord(id, kind.output, { kind: body.kind === "mix" ? "mix" : "concat", inputs: names });
-    return { output: kind.output, count: inputs.length };
+    return { output: kind.output, count: inputs.length, resized };
   }
 
   if (pathname === "/api/health") {
