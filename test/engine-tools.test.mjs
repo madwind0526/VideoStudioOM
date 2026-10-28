@@ -424,3 +424,32 @@ test("h3RefGraph: references plus a pinned first frame with the song, and a pinn
   assert.deepEqual(graph[20].inputs.conditioning, ["64", 0]);
   assert.deepEqual(h3RefGraph({ prompt: "p", seed: 1, images: ["ref.png"] })[20].inputs.conditioning, ["6", 0]);
 });
+
+test("H3 reference video: a piece of the song guides the clip and the clip before it gives the first picture", async () => {
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=2:r=24", "-pix_fmt", "yuv420p", clip);
+    const song = path.join(dir, "song.wav");
+    ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=4", song);
+    const before = path.join(dir, "before.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=2:r=24", "-pix_fmt", "yuv420p", before);
+    const picture = path.join(dir, "a.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=green:s=64x48", "-frames:v", "1", picture);
+    const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.refUnets.turbo]) }, outputs: { 15: { video: [{ filename: "r.mp4" }] } }, files: { "r.mp4": await readFile(clip) } });
+    const out = path.join(dir, "assets", "video", "scene.mp4");
+    const result = await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], audio_path: song, audio_range: [1, 1.5], first_frame_video_path: before, duration_seconds: 2, width: 64, height: 48, upscale: false, model: "turbo", output_path: out }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    // The reference picture, the picture taken from the clip before, and only the piece of the song went to ComfyUI.
+    assert.deepEqual(comfy.seen.uploads, ["a.png", "scene.first.png", "scene.guide.wav"]);
+    // The temporary files are gone.
+    for (const name of ["scene.guide.wav", "scene.cont.png", "scene.first.png"]) await assert.rejects(stat(path.join(dir, "assets", "video", name)));
+    // A wrong range or a missing clip before is refused with a sentence.
+    assert.equal((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], audio_path: song, audio_range: [10, 2], output_path: out, model: "turbo", upscale: false }, comfy)).code, "bad_input");
+    assert.equal((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], audio_path: song, audio_range: "x", output_path: out, model: "turbo", upscale: false }, comfy)).code, "bad_input");
+    assert.match((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], first_frame_video_path: path.join(dir, "none.mp4"), output_path: out }, comfy)).error, /앞 장면 영상 파일이 없습니다/);
+    comfy.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

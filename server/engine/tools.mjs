@@ -110,6 +110,23 @@ async function fitImage(context, source, width, height, dest) {
   return dest;
 }
 
+/** The piece [start, length] (seconds) of an audio file as a wav of its own: the part of the song that belongs to one scene. */
+async function sliceAudio(context, source, range, dest) {
+  const [start, length] = Array.isArray(range) ? range.map(Number) : [NaN, NaN];
+  if (!(start >= 0 && length > 0 && length <= 120)) throw new ToolError("audio_range는 [시작 초, 길이 초] 형식이어야 합니다.", "bad_input");
+  await context.capture(ffmpegFor(context.ffmpegPath), ["-loglevel", "error", "-y", "-ss", String(start), "-t", String(length), "-i", source, "-c:a", "pcm_s16le", dest]);
+  if ((await stat(dest).catch(() => null))?.size < 2000) throw new ToolError("노래의 그 구간에 소리가 없습니다(노래 길이를 넘었을 수 있습니다).", "bad_input");
+  return dest;
+}
+
+/** The last picture of a clip, taken a little before its end (the very last frame can be missing when the sound is longer). */
+async function lastFrame(context, clip, dest) {
+  const { stdout } = await context.capture(ffprobeFor(context.ffmpegPath), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", clip]);
+  const seconds = Math.max(0, Number(stdout.toString().trim()) - 0.4);
+  await context.capture(ffmpegFor(context.ffmpegPath), ["-loglevel", "error", "-y", "-ss", String(seconds), "-i", clip, "-frames:v", "1", dest]);
+  return dest;
+}
+
 /** Width and height of a video file. */
 async function videoSize(context, file) {
   const { stdout } = await context.capture(ffprobeFor(context.ffmpegPath), ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
@@ -178,7 +195,7 @@ const HANDLERS = {
   async h3_local_video(inputs, context) {
     const image = inputs.reference_image_path;
     const last = inputs.last_frame_path;
-    const audio = inputs.audio_path;
+    let audio = inputs.audio_path;
     if (!image || !(await exists(image))) throw new ToolError("첫 이미지(reference_image_path) 파일이 없습니다.", "bad_input");
     if (last && !(await exists(last))) throw new ToolError("마지막 이미지(last_frame_path) 파일이 없습니다.", "bad_input");
     if (audio && !(await exists(audio))) throw new ToolError("오디오(audio_path) 파일이 없습니다.", "bad_input");
@@ -187,8 +204,10 @@ const HANDLERS = {
     const [width, height] = [Number(inputs.width ?? 736), Number(inputs.height ?? 416)];
     const upscale = inputs.upscale ?? true;
     const seed = inputs.seed ?? randomSeed();
-    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`];
+    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`, `${stem}.piece.wav`];
     try {
+      // With audio_range only that piece of the audio file is used (a scene's part of the song).
+      if (audio && inputs.audio_range) audio = await sliceAudio(context, audio, inputs.audio_range, temps[4]);
       await context.ensure("comfy");
       const comfy = context.comfy(context.connections.comfyUrl);
       await h3Models(comfy, [H3.unet]);
@@ -220,10 +239,12 @@ const HANDLERS = {
     const images = inputs.reference_image_paths ?? [];
     const video = inputs.reference_video_path;
     const audio = inputs.reference_audio_path;
-    const [first, last, guide] = [inputs.first_frame_path, inputs.last_frame_path, inputs.audio_path];
+    let [first, last, guide] = [inputs.first_frame_path, inputs.last_frame_path, inputs.audio_path];
+    // The clip before this one in a scene chain: its last picture becomes the first picture here.
+    const continued = inputs.first_frame_video_path;
     if (images.length === 0 && !video && !audio) throw new ToolError("참조 이미지, 영상, 오디오 중 하나는 필요합니다.", "bad_input");
     if (images.length > 9) throw new ToolError("참조 이미지는 9장까지입니다.", "bad_input");
-    for (const [label, file] of [...images.map((item) => ["참조 이미지", item]), ["참조 영상", video], ["참조 오디오", audio], ["첫 이미지", first], ["마지막 이미지", last], ["오디오", guide]]) {
+    for (const [label, file] of [...images.map((item) => ["참조 이미지", item]), ["참조 영상", video], ["참조 오디오", audio], ["첫 이미지", first], ["마지막 이미지", last], ["오디오", guide], ["앞 장면 영상", continued]]) {
       if (file && !(await exists(file))) throw new ToolError(`${label} 파일이 없습니다: ${file}`, "bad_input");
     }
     const model = inputs.model ?? "deno";
@@ -236,8 +257,10 @@ const HANDLERS = {
     const [width, height] = [Number(inputs.width ?? 736), Number(inputs.height ?? 416)];
     const upscale = inputs.upscale ?? !twoStage;
     const seed = inputs.seed ?? randomSeed();
-    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`];
+    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`, `${stem}.guide.wav`, `${stem}.cont.png`];
     try {
+      if (guide && inputs.audio_range) guide = await sliceAudio(context, guide, inputs.audio_range, temps[4]);
+      if (continued && !first) first = await lastFrame(context, continued, temps[5]);
       // The Deno profile runs on the Rev0 ComfyUI (it has the H3 latent upscaler); the other profiles stay on SongYUE2's.
       const server = model === "deno" ? "ref" : "comfy";
       await context.ensure(server);
