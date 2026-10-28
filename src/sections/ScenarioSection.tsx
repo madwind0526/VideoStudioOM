@@ -1,10 +1,11 @@
-import { AlertTriangle, CheckCircle2, Clapperboard, FolderOpen, GripVertical, Image as ImageIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clapperboard, GripVertical, Image as ImageIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { chainFrom, clipPathOf, clipStatus, continuesPrevious, firstImagePath, lastImagePath, modeOf, slotImages, usesSong } from "../../shared/scenes.mjs";
 import { resolveSize } from "../../shared/settings.mjs";
 import { api, ApiError, mediaUrl } from "../api";
 import { BIBLE_FILE, charactersIn, describeReference, type Bible } from "../bible";
 import FileNavigator from "../components/FileNavigator";
+import PictureDialog from "../components/PictureDialog";
 import TimelineBar from "../components/TimelineBar";
 import { importPicture, makeItem, makePrompt, refineItem, SCENE_OPTS_FILE, startItems, stamp, type MakeItem, type SceneLora, type SceneOpt, type SceneOpts } from "./mediaJobs";
 import { refsOfScene, sceneItems, sceneSeconds, slotImageItems, slotText } from "./sceneJobs";
@@ -103,6 +104,8 @@ export default function ScenarioSection(props: SectionProps) {
   const [working, setWorking] = useState<string | null>(null);
   /** The picture slot (project path) the file browser is open for. */
   const [picking, setPicking] = useState<string | null>(null);
+  /** The picture slot (project path) shown in the viewer. */
+  const [viewing, setViewing] = useState<string | null>(null);
   /** Saved options of one scene; unset values mean the defaults of shared/scenes.mjs. */
   const optOf = (id: string): SceneOpt => opts.data?.[id] ?? {};
   const setOpt = (id: string, patch: Partial<SceneOpt>) => opts.setData({ ...(opts.data ?? {}), [id]: { ...optOf(id), ...patch } } as SceneOpts);
@@ -414,6 +417,20 @@ export default function ScenarioSection(props: SectionProps) {
                     <button className="btn" type="button" disabled={running || working !== null || !videos.some((video) => video.path === clipPathOf(scene.id))} title="이 장면과, 이어받는 뒤 장면들을 새 버전으로 다시 만듭니다." onClick={() => void remakeFrom(index)}>
                       <RefreshCw size={14} /> {working === scene.id ? "준비 중..." : chainFrom(scenes, opts.data, index).length > 1 ? "이 장면부터 다시 만들기" : "이 장면 다시 만들기"}
                     </button>
+                    {modeOf(opts.data, scene) === "fl2v" && (
+                      <span className="scene-slots">
+                        {(["first", "last"] as const).map((role) => {
+                          const path = role === "first" ? firstImagePath(index) : lastImagePath(scenes, opts.data, index);
+                          const file = images.find((image) => image.path === path);
+                          return (
+                            <button key={role} className="scene-slot" type="button" title={`${role === "first" ? "시작" : "끝"} 이미지 (${path.replace("assets/images/", "")}): 눌러서 보기·새로 만들기·파일에서 읽기`} onClick={() => setViewing(path)}>
+                              <span className="slot-label">{role === "first" ? "시작" : "끝"}</span>
+                              <span className="slot-thumb">{file ? <img src={mediaUrl(project.id, path, file.mtimeMs)} alt={path} loading="lazy" /> : <span className="slot-empty">No Image</span>}</span>
+                            </button>
+                          );
+                        })}
+                      </span>
+                    )}
                   </div>
                   <details className="scene-plan">
                     <summary className="muted">영상 계획 (프롬프트 · 참조 그림){optOf(scene.id).prompt || optOf(scene.id).refs ? " · 저장됨" : ""}</summary>
@@ -458,7 +475,7 @@ export default function ScenarioSection(props: SectionProps) {
                       </div>
                     </div>
                   </details>
-                  <div className="scene-bottom">
+                  <div>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       <span className="hint">이 장면만 쓰는 LoRA:</span>
                       {lorasOf(scene.id).map((lora, loraIndex) => (
@@ -474,39 +491,31 @@ export default function ScenarioSection(props: SectionProps) {
                         <Plus size={14} /> LoRA
                       </button>
                     </div>
-                    {modeOf(opts.data, scene) === "fl2v" && (
-                      <div className="scene-slots">
-                        {(["first", "last"] as const).map((role) => {
-                          const path = role === "first" ? firstImagePath(index) : lastImagePath(scenes, opts.data, index);
-                          const file = images.find((image) => image.path === path);
-                          const connected = role === "last" && path === firstImagePath(index + 1);
-                          return (
-                            <div className="scene-slot" key={role}>
-                              <span className="hint">{role === "first" ? "시작 이미지" : "끝 이미지"}</span>
-                              <span className="slot-thumb">{file ? <img src={mediaUrl(project.id, path, file.mtimeMs)} alt={path} loading="lazy" /> : <span className="slot-empty">No Image</span>}</span>
-                              <span className="hint" title={connected ? "다음 장면의 시작 이미지와 같은 이미지입니다." : path}>
-                                {path.replace("assets/images/", "").replace(".png", "")}
-                                {connected && " (연결)"}
-                              </span>
-                              <span className="row" style={{ gap: 4 }}>
-                                <button className="icon-btn" type="button" aria-label="이미지 만들기" title={file ? "새 이미지를 만들어 다음 버전으로 두기" : "이미지 만들기"} disabled={running || working !== null || !scene.description.trim()} onClick={() => void makeSlot(path)}>
-                                  <RefreshCw size={14} />
-                                </button>
-                                <button className="icon-btn" type="button" aria-label="이미지 가져오기" title="내 이미지 가져오기" disabled={working !== null || !imageSize} onClick={() => setPicking(path)}>
-                                  <FolderOpen size={14} />
-                                </button>
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
                 </div>
               </article>
             ))}
           </div>
         </>
+      )}
+      {viewing && (
+        <PictureDialog
+          title={`${viewing.replace("assets/images/", "").replace(".png", "")} · ${viewing.endsWith("-1.png") ? "시작" : "끝"} 이미지`}
+          src={images.some((file) => file.path === viewing) ? mediaUrl(project.id, viewing, images.find((file) => file.path === viewing)?.mtimeMs) : null}
+          note={slots.find((slot) => slot.path === viewing)?.shared ? "앞 장면의 끝 이미지와 같은 이미지입니다. 바꾸면 두 클립이 모두 '다시 만들기 필요'가 됩니다." : undefined}
+          busy={running || working !== null || !imageSize}
+          onMake={() => {
+            const target = viewing;
+            setViewing(null);
+            void makeSlot(target);
+          }}
+          onBrowse={() => {
+            const target = viewing;
+            setViewing(null);
+            setPicking(target);
+          }}
+          onClose={() => setViewing(null)}
+        />
       )}
       {picking && imageSize && (
         <FileNavigator
