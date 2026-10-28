@@ -1,5 +1,6 @@
 import { ClipboardCheck, Combine, FileText, Layers, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { clipPathOf } from "../../shared/scenes.mjs";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
 import VersionDialog from "../components/VersionDialog";
 import VideoPlayer from "../components/VideoPlayer";
@@ -10,6 +11,7 @@ import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
 import { BIBLE_FILE, charactersIn, describeReference, referencesFor, type Bible } from "../bible";
 import { type ClipCheck, type SceneOpts, SCENE_OPTS_FILE, AUDIO_KINDS_FILE, audioKindOf, baseName, checkClips, deleteMedia, joinMedia, type JoinOptions, makeItem, mixMedia, recipeOf, refineItem, sentOf, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
+import { sceneItems } from "./sceneJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -209,7 +211,7 @@ function Header({ props, title, count, creating, onCreating, all, refine, descri
       for (const [index, item] of all.items.entries()) {
         setPreparing(`${index + 1}/${all.items.length}`);
         try {
-          items.push(refine === false ? item : await refineItem(project.id, view.effective, item, describeRef));
+          items.push(refine === false || item.final ? item : await refineItem(project.id, view.effective, item, describeRef));
         } catch {
           failed += 1;
           items.push(item);
@@ -416,13 +418,15 @@ export function VideosSection(props: SectionProps) {
   const videos = props.detail?.media.videos ?? [];
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
-  const clips = videos.filter((file) => file.path.startsWith("assets/video/"));
+  // Clips in scene order (the join and the cards follow it); clips that belong to no scene come after, in name order.
+  const scenes = plan.data?.scenes ?? [];
+  const sceneOrder = new Map(scenes.map((scene, index) => [clipPathOf(scene.id), index]));
+  const clips = videos.filter((file) => file.path.startsWith("assets/video/")).sort((a, b) => (sceneOrder.get(a.path) ?? Infinity) - (sceneOrder.get(b.path) ?? Infinity) || 0);
   const versionDialog = useVersionDialog(props, "video", clips);
   const selection = useSelection(clips.map((file) => file.path));
   const describeRef = (path: string) => describeReference(bible, path, images);
 
-  // One picture per scene, in scene order (character sheets and photos are not scenes). Without a scenario: every other image.
-  const scenes = plan.data?.scenes ?? [];
+  // With a scenario: one clip per scene (sceneJobs.ts). Without one: the pictures go two by two (below).
   const sceneImages = scenes.length
     ? scenes.flatMap((scene) => {
         const image = images.find((item) => item.path === `assets/images/${safeName(scene.id)}.png`);
@@ -432,7 +436,8 @@ export function VideosSection(props: SectionProps) {
   // A scene with people uses their character sheets as references (R2V, one sheet per person, 8 at most) together with its
   // own picture; the clip is its own. Other scenes go from picture to picture (FL2V: 1-2, 2-3, ...); the last one is I2V.
   const items: MakeItem[] = [];
-  if (settings) {
+  if (settings && scenes.length > 0) items.push(...sceneItems({ settings, scenes, opts: sceneOpts, bible, images, videos }));
+  else if (settings) {
     sceneImages.forEach(({ image: a, scene }, i) => {
       const next = sceneImages[i + 1]?.image;
       const seconds = scene?.start_seconds != null && scene.end_seconds != null ? scene.end_seconds - scene.start_seconds : 5;
@@ -520,7 +525,7 @@ export function VideosSection(props: SectionProps) {
         creating={creating}
         onCreating={setCreating}
         describeRef={describeRef}
-        all={{ items, note: "이미지를 1-2, 2-3, 3-4 ... 두 장씩 짝지어 아직 없는 구간의 영상을 차례로 만듭니다. 장면 설명에 등장인물 이름이 있고 시트가 있으면 시트를 참조해(R2V) 만듭니다. 한 구간에 약 1분 걸립니다." }}
+        all={{ items, note: "시나리오의 장면마다 아직 없는 영상을 장면 순서대로 만듭니다. 장면 글에 등장인물 이름이 있고 시트가 있으면 시트를 참조해(R2V) 만들고, 앞 장면 이어받기와 노래 사용이 켜져 있으면 그대로 적용합니다. 시나리오가 없으면 이미지를 1-2, 2-3 ... 두 장씩 짝지어 만듭니다. 한 장면에 약 1분 걸립니다." }}
         join={{ count: selection.picked.length, busy: joining, label: "체크한 구간 영상의 순서를 정하고 이어 붙여 renders/final.mp4를 만듭니다.", onJoin: () => setJoinOpen(true) }}
       />
       <Top props={props} kinds={["auto", "i2v", "fl2v", "s2v", "r2v"]} outputs={["assets/video/"]} creating={creating} bible={bible} />

@@ -1,8 +1,11 @@
-import { CheckCircle2, Clock, GripVertical, Image as ImageIcon, Plus, RotateCcw, Save, Trash2, Wand2, AlertCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clapperboard, GripVertical, Image as ImageIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { chainFrom, clipPathOf, clipStatus, continuesPrevious, imagePathOf, usesSong } from "../../shared/scenes.mjs";
 import { api, ApiError } from "../api";
+import { BIBLE_FILE, charactersIn, describeReference, type Bible } from "../bible";
 import TimelineBar from "../components/TimelineBar";
-import { SCENE_OPTS_FILE, type SceneLora, type SceneOpts } from "./mediaJobs";
+import { makePrompt, refineItem, SCENE_OPTS_FILE, startItems, type MakeItem, type SceneLora, type SceneOpt, type SceneOpts } from "./mediaJobs";
+import { refsOfScene, sceneItems, sceneSeconds } from "./sceneJobs";
 import PromptLog from "../components/PromptLog";
 import { storyApi } from "../story";
 import { formatTime } from "../format";
@@ -88,23 +91,27 @@ export default function ScenarioSection(props: SectionProps) {
   const dirty = file.dirty || opts.dirty;
   const total = scenes.reduce((max, scene) => (Number.isFinite(scene.end_seconds) ? Math.max(max, scene.end_seconds) : max), 0);
 
-  const sceneImageStatus = useMemo(() => {
-    const status: Record<string, "done" | "pending" | "none"> = {};
-    const images = (props as any).detail?.media?.images ?? [];
-    for (const scene of scenes) {
-      const hasImage = images.some((img: any) => img.record?.source === scene.id || img.path?.includes(scene.id));
-      status[scene.id] = hasImage ? "done" : "none";
-    }
-    return status;
-  }, [scenes, (props as any).detail]);
-
+  const bible = useJsonFile<Bible>(project.id, BIBLE_FILE, notify).data;
+  const images = props.detail?.media.images ?? [];
+  const videos = props.detail?.media.videos ?? [];
+  const settings = props.view?.effective;
+  const songFile = settings?.defaults.songFile ?? "";
+  const running = props.jobs.current !== null;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
+  /** Saved options of one scene; unset values mean the defaults of shared/scenes.mjs. */
+  const optOf = (id: string): SceneOpt => opts.data?.[id] ?? {};
+  const setOpt = (id: string, patch: Partial<SceneOpt>) => opts.setData({ ...(opts.data ?? {}), [id]: { ...optOf(id), ...patch } } as SceneOpts);
+  const hasPeople = (scene: Scene) => charactersIn(bible, scene.description).length > 0;
 
   const setScenes = (next: Scene[]) => plan && file.setData({ ...plan, scenes: next });
   const update = (index: number, patch: Partial<Scene>) => setScenes(scenes.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
   
   const reorderScenes = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= scenes.length || to >= scenes.length) return;
+    // Moving a scene moves its place in the song and its place in the join: clips already made for the scenes in between are marked as out of date.
+    const touched = scenes.slice(Math.min(from, to), Math.max(from, to) + 1).filter((scene) => videos.some((video) => video.path === clipPathOf(scene.id)));
+    if (touched.length > 0 && !window.confirm(`이미 영상이 있는 장면이 ${touched.length}개 있습니다. 순서를 바꾸면 그 영상은 '다시 만들기 필요'로 표시됩니다. 바꿀까요?`)) return;
     const next = [...scenes];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
@@ -118,6 +125,44 @@ export default function ScenarioSection(props: SectionProps) {
     });
     setScenes(reordered);
   };
+
+  /** The scene and the scenes that continue it are made again as new versions of their clips (nothing is replaced until one is chosen). */
+  async function remakeFrom(index: number) {
+    if (!settings) return;
+    if (dirty) return notify("먼저 저장하세요. 저장된 시나리오로 다시 만듭니다.");
+    setWorking(scenes[index].id);
+    try {
+      const describe = (path: string) => describeReference(bible, path, images);
+      const made = sceneItems({ settings, scenes, opts: opts.data, bible, images, videos }, { only: chainFrom(scenes, opts.data, index), asVersions: true });
+      if (made.length === 0) return notify("다시 만들 수 있는 장면이 없습니다. 인물 시트나 장면 이미지가 필요합니다.");
+      const items: MakeItem[] = [];
+      for (const item of made) {
+        if (item.final) items.push(item);
+        else items.push({ ...(await refineItem(project.id, settings, item, describe).catch(() => item)), candidateOf: item.candidateOf });
+      }
+      await startItems(project.id, items);
+      notify(`${items.length}개 장면을 새 버전으로 차례로 만듭니다. 끝나면 동영상 화면에서 비교하고 고르세요.`);
+      props.onJobsChanged();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "다시 만들지 못했습니다.");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  /** The prompt maker writes the H3 prompt of a scene's clip from its text and references; it is kept with the scene. */
+  async function writePrompt(scene: Scene) {
+    setWorking(scene.id);
+    try {
+      const refs = refsOfScene({ bible, images, opts: opts.data }, scene);
+      const prompt = await makePrompt(project.id, { target: "video", mode: refs.length > 0 ? "r2v" : "i2v", text: scene.description, duration: sceneSeconds(scene), refs: refs.map((path) => describeReference(bible, path, images)) });
+      setOpt(scene.id, { prompt });
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "프롬프트를 만들지 못했습니다.");
+    } finally {
+      setWorking(null);
+    }
+  }
 
   async function save() {
     const saved = file.dirty ? await file.save() : true;
@@ -213,11 +258,6 @@ export default function ScenarioSection(props: SectionProps) {
               <article
                 className="scene-card"
                 key={scene.id || index}
-                draggable
-                onDragStart={(e) => {
-                  setDragIndex(index);
-                  e.dataTransfer.effectAllowed = "move";
-                }}
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
@@ -230,10 +270,23 @@ export default function ScenarioSection(props: SectionProps) {
                   setDragIndex(null);
                 }}
                 onDragEnd={() => setDragIndex(null)}
-                style={{ opacity: dragIndex === index ? 0.5 : 1, cursor: "grab" }}
+                style={{ opacity: dragIndex === index ? 0.5 : 1 }}
               >
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                  <GripVertical size={18} style={{ color: "var(--muted-fg)" }} />
+                <div className="scene-side">
+                  {/* Only the handle drags: dragging inside the text boxes still selects text. */}
+                  <span
+                    className="scene-grip"
+                    draggable
+                    title="끌어서 장면 순서 바꾸기"
+                    onDragStart={(e) => {
+                      setDragIndex(index);
+                      e.dataTransfer.effectAllowed = "move";
+                      const card = e.currentTarget.closest(".scene-card");
+                      if (card) e.dataTransfer.setDragImage(card, 16, 16);
+                    }}
+                  >
+                    <GripVertical size={18} />
+                  </span>
                   <div className="scene-number">{index + 1}</div>
                 </div>
                 <div className="scene-card-content">
@@ -257,13 +310,25 @@ export default function ScenarioSection(props: SectionProps) {
                       )}
                     </div>
                     <div className="scene-card-badges">
-                      {sceneImageStatus[scene.id] === "done" ? (
-                        <span className="scene-badge done">
-                          <CheckCircle2 size={12} /> 이미지 완료
-                        </span>
-                      ) : (
-                        <span className="scene-badge pending">
-                          <ImageIcon size={12} /> 이미지 대기
+                      {(() => {
+                        const clip = clipStatus({ scene, index, scenes, opts: opts.data, videos });
+                        return clip.state === "none" ? (
+                          <span className="scene-badge pending">
+                            <Clapperboard size={12} /> 영상 없음
+                          </span>
+                        ) : clip.state === "stale" ? (
+                          <span className="scene-badge error" title={clip.reasons.join(" · ")}>
+                            <AlertTriangle size={12} /> 다시 만들기 필요
+                          </span>
+                        ) : (
+                          <span className="scene-badge done">
+                            <CheckCircle2 size={12} /> 영상 있음{clip.versions > 1 ? ` · 버전 ${clip.versions}` : ""}
+                          </span>
+                        );
+                      })()}
+                      {images.some((file) => file.path === imagePathOf(scene.id)) && (
+                        <span className="scene-badge" title="이 장면의 이미지가 있습니다">
+                          <ImageIcon size={12} /> 이미지
                         </span>
                       )}
                       <button className="icon-btn danger" type="button" title="장면 지우기" aria-label={`${index + 1}번 장면 지우기`} onClick={() => setScenes(scenes.filter((_, i) => i !== index))}>
@@ -282,6 +347,60 @@ export default function ScenarioSection(props: SectionProps) {
                     </label>
                   </div>
                   <textarea rows={4} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
+                  <div className="opts" style={{ margin: "10px 0 0" }}>
+                    <label title="켜면 앞 장면 영상의 마지막 그림에서 이 장면이 시작해 장면 사이가 이어집니다. 끄면 새로 시작합니다.">
+                      <input type="checkbox" disabled={index === 0} checked={continuesPrevious(opts.data, scene, index)} onChange={(event) => setOpt(scene.id, { continuePrevious: event.target.checked })} /> 앞 장면 이어받기
+                    </label>
+                    <label title={songFile ? "프로젝트의 노래에서 이 장면 시간대의 소리를 입 모양 가이드로 씁니다." : "먼저 만들기 화면에서 노래를 고르세요."}>
+                      <input type="checkbox" disabled={!songFile} checked={usesSong(opts.data, scene, songFile, hasPeople(scene))} onChange={(event) => setOpt(scene.id, { song: event.target.checked })} /> 노래 사용
+                    </label>
+                    <button className="btn" type="button" disabled={running || working !== null || !videos.some((video) => video.path === clipPathOf(scene.id))} title="이 장면과, 이어받는 뒤 장면들을 새 버전으로 다시 만듭니다." onClick={() => void remakeFrom(index)}>
+                      <RefreshCw size={14} /> {working === scene.id ? "준비 중..." : chainFrom(scenes, opts.data, index).length > 1 ? "이 장면부터 다시 만들기" : "이 장면 다시 만들기"}
+                    </button>
+                  </div>
+                  <details className="scene-plan">
+                    <summary className="muted">영상 계획 (프롬프트 · 참조 그림){optOf(scene.id).prompt || optOf(scene.id).refs ? " · 저장됨" : ""}</summary>
+                    <div className="field" style={{ marginTop: 8 }}>
+                      <label>영상 프롬프트</label>
+                      <textarea rows={5} value={optOf(scene.id).prompt ?? ""} maxLength={7000} placeholder="비워 두면 영상을 만들 때 프롬프트 만들기가 장면 설명으로 자동으로 씁니다." onChange={(event) => setOpt(scene.id, { prompt: event.target.value })} />
+                      <div className="btn-row" style={{ marginBottom: 0 }}>
+                        <button className="btn" type="button" disabled={working !== null || !scene.description.trim()} onClick={() => void writePrompt(scene)}>
+                          <Wand2 size={14} /> 프롬프트 만들기
+                        </button>
+                        {optOf(scene.id).prompt && (
+                          <button className="btn" type="button" onClick={() => setOpt(scene.id, { prompt: undefined })}>
+                            프롬프트 지우기
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="field" style={{ marginTop: 10 }}>
+                      <label>참조 그림 ({optOf(scene.id).refs ? "직접 고름" : "장면 글에 이름이 나온 인물의 시트·사진"})</label>
+                      <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+                        {images.map((image) => {
+                          const on = refsOfScene({ bible, images, opts: opts.data }, scene).includes(image.path);
+                          return (
+                            <label key={image.path} className="chip" style={{ cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() => {
+                                  const now = refsOfScene({ bible, images, opts: opts.data }, scene);
+                                  setOpt(scene.id, { refs: (on ? now.filter((path) => path !== image.path) : [...now, image.path]).slice(0, 9) });
+                                }}
+                              />{" "}
+                              {image.path.replace("assets/images/", "")}
+                            </label>
+                          );
+                        })}
+                        {optOf(scene.id).refs && (
+                          <button className="link" type="button" onClick={() => setOpt(scene.id, { refs: undefined })}>
+                            자동으로
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </details>
                   <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <span className="hint">이 장면만 쓰는 LoRA:</span>
                     {lorasOf(scene.id).map((lora, loraIndex) => (

@@ -2791,3 +2791,34 @@ details.prompt-log textarea {
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+.scene-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.scene-grip {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--muted-fg);
+  cursor: grab;
+}
+
+.scene-grip:hover {
+  background: var(--muted);
+  color: var(--fg);
+}
+
+.scene-plan {
+  margin-top: 10px;
+}
+
+.scene-plan summary {
+  cursor: pointer;
+  font-size: 12px;
+}

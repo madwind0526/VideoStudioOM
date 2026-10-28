@@ -11,13 +11,25 @@ export const AUDIO_KINDS: { id: AudioKind; label: string; make: MakeKind }[] = [
   { id: "instrumental", label: "연주곡", make: "instrumental" },
   { id: "vocal", label: "보컬", make: "vocal" },
 ];
-/** studio/scene_opts.json: options of single scenes, for now the LoRAs that only this scene uses (a fight move, a look). */
+/** studio/scene_opts.json: options of single scenes (scene_plan.json has no field for them): LoRAs, how the clip is made, a saved prompt. */
 export const SCENE_OPTS_FILE = "studio/scene_opts.json";
 export interface SceneLora {
   name: string;
   strength: number;
 }
-export type SceneOpts = Record<string, { loras?: SceneLora[] }>;
+export interface SceneOpt {
+  /** LoRAs that only this scene uses (a fight move, a look). */
+  loras?: SceneLora[];
+  /** The clip starts from the last picture of the clip before. On unless switched off; the first scene never does. */
+  continuePrevious?: boolean;
+  /** The song of the project guides the mouth in this scene. Unset: on when the scene shows people. */
+  song?: boolean;
+  /** Reference pictures chosen for this scene instead of the ones its text calls for. */
+  refs?: string[];
+  /** The clip prompt kept for this scene (the prompt maker is not asked again for it). */
+  prompt?: string;
+}
+export type SceneOpts = Record<string, SceneOpt>;
 
 /** Sidecar file with the kind of every script section (script.json itself follows OpenMontage's fixed schema). */
 export const AUDIO_KINDS_FILE = "studio/audio_kinds.json";
@@ -42,6 +54,10 @@ export interface Recipe {
   duration?: number;
   /** Scene or script section this file belongs to. */
   source?: string;
+  /** [start, length] of the piece of the audio file that is the guide of the clip (a scene's part of the song). */
+  audioRange?: [number, number];
+  /** The clip before this one: its last picture is the first picture here. */
+  continuedFrom?: string;
 }
 
 export interface MakeItem {
@@ -49,6 +65,8 @@ export interface MakeItem {
   label: string;
   inputs: Record<string, unknown>;
   record: Recipe;
+  /** The prompt is already the one to use (a saved prompt of the scene), so the prompt maker is not asked. */
+  final?: boolean;
   /** The result is saved as another version of this file instead of a file of its own. */
   candidateOf?: string;
 }
@@ -108,6 +126,12 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     if (refs.length === 0) return "참조할 그림(인물 시트나 장면 이미지)을 하나 이상 고르세요.";
     if (refs.length > 9) return "참조 그림은 9장까지입니다.";
     inputs.reference_image_paths = refs;
+    if (recipe.audio) {
+      // The song (or a piece of it, see audioRange) moves the mouth of the people in the clip.
+      inputs.audio_path = recipe.audio;
+      if (recipe.audioRange) inputs.audio_range = recipe.audioRange;
+    }
+    if (recipe.continuedFrom) inputs.first_frame_video_path = recipe.continuedFrom;
     return { tool: "h3_reference_video", label: text, record: recipe, inputs };
   }
   if (!recipe.first) return "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
