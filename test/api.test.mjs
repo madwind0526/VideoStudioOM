@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -20,7 +21,7 @@ async function withServer(run) {
     return { status: res.status, body: await res.json() };
   };
   try {
-    await run(call);
+    await run(call, { root: path.join(dir, "projects") });
   } finally {
     await stop();
     await rm(dir, { recursive: true, force: true });
@@ -102,4 +103,36 @@ test("the file browser lists a folder and adds the open project as a shortcut", 
     assert.ok(listed.body.shortcuts.find((item) => item.label === "현재 프로젝트").path.endsWith(body.project.id));
     assert.equal((await call("GET", "/api/fs")).status, 200);
     assert.equal((await call("GET", "/api/fs?dir=relative")).status, 400);
+  }));
+
+test("a picture is put at a fixed name, cut to the size without stretching, and a second one becomes the chosen next version", () =>
+  withServer(async (call, { root }) => {
+    const { body } = await call("POST", "/api/projects", { title: "pics" });
+    const id = encodeURIComponent(body.project.id);
+    const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-pics-"));
+    try {
+      const wide = path.join(dir, "wide.png");
+      const red = path.join(dir, "red.png");
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=green:s=200x100", "-frames:v", "1", wide]);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=100x200", "-frames:v", "1", red]);
+      const first = await call("POST", `/api/projects/${id}/import`, { from: wide, as: "assets/images/1-1.png", fit: [96, 128] });
+      assert.equal(first.status, 200);
+      const size = (file) => execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", file]).toString().trim();
+      const detail = async () => (await call("GET", `/api/projects/${id}`)).body.project;
+      let image = (await detail()).media.images.find((item) => item.path === "assets/images/1-1.png");
+      assert.equal(image.versions, 0);
+      // 200x100 cut to 96x128 keeps the middle: the picture is the asked size
+      assert.equal(size(path.join(root, body.project.id, "assets", "images", "1-1.png")), "96,128");
+      // a second picture replaces it: the old one stays as version 1, the new one is chosen
+      await call("POST", `/api/projects/${id}/import`, { from: red, as: "assets/images/1-1.png", fit: [96, 128] });
+      image = (await detail()).media.images.find((item) => item.path === "assets/images/1-1.png");
+      assert.equal(image.versions, 2);
+      const versions = (await call("GET", `/api/projects/${id}/versions?path=${encodeURIComponent("assets/images/1-1.png")}`)).body.entry;
+      assert.equal(versions.selected, "v2");
+      // refused: a name outside assets/images, a size outside the limits
+      assert.equal((await call("POST", `/api/projects/${id}/import`, { from: red, as: "assets/images/../x.png", fit: [96, 128] })).status, 400);
+      assert.equal((await call("POST", `/api/projects/${id}/import`, { from: red, as: "assets/images/2-1.png", fit: [8, 8] })).status, 400);
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   }));

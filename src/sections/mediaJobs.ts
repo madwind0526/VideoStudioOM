@@ -20,7 +20,9 @@ export interface SceneLora {
 export interface SceneOpt {
   /** LoRAs that only this scene uses (a fight move, a look). */
   loras?: SceneLora[];
-  /** The clip starts from the last picture of the clip before. On unless switched off; the first scene never does. */
+  /** How the clip is made: from a first and a last picture ("fl2v", the default) or from reference pictures of the people ("r2v"). */
+  mode?: "fl2v" | "r2v";
+  /** Connected to the clip before: the clip before ends on the picture this one starts with (fl2v), or this one starts from its last picture (r2v). On unless switched off. */
   continuePrevious?: boolean;
   /** The song of the project guides the mouth in this scene. Unset: on when the scene shows people. */
   song?: boolean;
@@ -140,9 +142,11 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     if (!recipe.last || recipe.last === recipe.first) return "서로 다른 첫 이미지와 마지막 이미지를 고르세요.";
     inputs.last_frame_path = recipe.last;
   }
-  if (recipe.kind === "s2v") {
-    if (!recipe.audio) return "얼굴 이미지와 음성을 고르세요. 음성은 오디오 화면에서 만들 수 있습니다.";
+  if (recipe.kind === "s2v" && !recipe.audio) return "얼굴 이미지와 음성을 고르세요. 음성은 오디오 화면에서 만들 수 있습니다.";
+  if (recipe.audio) {
+    // The audio guides the mouth (a whole file, or the piece in audioRange: a scene's part of the song).
     inputs.audio_path = recipe.audio;
+    if (recipe.audioRange) inputs.audio_range = recipe.audioRange;
   }
   return { tool: "h3_local_video", label: text, record: recipe, inputs };
 }
@@ -161,6 +165,9 @@ export async function makePrompt(projectId: string, body: { target: "image" | "v
 
 /** Copies a picture picked in the file browser into the project (assets/images) and returns its project path. */
 export const importImage = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from }).then((data) => data.path);
+/** Puts a picture from the file browser at a fixed name of the project (clip number-1 / -2), cut to `size` without stretching. */
+export const importPicture = (projectId: string, from: string, as: string, size: [number, number]) =>
+  api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, as, fit: size }).then((data) => data.path);
 export const importAudio = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, kind: "audio" }).then((data) => data.path);
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);

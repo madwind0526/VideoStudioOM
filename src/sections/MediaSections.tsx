@@ -11,7 +11,7 @@ import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
 import { BIBLE_FILE, charactersIn, describeReference, referencesFor, type Bible } from "../bible";
 import { type ClipCheck, type SceneOpts, SCENE_OPTS_FILE, AUDIO_KINDS_FILE, audioKindOf, baseName, checkClips, deleteMedia, joinMedia, type JoinOptions, makeItem, mixMedia, recipeOf, refineItem, sentOf, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
-import { sceneItems } from "./sceneJobs";
+import { sceneItems, slotImageItems } from "./sceneJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -276,19 +276,18 @@ export function ImagesSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
   const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
+  const bible = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify).data;
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
   const versionDialog = useVersionDialog(props, "image", images);
 
-  const missing = (plan.data?.scenes ?? []).filter((scene) => scene.description?.trim() && !images.some((file) => file.path === `assets/images/${safeName(scene.id)}.png`));
-  const items = settings ? missing.flatMap((scene) => {
-    const item = makeItem(settings, { kind: "image", prompt: scene.description ?? "", source: scene.id, loras: sceneOpts?.[scene.id]?.loras?.filter((lora) => lora.name) }, `assets/images/${safeName(scene.id)}.png`);
-    return typeof item === "string" ? [] : [item];
-  }) : [];
+  // The first and last picture of every clip (named clip number-1 and -2, see shared/scenes.mjs); a connected one is shared by two clips.
+  const scenes = plan.data?.scenes ?? [];
+  const items = settings ? slotImageItems({ settings, scenes, opts: sceneOpts, bible, images, videos: props.detail?.media.videos ?? [] }) : [];
 
   return (
     <div className="section">
-      <Header props={props} title="이미지" count={images.length} creating={creating} onCreating={setCreating} all={{ items, note: "시나리오의 장면 중 아직 이미지가 없는 장면의 이미지를 차례로 모두 만듭니다." }} />
+      <Header props={props} title="이미지" count={images.length} creating={creating} onCreating={setCreating} all={{ items, note: "시나리오의 장면마다 필요한 시작·끝 이미지(클립번호-1, 클립번호-2) 중 아직 없는 것을 장면 글로 차례로 만듭니다. 이어지는 장면은 한 이미지를 같이 씁니다." }} />
       <Top props={props} kinds={["image"]} outputs={["assets/images/"]} creating={creating} />
       {images.length === 0 ? (
         <p className="muted">아직 이미지가 없습니다. 시나리오가 있으면 "빠진 이미지 모두 만들기"로 장면마다 만들 수 있어요.</p>

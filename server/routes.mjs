@@ -1,12 +1,12 @@
 import { createReadStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { resolveSettings } from "../shared/settings.mjs";
 import { HttpError, parseRange, readJsonBody, sendJson } from "./http.mjs";
-import { concatMedia, mixAudio } from "./concat.mjs";
-import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, autoTrims, colorGains, exportVideo, ROLES, seamGainsOf, srtFromScript } from "./post.mjs";
+import { concatMedia, ffmpegFor, mixAudio } from "./concat.mjs";
+import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, autoTrims, colorGains, exportVideo, ROLES, runCapture, seamGainsOf, srtFromScript } from "./post.mjs";
 import { createComfy } from "./engine/comfy.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
@@ -134,6 +134,34 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       exporting.delete(id);
     }
     return { output: "renders/export.mp4", codec, sound: Boolean(sound), subtitles: Boolean(srt) };
+  }
+
+  /**
+   * Puts a picture from anywhere on this PC at a fixed place of the project (`as`, e.g. assets/images/1-1.png) as a PNG, cut to
+   * `fit` ([width, height]) without stretching. A picture already there is not lost: the new one becomes its next version and is chosen.
+   */
+  async function importPicture(id, { from, as, fit }) {
+    if (typeof as !== "string" || !/^assets\/images\/[\p{L}\p{N}._-]+\.png$/u.test(as)) throw new HttpError(400, "그림은 assets/images 아래의 .png 이름으로만 가져올 수 있습니다.");
+    if (typeof from !== "string" || !path.isAbsolute(from) || ![".png", ".jpg", ".jpeg", ".webp"].includes(path.extname(from).toLowerCase())) throw new HttpError(400, "png, jpg, webp 그림의 전체 경로가 필요합니다.");
+    if (!Array.isArray(fit) || fit.length !== 2 || !fit.every((n) => Number.isInteger(n) && n >= 64 && n <= 4096)) throw new HttpError(400, "fit은 [가로, 세로] 크기여야 합니다.");
+    const info = await stat(from).catch(() => null);
+    if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+    if (info.size > 30_000_000) throw new HttpError(413, "이미지가 너무 큽니다(30MB 이하).");
+    const dir = await projects.dir(id);
+    const exists = await stat(await resolveInside(dir, as)).then((item) => item.isFile(), () => false);
+    const rel = exists ? `assets/versions/${path.basename(as, ".png")}-${Date.now().toString(36)}.png` : as;
+    const target = await resolveInside(dir, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    const [width, height] = fit;
+    const ffmpegPath = (await settings.get()).connections.ffmpegPath;
+    await runCapture(ffmpegFor(ffmpegPath), ["-hide_banner", "-loglevel", "error", "-y", "-i", from, "-frames:v", "1", "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height}`, target]);
+    const record = { kind: "image", prompt: "", imported: path.basename(from) };
+    if (!exists) await projects.setAssetRecord(id, as, record);
+    else {
+      const entry = await projects.addVersion(id, as, { file: rel, record });
+      await projects.selectVersion(id, as, entry.versions.at(-1).id);
+    }
+    return as;
   }
 
   /** Joins audio pieces into assets/audio/narration.wav, or video clips into renders/final.mp4. */
@@ -409,7 +437,8 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   } else if (match[2] === "import") {
     if (method !== "POST") methodNotAllowed();
     const body = requireObject(await readJsonBody(req));
-    sendJson(res, 200, { path: await (body.kind === "audio" ? projects.importAudio(id, body.from) : projects.importImage(id, body.from)) });
+    if (body.as !== undefined) sendJson(res, 200, { path: await importPicture(id, body) });
+    else sendJson(res, 200, { path: await (body.kind === "audio" ? projects.importAudio(id, body.from) : projects.importImage(id, body.from)) });
   } else if (match[2] === "concat") {
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));
