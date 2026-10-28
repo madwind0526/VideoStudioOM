@@ -43,7 +43,7 @@
 Node 백엔드 (:4314, 웹 프레임워크 없음)
    ├─ 설정 / 프로젝트 / 파일 저장소
    ├─ LLM 텍스트 호출   claude → codex → opencode → ollama (중립 폴더, stdin, 도구 권한 없음)
-   ├─ 엔진               server/engine (ComfyUI 8190/8191 REST+웹소켓, 그래프, 도구)
+   ├─ 엔진               server/engine (ComfyUI 8190/8188 REST+웹소켓, 그래프, 도구)
    └─ SongYUE2           http://127.0.0.1:4311 (음악, 효과음, 음성)
 프로젝트: projects/<id>/  (기본 위치는 앱 폴더의 projects)
 ```

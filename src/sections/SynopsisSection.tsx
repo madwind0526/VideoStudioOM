@@ -41,7 +41,7 @@ export default function SynopsisSection({ project, onChanged, notify }: SectionP
       <h2>줄거리</h2>
       <p className="muted section-note">주제를 바탕으로 한 전체 이야기입니다. 아이디어를 적으면 LLM이 서로 다른 줄거리 4가지를 제안하고, 마음에 드는 안을 골라 고쳐 쓸 수 있어요. 시나리오는 저장된 줄거리에서 만들어집니다.</p>
 
-      <div className="gen-card" style={{ maxWidth: 900 }}>
+      <div className="gen-card">
         <div className="fields">
           <div className="field wide">
             <label htmlFor="story-idea">아이디어</label>
@@ -61,7 +61,7 @@ export default function SynopsisSection({ project, onChanged, notify }: SectionP
           </div>
         </div>
         {error && <p className="error">{error}</p>}
-        <div className="row" style={{ marginTop: 12 }}>
+        <div className="btn-row" style={{ marginTop: 14 }}>
           <button className="btn primary" type="button" disabled={busy} onClick={() => void suggest()}>
             <Wand2 size={15} /> {busy ? "줄거리 만드는 중 (1~2분)..." : "줄거리 4안 만들기"}
           </button>

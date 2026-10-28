@@ -5,6 +5,7 @@ import path from "node:path";
 import spawn from "cross-spawn";
 
 import { HttpError } from "./http.mjs";
+import { killTree } from "./proc.mjs";
 import { isCommandInstalled, CLI_COMMANDS } from "./llm-status.mjs";
 
 // Both CLIs colour their output and opencode prints a "> agent · model" header line.
@@ -26,7 +27,7 @@ function runCli(command, args, { stdin, timeoutMs, env }) {
     let stdout = "";
     let stderr = "";
     const child = spawn(command, args, { cwd: os.tmpdir(), windowsHide: true, env: { ...process.env, ...env } });
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    const timer = setTimeout(() => killTree(child), timeoutMs);
     child.stdout?.on("data", (chunk) => (stdout += chunk));
     child.stderr?.on("data", (chunk) => (stderr = (stderr + chunk).slice(-600)));
     child.once("error", (error) => {

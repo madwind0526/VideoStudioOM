@@ -21,6 +21,8 @@ interface Props {
   accept?: string[];
   /** Folder (or file inside it) to open first. */
   start?: string;
+  /** The open project: its folder becomes a shortcut. */
+  projectId?: string;
   onPick: (file: string) => void;
   onClose: () => void;
 }
@@ -29,7 +31,7 @@ const joinPath = (dir: string, name: string) => `${dir}${/[\\/]$/.test(dir) ? ""
 const matches = (name: string, accept?: string[]) => !accept || accept.length === 0 || accept.some((ending) => name.toLowerCase().endsWith(ending.toLowerCase()));
 
 /** The app's own file browser (same layout as MeetingNote's): shortcuts, path bar, list, selected file, cancel/open. */
-export default function FileNavigator({ title, accept, start, onPick, onClose }: Props) {
+export default function FileNavigator({ title, accept, start, projectId, onPick, onClose }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [pathInput, setPathInput] = useState("");
   const [selected, setSelected] = useState("");
@@ -39,7 +41,7 @@ export default function FileNavigator({ title, accept, start, onPick, onClose }:
   async function load(dir?: string) {
     setLoading(true);
     try {
-      const result = await api<Listing>("GET", `/api/fs?dir=${encodeURIComponent(dir ?? "")}`);
+      const result = await api<Listing>("GET", `/api/fs?dir=${encodeURIComponent(dir ?? "")}${projectId ? `&project=${encodeURIComponent(projectId)}` : ""}`);
       setListing(result);
       setPathInput(result.path);
       setError(result.error ?? "");

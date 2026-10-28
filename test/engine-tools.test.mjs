@@ -121,7 +121,7 @@ test("paths outside the allowed folders are found; speech is split in sentences 
 });
 
 const run = (tool, inputs, comfy, extra = {}) =>
-  runTool({ tool, inputs, connections: { comfyUrl: comfy.url, rtxUrl: comfy.url, refUrl: comfy.url, songyueUrl: "http://127.0.0.1:9", songyueDir: "x" }, deps: { ensure: async () => undefined, ...extra } });
+  runTool({ tool, inputs, connections: { comfyUrl: comfy.url, refUrl: comfy.url, refDir: "x", songyueUrl: "http://127.0.0.1:9", songyueDir: "x" }, deps: { ensure: async () => undefined, ...extra } });
 
 test("Krea image: models are picked from ComfyUI, overrides add a LoRA, the result is saved", async () => {
   const comfy = await fakeComfy({

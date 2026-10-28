@@ -131,7 +131,7 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
         </div>
       ) : (
         <>
-          <div className="gen-card" style={{ maxWidth: 900 }}>
+          <div className="gen-card">
             <div className="row" style={{ gap: 8, marginBottom: 12 }}>
               <button className="btn" type="button" disabled={extracting || file.dirty} title={file.dirty ? "먼저 저장하세요." : "저장된 줄거리에서 다시 뽑습니다. 지금 적은 인물은 바뀝니다."} onClick={() => void extract()}>
                 <Wand2 size={15} /> {extracting ? "뽑는 중..." : "줄거리에서 인물·장소 다시 뽑기"}
@@ -275,6 +275,7 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
       {importing !== null && (
         <FileNavigator
           title="사진 가져오기"
+          projectId={project.id}
           accept={[".png", ".jpg", ".jpeg", ".webp"]}
           onClose={() => setImporting(null)}
           onPick={(from) => {

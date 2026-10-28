@@ -3,10 +3,11 @@ import {
   IMAGE_MODELS,
   MUSIC_FORMATS,
   UPSCALES,
+  VIDEO_CODECS,
   VIDEO_MODES,
 } from "../shared/settings.mjs";
 
-export type FieldKind = "select" | "segmented" | "number" | "text" | "bool" | "size" | "chain";
+export type FieldKind = "select" | "segmented" | "number" | "text" | "textarea" | "bool" | "size" | "chain";
 
 export interface FieldDef {
   path: string;
@@ -28,6 +29,7 @@ const options = (values: readonly string[], labels: Record<string, string> = {})
 const VIDEO_MODE_LABELS = { T2V: "T2V 텍스트 → 영상", I2V: "I2V 첫 이미지 → 영상", FL2V: "FL2V 첫+끝 이미지", R2V: "R2V 참조 영상/이미지" };
 const AUDIO_LABELS = { input: "입력한 노래", songyue: "SongYUE2로 생성", h3: "H3 자체 오디오", s2v: "S2V (음성 → 영상)" };
 const IMAGE_LABELS = { "krea2-turbo": "Krea 2 Turbo", "h3-still": "H3 스틸" };
+const CODEC_LABELS = { h264: "H.264 (CPU)", h265: "H.265 (CPU)", nvenc_h264: "H.264 (NVENC)", nvenc_h265: "H.265 (NVENC)", nvenc_av1: "AV1 (NVENC)" };
 const UPSCALE_LABELS = { "rtx-2pass": "RTX 2패스", none: "없음", lanczos: "Lanczos" };
 
 export const FIELDS: Record<string, FieldDef> = {};
@@ -35,8 +37,7 @@ const add = (def: FieldDef) => {
   FIELDS[def.path] = def;
 };
 
-add({ path: "defaults.customSize.generate", label: "생성 크기", kind: "size", hint: "영상 모델이 만드는 크기(가로 × 세로, 32의 배수)" });
-add({ path: "defaults.customSize.final", label: "최종 크기", kind: "size", hint: "완성 파일 크기. 생성 크기와 모양이 같아야 합니다." });
+add({ path: "defaults.customSize.generate", label: "생성 크기", kind: "size", hint: "영상 모델이 만드는 크기(가로 × 세로, 32의 배수). 지금은 이 크기가 그대로 완성 크기입니다." });
 add({ path: "defaults.durationSeconds", label: "목표 길이(초)", kind: "number", min: 2, max: 600, step: 1 });
 add({ path: "defaults.videoMode", label: "영상 모드", kind: "select", options: options(VIDEO_MODES, VIDEO_MODE_LABELS) });
 add({ path: "defaults.audioSource", label: "오디오 원천", kind: "select", options: options(AUDIO_SOURCES, AUDIO_LABELS) });
@@ -45,6 +46,8 @@ add({ path: "defaults.imageModel", label: "이미지 모델", kind: "select", op
 add({ path: "video.model", label: "영상 모델", kind: "select", options: [{ value: "minimax-h3-turbo", label: "MiniMax H3 Turbo" }] });
 add({ path: "video.upscale", label: "확대 방식", kind: "select", options: options(UPSCALES, UPSCALE_LABELS) });
 add({ path: "video.seamRampSeconds", label: "이음새 색 보정 구간(초)", kind: "number", min: 0.5, max: 10, step: 0.5, hint: "이어 붙일 때 각 구간의 시작 색을 앞 구간 끝에 맞춘 뒤, 이 시간에 걸쳐 원래 색으로 되돌립니다." });
+add({ path: "video.codec", label: "영상 저장 방식", kind: "select", options: options(VIDEO_CODECS, CODEC_LABELS), hint: "이어 붙인 영상과 내보내기의 기본 코덱입니다. NVENC는 이 PC의 ffmpeg가 지원할 때만 됩니다." });
+add({ path: "video.freeVramWhenIdle", label: "작업이 끝나면 VRAM 자동 비우기", kind: "bool", hint: "대기 중인 작업이 없어지면 ComfyUI 두 서버가 들고 있는 모델을 내려 VRAM을 비웁니다. 다음 작업은 모델을 다시 올리느라 처음에 조금 더 걸립니다." });
 add({ path: "video.finalFps", label: "최종 FPS", kind: "number", min: 12, max: 60, step: 1, hint: "생성은 24fps, 최종 파일에서 변환합니다." });
 
 add({ path: "audio.musicFormat", label: "노래 저장 형식", kind: "select", options: options(MUSIC_FORMATS) });
@@ -56,24 +59,21 @@ add({ path: "llm.chain", label: "폴백 순서", kind: "chain", wide: true, hint
 add({ path: "llm.model", label: "LLM 모델 이름", kind: "text", placeholder: "비워 두면 CLI의 기본 모델", wide: true });
 add({ path: "llm.ollama.endpoint", label: "연결 주소", kind: "text", wide: true });
 add({ path: "llm.ollama.model", label: "LLM 모델 이름", kind: "text", placeholder: "예: gemma4:latest", wide: true });
+add({ path: "llm.sheetPrompt", label: "캐릭터 시트 프롬프트 (system prompt)", kind: "textarea", wide: true, placeholder: "비워 두면 기본 프롬프트(server/prompts/character-sheet.md)를 씁니다.", hint: "등장인물의 캐릭터 시트 이미지 프롬프트를 LLM이 쓸 때 지시로 주는 글입니다. 바꾸면 다음 프롬프트 만들기부터 적용됩니다." });
 add({ path: "llm.timeoutSec", label: "호출 제한 시간(초)", kind: "number", min: 30, max: 900, step: 10 });
 
 add({ path: "connections.songyueUrl", label: "SongYUE2 연결 주소", kind: "text", wide: true });
-add({ path: "connections.comfyUrl", label: "ComfyUI 연결 주소", kind: "text", wide: true });
+add({ path: "connections.comfyUrl", label: "ComfyUI 연결 주소 (이미지·영상 생성)", kind: "text", wide: true });
 add({ path: "connections.songyueDir", label: "SongYUE2 폴더", kind: "text", wide: true, hint: "SongYUE2의 ComfyUI(Krea, H3)와 음성 엔진을 켤 때 씁니다." });
-add({ path: "connections.refUrl", label: "참조 영상 ComfyUI 연결 주소", kind: "text", wide: true, hint: "2단계 참조 영상(Deno)과 캐릭터 시트를 만드는 ComfyUI입니다." });
-add({ path: "connections.refDir", label: "참조 영상 ComfyUI 폴더", kind: "text", wide: true });
-add({ path: "connections.rtxUrl", label: "RTX ComfyUI 연결 주소", kind: "text", wide: true });
-add({ path: "connections.rtxRoot", label: "RTX ComfyUI 폴더", kind: "text", wide: true });
-add({ path: "connections.rtxApp", label: "RTX ComfyUI 프로그램 폴더", kind: "text", wide: true });
-add({ path: "connections.rtxOutputDir", label: "RTX ComfyUI 결과 폴더", kind: "text", wide: true });
+add({ path: "connections.refUrl", label: "Rev0 ComfyUI 연결 주소", kind: "text", wide: true, hint: "2단계 참조 영상(Deno)과 RTX 확대를 하는 ComfyUI입니다. 결과는 아래 폴더 안의 ComfyUI/output에서 가져옵니다." });
+add({ path: "connections.refDir", label: "Rev0 ComfyUI 폴더", kind: "text", wide: true });
 add({ path: "connections.ffmpegPath", label: "ffmpeg 경로", kind: "text", wide: true, placeholder: "PATH의 ffmpeg" });
 add({ path: "storage.projectsDir", label: "프로젝트 폴더", kind: "text", wide: true, placeholder: "projects", hint: "바꾸면 서버를 다시 시작해야 새 폴더를 지켜봅니다." });
 add({ path: "storage.inputDir", label: "입력 폴더", kind: "text", wide: true, placeholder: "input", hint: "가져올 노래, 참조 이미지·영상을 두는 곳입니다." });
 add({ path: "storage.outputDir", label: "출력 폴더", kind: "text", wide: true, placeholder: "output", hint: "내보낸 완성본이 저장되는 곳입니다." });
 
 /** Settings that can be overridden for one project from the collapsed area of the start page. */
-export const PROJECT_ONLY_PATHS = ["video.upscale", "video.finalFps", "audio.musicFormat"];
+export const PROJECT_ONLY_PATHS = ["video.codec", "video.upscale", "video.finalFps", "audio.musicFormat"];
 
 export function getIn(object: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((node, key) => (node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined), object);

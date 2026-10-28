@@ -3,12 +3,11 @@ import test from "node:test";
 import { DEFAULTS } from "../shared/settings.mjs";
 import { serviceSpecs } from "../server/engine/services.mjs";
 
-const base = { ...DEFAULTS.connections, rtxUrl: "http://127.0.0.1:8191", rtxApp: "desktop-app" };
-
-test("rtx has its own launcher unless it shares the Rev0 address", () => {
-  assert.equal(serviceSpecs(base).rtx.cwd, "desktop-app");
-  const shared = serviceSpecs({ ...base, rtxUrl: base.refUrl });
-  assert.equal(shared.rtx, shared.ref);
+test("two ComfyUI servers: SongYUE2's and Rev0, which also does the RTX upscale", () => {
+  const specs = serviceSpecs(DEFAULTS.connections);
+  assert.deepEqual(Object.keys(specs).sort(), ["comfy", "ref", "songyue"]);
+  assert.equal(specs.ref.url, "http://127.0.0.1:8188/system_stats");
+  assert.equal(specs.ref.cwd, DEFAULTS.connections.refDir);
 });
 
 test("the default Rev0 folder keeps its backslashes", () => {

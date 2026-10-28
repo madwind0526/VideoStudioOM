@@ -12,6 +12,8 @@ export interface ProjectSummary {
   title: string;
   updatedAt: number;
   hasFinal: boolean;
+  /** The video a card plays: the finished one, else the newest render or clip. */
+  video: string | null;
   poster: string | null;
   stages: Stage[];
   description: string;
@@ -33,6 +35,8 @@ export interface MediaFile {
   mtimeMs: number;
   /** How the file was made (prompt, source files); null for files not made by this app. */
   record: Record<string, unknown> | null;
+  /** How many versions the file has (more than one after it was made again). */
+  versions?: number;
 }
 
 export interface ProjectDetail extends ProjectSummary {

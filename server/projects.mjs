@@ -1,15 +1,16 @@
-import { copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { deepMerge, sanitizeSettings, validateSettings } from "../shared/settings.mjs";
 import { createMutex, writeFileAtomic } from "./fs-util.mjs";
 import { HttpError } from "./http.mjs";
+import { createVersionStore, readVersions } from "./versions.mjs";
 import { isValidProjectId, resolveInside } from "./paths.mjs";
 
 // Only these folders are written by the GUI; project.json, checkpoints and renders stay untouched.
 const WRITABLE_DIRS = new Set(["studio", "artifacts", "assets"]);
 const WRITE_EXTENSIONS = new Set([".json", ".md", ".txt"]);
-const READ_EXTENSIONS = new Set([".json", ".md", ".txt", ".jsonl", ".log"]);
+const READ_EXTENSIONS = new Set([".json", ".md", ".txt", ".jsonl", ".log", ".srt"]);
 const IMAGE_PATTERN = /\.(png|jpe?g|webp)$/i;
 const MEDIA_TYPES = {
   ".png": "image/png",
@@ -92,6 +93,7 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       title,
       updatedAt: info.mtimeMs,
       hasFinal: await exists(path.join(dir, "renders", "final.mp4")),
+      video: await bestVideo(dir),
       poster: poster ? `assets/images/${poster}` : null,
       stages: await stagesOf(dir, images.some((name) => IMAGE_PATTERN.test(name))),
       description: await describe(dir),
@@ -108,6 +110,21 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       if (line) return line.length > 120 ? `${line.slice(0, 117)}...` : line;
     }
     return "";
+  }
+
+  /** The video a card plays: the finished one, else the newest render, else the newest clip. */
+  async function bestVideo(dir) {
+    if (await exists(path.join(dir, "renders", "final.mp4"))) return "renders/final.mp4";
+    for (const sub of ["renders", "assets/video"]) {
+      let newest = null;
+      for (const name of await readdir(path.join(dir, sub)).catch(() => [])) {
+        if (!/\.(mp4|webm)$/i.test(name)) continue;
+        const info = await stat(path.join(dir, sub, name)).catch(() => null);
+        if (info?.isFile() && (!newest || info.mtimeMs > newest.mtimeMs)) newest = { path: `${sub}/${name}`, mtimeMs: info.mtimeMs };
+      }
+      if (newest) return newest.path;
+    }
+    return null;
   }
 
   async function readMeta(dir) {
@@ -128,6 +145,17 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     }
   }
 
+  /** Changes studio/assets.json in one locked step: `change` edits the records in place. */
+  async function updateAssets(dir, change) {
+    const target = await resolveInside(dir, ASSETS_FILE);
+    return mutex(target, async () => {
+      const records = await readAssets(dir);
+      change(records);
+      await writeFileAtomic(target, `${JSON.stringify(records, null, 2)}
+`);
+    });
+  }
+
   /** A path the app may create, replace or delete: a media file under assets/. */
   function checkAssetPath(rel) {
     const segments = String(rel).split(/[\\/]/);
@@ -136,10 +164,30 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     }
   }
 
+  const versionStore = createVersionStore({ projectDir, mutex, readAssets, updateAssets, checkAssetPath });
+
+  /** Copies a file picked anywhere on this PC into the project, under a unique name. */
+  async function importFile(id, from, { exts, dir: sub, prefix, fallback, maxBytes, what, allowed }) {
+    if (typeof from !== "string" || !path.isAbsolute(from)) throw new HttpError(400, "가져올 파일의 전체 경로가 필요합니다.");
+    const ext = path.extname(from).toLowerCase();
+    if (!exts.includes(ext)) throw new HttpError(400, `${allowed} ${what}만 가져올 수 있습니다.`);
+    const info = await stat(from).catch(() => null);
+    if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+    if (info.size > maxBytes) throw new HttpError(413, `${what} 파일이 너무 큽니다(${Math.round(maxBytes / 1_000_000)}MB 이하).`);
+    const dir = await projectDir(id);
+    const base = path.basename(from, path.extname(from)).replace(/[^\p{L}\p{N}._-]+/gu, "-").slice(0, 40) || fallback;
+    const rel = `${sub}/${prefix}-${Date.now().toString(36)}-${base}${ext}`;
+    const target = await resolveInside(dir, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(from, target);
+    return rel;
+  }
+
   /** Media files of a project for the detail window (relative paths, at most 200 per kind). */
   async function mediaOf(dir) {
     // studio/assets.json remembers how each generated file was made (prompt, scene, ...), so it can be made again.
     const records = await readAssets(dir);
+    const versions = await readVersions(dir);
     const list = async (sub, pattern) => {
       const names = await readdir(path.join(dir, sub)).catch(() => []);
       const picked = [];
@@ -147,7 +195,7 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       const sorted = names.filter((item) => pattern.test(item)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       for (const name of sorted.slice(0, 200)) {
         const info = await stat(path.join(dir, sub, name)).catch(() => null);
-        if (info?.isFile()) picked.push({ path: `${sub}/${name}`, size: info.size, mtimeMs: info.mtimeMs, record: records[`${sub}/${name}`] ?? null });
+        if (info?.isFile()) picked.push({ path: `${sub}/${name}`, size: info.size, mtimeMs: info.mtimeMs, record: records[`${sub}/${name}`] ?? null, versions: versions[`${sub}/${name}`]?.versions.length ?? 0 });
       }
       return picked;
     };
@@ -238,6 +286,16 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       return items.sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
+    /** Moves a project into `.trash` inside the projects folder (not listed, nothing is erased). */
+    async remove(id) {
+      const dir = await projectDir(id);
+      const trash = path.join(await getRoot(), ".trash");
+      await mkdir(trash, { recursive: true });
+      await rename(dir, path.join(trash, `${id}-${Date.now().toString(36)}`));
+    },
+
+    ...versionStore,
+
     async get(id) {
       const dir = await projectDir(id);
       return {
@@ -307,24 +365,17 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       });
     },
 
-    /** Deletes one media file under assets/ together with its record. */
     /** Copies a picture from anywhere on this PC (picked in the file browser) into assets/images. Returns its project path. */
-    async importImage(id, from) {
-      if (typeof from !== "string" || !path.isAbsolute(from)) throw new HttpError(400, "가져올 파일의 전체 경로가 필요합니다.");
-      const ext = path.extname(from).toLowerCase();
-      if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) throw new HttpError(400, "png, jpg, webp 이미지만 가져올 수 있습니다.");
-      const info = await stat(from).catch(() => null);
-      if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
-      if (info.size > 30_000_000) throw new HttpError(413, "이미지가 너무 큽니다(30MB 이하).");
-      const dir = await projectDir(id);
-      const base = path.basename(from, path.extname(from)).replace(/[^\p{L}\p{N}._-]+/gu, "-").slice(0, 40) || "image";
-      const rel = `assets/images/photo-${Date.now().toString(36)}-${base}${ext}`;
-      const target = await resolveInside(dir, rel);
-      await mkdir(path.dirname(target), { recursive: true });
-      await copyFile(from, target);
-      return rel;
+    importImage(id, from) {
+      return importFile(id, from, { exts: [".png", ".jpg", ".jpeg", ".webp"], dir: "assets/images", prefix: "photo", fallback: "image", maxBytes: 30_000_000, what: "이미지", allowed: "png, jpg, webp" });
     },
 
+    /** Copies a song or voice file into assets/audio. Returns its project path. */
+    importAudio(id, from) {
+      return importFile(id, from, { exts: [".wav", ".mp3", ".flac", ".ogg", ".m4a"], dir: "assets/audio", prefix: "song", fallback: "audio", maxBytes: 200_000_000, what: "오디오", allowed: "wav, mp3, flac, ogg, m4a" });
+    },
+
+    /** Deletes one media file under assets/ together with its record. */
     async deleteMedia(id, rel) {
       checkAssetPath(rel);
       const dir = await projectDir(id);

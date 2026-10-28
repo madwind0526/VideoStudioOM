@@ -26,13 +26,16 @@ interface Props {
   onWork: (id: string) => void;
   onOpenDetail: (id: string) => void;
   onFavorite: (id: string, favorite: boolean) => void;
+  onSelect?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onPlayPopup?: (id: string) => void;
 }
 
 const matchesTab = (project: ProjectSummary, tab: TabId) =>
   tab === "all" || (tab === "done" && project.hasFinal) || (tab === "draft" && !project.hasFinal) || (tab === "favorite" && project.favorite);
 
 /** A page of project cards in a grid: header, tabs with search and the sort bar. */
-export default function ProjectBoard({ kicker, title, subtitle, action, projects, currentId, tabIds, onWork, onOpenDetail, onFavorite }: Props) {
+export default function ProjectBoard({ kicker, title, subtitle, action, projects, currentId, tabIds, onWork, onOpenDetail, onFavorite, onSelect, onDelete, onPlayPopup }: Props) {
   const [tab, setTab] = useState<TabId>("all");
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [query, setQuery] = useState("");
@@ -97,6 +100,9 @@ export default function ProjectBoard({ kicker, title, subtitle, action, projects
               onOpenDetail={onOpenDetail}
               onWork={onWork}
               onFavorite={onFavorite}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onPlayPopup={onPlayPopup}
             />
           ))}
         </div>

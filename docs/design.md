@@ -15,7 +15,7 @@
 브라우저 UI (React + TS + Vite, :5184 dev)  ── REST/SSE ──  Node 백엔드 (:4314)
                                                               ├ 설정/프로젝트/파일 저장소
                                                               ├ LLM 텍스트 호출 (claude / codex / opencode CLI, ollama)
-                                                              ├ 엔진 (server/engine: ComfyUI :8190/:8191 REST+웹소켓, 그래프, 도구)
+                                                              ├ 엔진 (server/engine: ComfyUI :8190/:8188 REST+웹소켓, 그래프, 도구)
                                                               └ SongYUE2 (:4311: 음악, 효과음, 음성 엔진)
 프로젝트: projects/<id>/ (기본 위치는 앱 폴더의 projects)
 ```
@@ -129,7 +129,7 @@ projects/<id>/
 스파이크(`docs/spike-agent.md`, 2026-10-19) 결과 비대화형 에이전트 실행은 동작하지만(승인 지점 정지, 같은 세션 재개) 도구 허용 목록이 보호 장치가 되지 못했다(`python` 접두사 허용은 임의 코드 실행과 같고, `Write`는 프로젝트 밖에도 써진다). 그래서 에이전트 방식은 채택하지 않았다. 남은 위험:
 1. **LLM이 시간을 틀린다**: 장면 길이와 대사 길이가 맞지 않거나 장면이 끊긴다 → 스키마와 시간 검증 + 사유를 알려 재요청(최대 3번). 한국어 음성(qwen3_tts)의 글자당 길이는 P3에서 실측한다.
 2. **LLM 호출 실패/한도**: Codex는 ChatGPT 한도에 걸리면 다음 제공자로 넘어간다(MusicAutomation 체인). 실제로 답한 제공자를 상단에 표시한다.
-3. **GPU 12GB 충돌**: 우리 작업, SongYUE2(한 번에 한 곡, 진행 중이면 409), OpenMontage 도구(ComfyUI 8190/8191)가 같은 GPU를 쓴다 → 락을 한 곳(`bridge/om_tool.py`의 락 파일)에 두고 SongYUE2의 `/api/generate/status`도 함께 확인한다.
+3. **GPU 12GB 충돌**: 우리 작업, SongYUE2(한 번에 한 곡, 진행 중이면 409), OpenMontage 도구(ComfyUI 8190/8188)가 같은 GPU를 쓴다 → 락을 한 곳(`bridge/om_tool.py`의 락 파일)에 두고 SongYUE2의 `/api/generate/status`도 함께 확인한다.
 4. **사용자 수정과 승인의 어긋남**: 승인 후 앞 단계 파일을 고치면 뒤 단계가 낡은 입력을 쓴다 → 승인 기록에 입력 파일의 해시를 남기고 달라지면 뒤 단계를 "다시 승인 필요"로 표시한다.
 
 ## 7. 구현 단계

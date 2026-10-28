@@ -49,6 +49,8 @@ export interface MakeItem {
   label: string;
   inputs: Record<string, unknown>;
   record: Recipe;
+  /** The result is saved as another version of this file instead of a file of its own. */
+  candidateOf?: string;
 }
 
 export const stamp = () => new Date().toISOString().replace(/\D/g, "").slice(2, 14);
@@ -123,7 +125,7 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
 
 /** Starts one job, or a run of jobs that go one after another (a failure stops the rest). */
 export async function startItems(projectId: string, items: MakeItem[]): Promise<void> {
-  const body = items.map((item) => ({ tool: item.tool, label: item.label, inputs: item.inputs, record: item.record }));
+  const body = items.map((item) => ({ tool: item.tool, label: item.label, inputs: item.inputs, record: item.record, candidateOf: item.candidateOf }));
   await api("POST", "/api/jobs", { project: projectId, items: body });
 }
 
@@ -135,10 +137,16 @@ export async function makePrompt(projectId: string, body: { target: "image" | "v
 
 /** Copies a picture picked in the file browser into the project (assets/images) and returns its project path. */
 export const importImage = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from }).then((data) => data.path);
+export const importAudio = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, kind: "audio" }).then((data) => data.path);
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
 
-export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: { colorMatch?: boolean; overlapSeconds?: number | "auto"; seamColor?: boolean } = {}) =>
+export interface JoinOptions {
+  colorMatch?: boolean;
+  overlapSeconds?: number | "auto";
+  seamColor?: boolean;
+}
+export const joinMedia = (projectId: string, kind: "audio" | "video", inputs: string[], options: JoinOptions = {}) =>
   api<{ output: string; count: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/concat`, { kind, inputs, ...options });
 
 /** Audio pieces laid on one timeline: each starts at its own second. */
@@ -170,5 +178,23 @@ export async function refineItem(projectId: string, settings: Settings, item: Ma
   const next = makeItem(settings, { ...recipe, prompt, idea: recipe.prompt }, String(item.inputs.output_path));
   return typeof next === "string" ? item : next;
 }
+
+/** The texts the model was really given, stored in the file's record when it was made. */
+export function sentOf(record: Record<string, unknown> | null | undefined): { node: string; key: string; text: string }[] {
+  const sent = record?.sent;
+  return Array.isArray(sent) ? sent.filter((entry): entry is { node: string; key: string; text: string } => typeof entry?.text === "string") : [];
+}
+
+/** Versions and prompt history of one file (studio/versions.json). The shown file is the `selected` version. */
+export interface VersionEntry {
+  selected: string | null;
+  versions: { id: string; file: string; record: Record<string, unknown> | null; createdAt: number }[];
+  log: { at: number; type: "saved" | "remade" | "selected"; prompt?: string; lyrics?: string; version?: string }[];
+  draft: { prompt: string; lyrics?: string } | null;
+}
+const versionsUrl = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/versions`;
+export const getVersions = (projectId: string, path: string) => api<{ entry: VersionEntry }>("GET", `${versionsUrl(projectId)}?path=${encodeURIComponent(path)}`).then((data) => data.entry);
+export const saveDraft = (projectId: string, path: string, prompt: string) => api<{ entry: VersionEntry }>("PUT", versionsUrl(projectId), { path, prompt }).then((data) => data.entry);
+export const selectVersion = (projectId: string, path: string, select: string) => api<{ entry: VersionEntry }>("POST", versionsUrl(projectId), { path, select }).then((data) => data.entry);
 
 export const baseName = (path: string) => (path.split("/").pop() ?? path).replace(/\.[^.]+$/, "");

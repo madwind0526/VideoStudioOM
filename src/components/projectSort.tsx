@@ -1,8 +1,9 @@
-import { ArrowDownAZ, ArrowDownZA, Clock, Star, Timer } from "lucide-react";
+import { ArrowDownAZ, Clock, ListChecks, Star, Timer } from "lucide-react";
 import type { ProjectSummary } from "../api";
+import { stagesDone } from "../format";
 import type { SortOption } from "./SortBar";
 
-export type SortGroup = "date" | "az" | "za" | "length" | "favorite";
+export type SortGroup = "date" | "az" | "stage" | "length" | "favorite";
 export interface SortState {
   group: SortGroup;
   asc: boolean;
@@ -17,9 +18,10 @@ export function compareProjects({ group, asc }: SortState): (a: ProjectSummary, 
     case "date":
       return asc ? (a, b) => a.updatedAt - b.updatedAt : newestFirst;
     case "az":
-      return (a, b) => a.title.localeCompare(b.title, "ko");
-    case "za":
-      return (a, b) => b.title.localeCompare(a.title, "ko");
+      return asc ? (a, b) => a.title.localeCompare(b.title, "ko") : (a, b) => b.title.localeCompare(a.title, "ko");
+    case "stage":
+      // How far a project is (steps done of 6); the newest first within the same step.
+      return (a, b) => (asc ? stagesDone(a) - stagesDone(b) : stagesDone(b) - stagesDone(a)) || newestFirst(a, b);
     case "length":
       return (a, b) => (b.durationSeconds ?? -1) - (a.durationSeconds ?? -1) || newestFirst(a, b);
     case "favorite":
@@ -27,8 +29,14 @@ export function compareProjects({ group, asc }: SortState): (a: ProjectSummary, 
   }
 }
 
-/** The date button starts newest first and flips on every click after; the others just pick their order. */
-export const nextSort = (current: SortState, group: SortGroup): SortState => (group === "date" && current.group === "date" ? { group, asc: !current.asc } : { group, asc: false });
+/**
+ * Date, title and step buttons flip their direction on every click after the first one. The first click gives newest first,
+ * 가나다 (ascending) and furthest first; length and favorites just pick their order.
+ */
+export const nextSort = (current: SortState, group: SortGroup): SortState => {
+  if (group !== "date" && group !== "az" && group !== "stage") return { group, asc: false };
+  return current.group === group ? { group, asc: !current.asc } : { group, asc: group === "az" };
+};
 
 /** Icon-only sort buttons (same icons as MemoReader) for SortBar. */
 export function sortOptions(sort: SortState): SortOption<SortGroup>[] {
@@ -44,8 +52,26 @@ export function sortOptions(sort: SortState): SortOption<SortGroup>[] {
         </span>
       ),
     },
-    { key: "az", label: "제목 가나다순", icon: <ArrowDownAZ size={15} /> },
-    { key: "za", label: "제목 역순", icon: <ArrowDownZA size={15} /> },
+    {
+      key: "az",
+      label: `제목순 (${sort.group === "az" ? (sort.asc ? "가나다 오름차순" : "역순 내림차순") : "클릭하면 가나다순"})`,
+      icon: (
+        <span className="sort-dir">
+          <ArrowDownAZ size={15} />
+          {sort.group === "az" && <small>{sort.asc ? "↑" : "↓"}</small>}
+        </span>
+      ),
+    },
+    {
+      key: "stage",
+      label: `프로젝트 단계별 (${sort.group === "stage" ? (sort.asc ? "적게 진행된 것 먼저" : "많이 진행된 것 먼저") : "클릭하면 많이 진행된 것 먼저"})`,
+      icon: (
+        <span className="sort-dir">
+          <ListChecks size={15} />
+          {sort.group === "stage" && <small>{sort.asc ? "↑" : "↓"}</small>}
+        </span>
+      ),
+    },
     { key: "length", label: "긴 영상 먼저", icon: <Timer size={15} /> },
     { key: "favorite", label: "즐겨찾기 먼저", icon: <Star size={15} /> },
   ];

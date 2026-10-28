@@ -1,13 +1,15 @@
-import { Combine, FileText, Layers, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ClipboardCheck, Combine, FileText, Layers, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
-import ExportPanel from "../components/ExportPanel";
+import VersionDialog from "../components/VersionDialog";
+import VideoPlayer from "../components/VideoPlayer";
 import GenerateForm from "../components/GenerateForm";
 import JobList from "../components/JobList";
+import JoinDialog from "../components/JoinDialog";
 import Lightbox from "../components/Lightbox";
 import { useJsonFile } from "../useFile";
 import { BIBLE_FILE, charactersIn, describeReference, referencesFor, type Bible } from "../bible";
-import { type ClipCheck, type SceneOpts, SCENE_OPTS_FILE, AUDIO_KINDS_FILE, audioKindOf, baseName, deleteMedia, joinMedia, makeItem, mixMedia, recipeOf, refineItem, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
+import { type ClipCheck, type SceneOpts, SCENE_OPTS_FILE, AUDIO_KINDS_FILE, audioKindOf, baseName, checkClips, deleteMedia, joinMedia, type JoinOptions, makeItem, mixMedia, recipeOf, refineItem, sentOf, startItems, type MakeItem, type MakeKind, type Recipe } from "./mediaJobs";
 import type { SectionProps } from "./types";
 
 const sizeLabel = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`);
@@ -29,14 +31,31 @@ interface Part {
   speaker_directions?: string;
 }
 
-/** The texts the model was really given, stored in the file's record when it was made. */
-function sentOf(record: Record<string, unknown> | null | undefined): { node: string; key: string; text: string }[] {
-  const sent = record?.sent;
-  return Array.isArray(sent) ? sent.filter((entry): entry is { node: string; key: string; text: string } => typeof entry?.text === "string") : [];
+/**
+ * The prompt/versions pop-up of images and videos. `open(path)` shows it for one file; render `dialog` once in the section.
+ */
+function useVersionDialog(props: SectionProps, kind: "image" | "video", files: MediaFile[]) {
+  const [shown, setShown] = useState<{ path: string; tab: "prompt" | "versions" } | null>(null);
+  const file = shown ? files.find((item) => item.path === shown.path) : undefined;
+  const dialog =
+    shown && file ? (
+      <VersionDialog
+        projectId={props.project.id}
+        file={file}
+        kind={kind}
+        settings={props.view?.effective}
+        running={props.jobs.current !== null}
+        startTab={shown.tab}
+        notify={props.notify}
+        onChanged={props.onJobsChanged}
+        onClose={() => setShown(null)}
+      />
+    ) : null;
+  return { open: (path: string, tab: "prompt" | "versions" = "prompt") => setShown({ path, tab }), dialog };
 }
 
-/** Re-make and delete icons for one generated file (top right of its tile or row). */
-function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile; kind: MakeKind | null }) {
+/** Re-make and delete icons for one generated file (top right of its tile or row). With `onPrompt` (images, videos) the prompt icon opens the prompt/versions pop-up instead. */
+function ItemTools({ props, file, kind, onPrompt }: { props: SectionProps; file: MediaFile; kind: MakeKind | null; onPrompt?: (tab: "prompt" | "versions") => void }) {
   const { project, view, jobs, onJobsChanged, notify } = props;
   const recipe = recipeOf(file.record);
   const [mode, setMode] = useState<"edit" | "delete" | "sent" | null>(null);
@@ -73,6 +92,17 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
   return (
     <>
       <div className="item-tools">
+      {onPrompt && (file.versions ?? 0) > 1 && (
+        <button className="chip-btn" type="button" title="이전에 만든 버전과 비교하고 고르기" onClick={() => onPrompt("versions")}>
+          <Layers size={13} /> {file.versions}
+        </button>
+      )}
+      {onPrompt && (
+        <button className="icon-btn" type="button" aria-label="프롬프트" title="프롬프트 보기·고치기, 다시 만들기" onClick={() => onPrompt("prompt")}>
+          <FileText size={15} />
+        </button>
+      )}
+      {!onPrompt && (
       <button
         className="icon-btn"
         type="button"
@@ -87,9 +117,12 @@ function ItemTools({ props, file, kind }: { props: SectionProps; file: MediaFile
       >
         <RefreshCw size={15} />
       </button>
+      )}
+      {!onPrompt && (
       <button className="icon-btn" type="button" aria-label="최종 프롬프트" title="모델에 실제로 보낸 프롬프트" disabled={!recipe} onClick={() => setMode(mode === "sent" ? null : "sent")}>
         <FileText size={15} />
       </button>
+      )}
       <button className="icon-btn" type="button" aria-label="지우기" title="지우기" onClick={() => setMode(mode === "delete" ? null : "delete")}>
         <Trash2 size={15} />
       </button>
@@ -154,7 +187,7 @@ interface HeaderProps {
   count: number;
   creating: boolean;
   onCreating: (value: boolean) => void;
-  /** Items for "전체 만들기" (only what is still missing) and how that is described. */
+  /** Items for "빠진 ... 모두 만들기" (only what is still missing) and how that is described. */
   all: { items: MakeItem[]; note: string } | null;
   /** Items the prompt maker should rewrite first (images, clips); sections that do not need it leave this off. */
   refine?: boolean;
@@ -201,7 +234,7 @@ function Header({ props, title, count, creating, onCreating, all, refine, descri
       <div className="row" style={{ gap: 8 }}>
         {all && (
           <button className="btn" type="button" disabled={running || all.items.length === 0} title={all.note} onClick={() => void makeAll()}>
-            <Layers size={15} /> {preparing ? `프롬프트 만드는 중 ${preparing}` : `전체 만들기${all.items.length > 0 ? ` (${all.items.length})` : ""}`}
+            <Layers size={15} /> {preparing ? `프롬프트 만드는 중 ${preparing}` : `빠진 ${title} 모두 만들기${all.items.length > 0 ? ` (${all.items.length})` : ""}`}
           </button>
         )}
         {join && (
@@ -243,6 +276,7 @@ export function ImagesSection(props: SectionProps) {
   const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
+  const versionDialog = useVersionDialog(props, "image", images);
 
   const missing = (plan.data?.scenes ?? []).filter((scene) => scene.description?.trim() && !images.some((file) => file.path === `assets/images/${safeName(scene.id)}.png`));
   const items = settings ? missing.flatMap((scene) => {
@@ -255,21 +289,23 @@ export function ImagesSection(props: SectionProps) {
       <Header props={props} title="이미지" count={images.length} creating={creating} onCreating={setCreating} all={{ items, note: "시나리오의 장면 중 아직 이미지가 없는 장면의 이미지를 차례로 모두 만듭니다." }} />
       <Top props={props} kinds={["image"]} outputs={["assets/images/"]} creating={creating} />
       {images.length === 0 ? (
-        <p className="muted">아직 이미지가 없습니다. 시나리오가 있으면 "전체 만들기"로 장면마다 만들 수 있어요.</p>
+        <p className="muted">아직 이미지가 없습니다. 시나리오가 있으면 "빠진 이미지 모두 만들기"로 장면마다 만들 수 있어요.</p>
       ) : (
         <div className="thumbs big">
           {images.map((file) => (
             <div key={file.path} className="media-item">
-              <button type="button" title={file.path} onClick={() => setOpen(file.path)}>
+              {/* A picture with several versions opens them side by side; otherwise it is shown large. */}
+              <button type="button" title={file.path} onClick={() => ((file.versions ?? 0) > 1 ? versionDialog.open(file.path, "versions") : setOpen(file.path))}>
                 <img src={mediaUrl(props.project.id, file.path, file.mtimeMs)} alt={file.path} loading="lazy" />
                 <span>{file.path.replace("assets/images/", "")}</span>
               </button>
-              <ItemTools props={props} file={file} kind="image" />
+              <ItemTools props={props} file={file} kind="image" onPrompt={(tab) => versionDialog.open(file.path, tab)} />
             </div>
           ))}
         </div>
       )}
       {open && <Lightbox src={mediaUrl(props.project.id, open, images.find((file) => file.path === open)?.mtimeMs)} alt={open} onClose={() => setOpen(null)} />}
+      {versionDialog.dialog}
     </div>
   );
 }
@@ -335,12 +371,14 @@ export function AudioSection(props: SectionProps) {
         all={{ items, note: "대본의 구간 중 아직 소리가 없는 구간을 종류에 맞게 차례로 모두 만듭니다. 대화는 TTS, 효과음·연주곡·보컬은 SongYUE2가 만들어요." }}
         join={{ count: selection.picked.length, busy: joining, label: "체크한 소리를 대본의 시작 시간에 맞춰 겹쳐서 narration.wav를 만듭니다.", name: "시간에 맞춰 합치기", onJoin: () => void join() }}
       />
-      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }}>
-        <input type="checkbox" checked={duck} onChange={(event) => setDuck(event.target.checked)} /> 대사가 나올 때 음악 소리를 줄여서 합치기
-      </label>
+      <div className="opts">
+        <label>
+          <input type="checkbox" checked={duck} onChange={(event) => setDuck(event.target.checked)} /> 대사가 나올 때 음악 소리를 줄여서 합치기
+        </label>
+      </div>
       <Top props={props} kinds={["voice", "sfx", "instrumental", "vocal"]} outputs={["assets/audio/", "assets/music/"]} creating={creating} />
       {audio.length === 0 ? (
-        <p className="muted">아직 오디오가 없습니다. 대본에서 구간마다 소리 종류를 고른 뒤 "전체 만들기"를 눌러 보세요.</p>
+        <p className="muted">아직 오디오가 없습니다. 대본에서 구간마다 소리 종류를 고른 뒤 "빠진 오디오 모두 만들기"를 눌러 보세요.</p>
       ) : (
         <div className="audio-list">
           {audio.map((file) => {
@@ -367,11 +405,10 @@ export function AudioSection(props: SectionProps) {
 export function VideosSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
-  const [colorMatch, setColorMatch] = useState(false);
-  const [overlapAuto, setOverlapAuto] = useState(true);
-  const [overlap, setOverlap] = useState(0.7);
-  const [seamColor, setSeamColor] = useState(true);
   const [qa, setQa] = useState<ClipCheck[]>([]);
   const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
   const bible = bibleFile.data;
@@ -380,6 +417,7 @@ export function VideosSection(props: SectionProps) {
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
   const clips = videos.filter((file) => file.path.startsWith("assets/video/"));
+  const versionDialog = useVersionDialog(props, "video", clips);
   const selection = useSelection(clips.map((file) => file.path));
   const describeRef = (path: string) => describeReference(bible, path, images);
 
@@ -415,18 +453,63 @@ export function VideosSection(props: SectionProps) {
     });
   }
 
-  async function join() {
+  /** Looks for black and frozen stretches in the project's videos and marks them on the cards. */
+  async function check() {
+    setChecking(true);
+    try {
+      const results = await checkClips(props.project.id);
+      setQa(results);
+      const bad = results.filter((item) => item.issues.length > 0).length;
+      props.notify(bad ? `문제가 있는 영상이 ${bad}개 있습니다. 영상 목록의 표시를 확인하세요.` : "검은 화면이나 멈춘 화면이 없습니다.");
+    } catch (e) {
+      props.notify(message(e, "점검하지 못했습니다."));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  /** Joins the clips in the order of the pop-up (`order` holds their paths) with the options chosen there. */
+  async function join(order: string[], options: JoinOptions) {
     setJoining(true);
     try {
-      await joinMedia(props.project.id, "video", selection.picked, { colorMatch, overlapSeconds: overlapAuto ? "auto" : overlap, seamColor });
+      await joinMedia(props.project.id, "video", order, options);
       props.notify("영상을 이어 붙였습니다. (renders/final.mp4)");
       props.onJobsChanged();
+      setJoinOpen(false);
     } catch (e) {
       props.notify(message(e, "이어 붙이지 못했습니다."));
     } finally {
       setJoining(false);
     }
   }
+
+  /** One thumbnail card: a click opens the pop-up player; the check box (clips only) says whether the clip is joined. */
+  const videoCard = (file: MediaFile) => (
+    <div key={file.path} className="vcard media-item">
+      <button className="video-card" type="button" title={file.path} onClick={() => setPlaying(file.path)}>
+        <span className="vthumb">
+          <video src={`${mediaUrl(props.project.id, file.path, file.mtimeMs)}#t=0.1`} preload="metadata" muted playsInline />
+          <span className="play">
+            <Play size={30} fill="currentColor" />
+          </span>
+        </span>
+        <span className="vname">
+          {file.path.replace(/^assets\/video\//, "")} · {sizeLabel(file.size)}
+        </span>
+      </button>
+      {clips.includes(file) && (
+        <label className="vcheck" title="이어 붙일 영상에 넣기">
+          <input type="checkbox" aria-label="이어 붙일 파일" checked={selection.isOn(file.path)} onChange={() => selection.toggle(file.path)} />
+        </label>
+      )}
+      {qa.find((item) => item.path === file.path)?.issues.map((issue, index) => (
+        <span key={index} className="chip warn" title={`${issue.start.toFixed(1)}초부터`}>
+          {issue.type === "black" ? "검은 화면" : "멈춘 화면"} {issue.seconds.toFixed(1)}초
+        </span>
+      ))}
+      <ItemTools props={props} file={file} kind={null} onPrompt={clips.includes(file) ? (tab) => versionDialog.open(file.path, tab) : undefined} />
+    </div>
+  );
 
   return (
     <div className="section">
@@ -438,53 +521,22 @@ export function VideosSection(props: SectionProps) {
         onCreating={setCreating}
         describeRef={describeRef}
         all={{ items, note: "이미지를 1-2, 2-3, 3-4 ... 두 장씩 짝지어 아직 없는 구간의 영상을 차례로 만듭니다. 장면 설명에 등장인물 이름이 있고 시트가 있으면 시트를 참조해(R2V) 만듭니다. 한 구간에 약 1분 걸립니다." }}
-        join={{ count: selection.picked.length, busy: joining, label: "체크한 구간 영상을 순서대로 이어 붙여 renders/final.mp4를 만듭니다.", onJoin: () => void join() }}
+        join={{ count: selection.picked.length, busy: joining, label: "체크한 구간 영상의 순서를 정하고 이어 붙여 renders/final.mp4를 만듭니다.", onJoin: () => setJoinOpen(true) }}
       />
-      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }}>
-        <input type="checkbox" checked={colorMatch} onChange={(event) => setColorMatch(event.target.checked)} /> 이어 붙일 때 구간마다 색을 맞추기
-      </label>
-      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }} title="다음 구간이 앞 구간의 끝에서 앞선 장면에서 시작할 때, 앞 구간의 그 뒤를 잘라 냅니다. 자동은 다음 구간의 첫 장면과 같은 장면을 앞 구간 끝에서 찾아 그 뒤를 자릅니다.">
-        이음새 겹침 시간
-        <select value={overlapAuto ? "auto" : "manual"} onChange={(event) => setOverlapAuto(event.target.value === "auto")}>
-          <option value="auto">시스템 결정</option>
-          <option value="manual">직접 입력</option>
-        </select>
-        {!overlapAuto && <input type="number" min={0} max={5} step={0.1} value={overlap} onChange={(event) => setOverlap(Math.min(5, Math.max(0, Number(event.target.value) || 0)))} style={{ width: 64 }} />}
-        {!overlapAuto && "초"}
-      </label>
-      <label className="row" style={{ gap: 8, marginBottom: 12, fontSize: 13 }} title="각 구간의 시작 색을 앞 구간의 끝 색에 맞추고 3초에 걸쳐 원래 색으로 되돌립니다.">
-        <input type="checkbox" checked={seamColor} onChange={(event) => setSeamColor(event.target.checked)} /> 이음새 색 보정
-      </label>
       <Top props={props} kinds={["auto", "i2v", "fl2v", "s2v", "r2v"]} outputs={["assets/video/"]} creating={creating} bible={bible} />
-      <ExportPanel
-        projectId={props.project.id}
-        hasFinal={videos.some((file) => file.path === "renders/final.mp4")}
-        hasSound={(props.detail?.media.audio ?? []).some((file) => file.path === "assets/audio/narration.wav")}
-        notify={props.notify}
-        onChecked={setQa}
-        onExported={props.onJobsChanged}
-      />
-      {videos.length === 0 ? (
-        <p className="muted">아직 동영상이 없습니다. 이미지가 2장 이상이면 "전체 만들기"로 구간 영상을 만들 수 있어요.</p>
+      <div className="btn-row">
+        <button className="btn" type="button" disabled={checking} onClick={() => void check()}>
+          <ClipboardCheck size={15} /> {checking ? "점검 중..." : "영상 점검 (검은 화면·멈춤)"}
+        </button>
+      </div>
+      {clips.length === 0 ? (
+        <p className="muted">아직 동영상이 없습니다. 이미지가 2장 이상이면 "빠진 동영상 모두 만들기"로 구간 영상을 만들 수 있어요.</p>
       ) : (
-        <div className="videos">
-          {videos.map((file) => (
-            <div key={file.path} className="media-item">
-              <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>
-                {clips.includes(file) && <input type="checkbox" aria-label="이어 붙일 파일" checked={selection.isOn(file.path)} onChange={() => selection.toggle(file.path)} style={{ marginRight: 8 }} />}
-                {file.path} · {sizeLabel(file.size)}
-                {qa.find((item) => item.path === file.path)?.issues.map((issue, index) => (
-                  <span key={index} className="chip warn" title={`${issue.start.toFixed(1)}초부터`} style={{ marginLeft: 6 }}>
-                    {issue.type === "black" ? "검은 화면" : "멈춘 화면"} {issue.seconds.toFixed(1)}초
-                  </span>
-                ))}
-              </div>
-              <video controls preload="metadata" src={mediaUrl(props.project.id, file.path, file.mtimeMs)} />
-              <ItemTools props={props} file={file} kind={null} />
-            </div>
-          ))}
-        </div>
+        <div className="video-cards">{clips.map(videoCard)}</div>
       )}
+      {playing && <VideoPlayer src={mediaUrl(props.project.id, playing, videos.find((file) => file.path === playing)?.mtimeMs)} title={playing} onClose={() => setPlaying(null)} />}
+      {joinOpen && <JoinDialog projectId={props.project.id} files={clips.filter((file) => selection.isOn(file.path))} busy={joining} onStart={(order, options) => void join(order, options)} onRemove={(path) => selection.isOn(path) && selection.toggle(path)} onClose={() => setJoinOpen(false)} />}
+      {versionDialog.dialog}
     </div>
   );
 }

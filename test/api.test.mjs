@@ -31,7 +31,7 @@ test("global settings: defaults, partial update, validation errors leave the fil
   withServer(async (call) => {
     const initial = await call("GET", "/api/settings");
     assert.equal(initial.status, 200);
-    assert.equal(initial.body.settings.defaults.sizeId, "s169-1080");
+    assert.equal(initial.body.settings.defaults.aspect, "16x9");
 
     const updated = await call("PUT", "/api/settings", { video: { finalFps: 30 } });
     assert.equal(updated.status, 200);
@@ -76,17 +76,30 @@ test("project flow: create, save with conflict check, settings overrides", () =>
     assert.equal((await call("GET", "/api/projects/%E0%A4%A")).status, 400);
 
     await call("PUT", "/api/settings", { video: { finalFps: 30 } });
-    const view = await call("PUT", `/api/projects/${id}/settings`, { set: { defaults: { sizeId: "s916-1080" } } });
+    const view = await call("PUT", `/api/projects/${id}/settings`, { set: { defaults: { aspect: "21x9" } } });
     assert.equal(view.status, 200);
-    assert.equal(view.body.effective.defaults.sizeId, "s916-1080");
+    assert.equal(view.body.effective.defaults.aspect, "21x9");
     assert.equal(view.body.effective.video.finalFps, 30);
-    assert.deepEqual(view.body.overridden, ["defaults.sizeId"]);
+    assert.deepEqual(view.body.overridden, ["defaults.aspect"]);
 
-    const reset = await call("PUT", `/api/projects/${id}/settings`, { unset: ["defaults.sizeId"] });
-    assert.equal(reset.body.effective.defaults.sizeId, "s169-1080");
+    const reset = await call("PUT", `/api/projects/${id}/settings`, { unset: ["defaults.aspect"] });
+    assert.equal(reset.body.effective.defaults.aspect, "16x9");
     assert.deepEqual(reset.body.overridden, []);
 
     const list = await call("GET", "/api/projects");
     assert.equal(list.body.projects.length, 1);
     assert.equal((await call("GET", "/api/projects/no-such-project")).status, 404);
+  }));
+
+test("the file browser lists a folder and adds the open project as a shortcut", () =>
+  withServer(async (call) => {
+    const { body } = await call("POST", "/api/projects", { title: "browse" });
+    const listed = await call("GET", `/api/fs?dir=${encodeURIComponent(os.tmpdir())}&project=${encodeURIComponent(body.project.id)}`);
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.path, path.resolve(os.tmpdir()));
+    const labels = listed.body.shortcuts.map((item) => item.label);
+    assert.ok(labels.includes("현재 프로젝트"));
+    assert.ok(listed.body.shortcuts.find((item) => item.label === "현재 프로젝트").path.endsWith(body.project.id));
+    assert.equal((await call("GET", "/api/fs")).status, 200);
+    assert.equal((await call("GET", "/api/fs?dir=relative")).status, 400);
   }));

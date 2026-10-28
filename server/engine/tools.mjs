@@ -83,9 +83,8 @@ export async function runTool({ tool, inputs, connections, ffmpegPath = "", sign
     },
     ensure: deps.ensure ?? (async (name) => {
       await ensureService(name, connections, { signal });
-      // One 12 GB card serves all three ComfyUI servers: release the others before this one loads its models.
-      // A service that shares this one's address (rtx on the Rev0 server) is the same server, so it stays loaded.
-      for (const other of ["comfy", "ref", "rtx"]) if (other !== name && connections[`${other}Url`] && connections[`${other}Url`] !== connections[`${name}Url`]) await createComfy(connections[`${other}Url`]).free();
+      // One 12 GB card serves both ComfyUI servers: release the other before this one loads its models.
+      for (const other of ["comfy", "ref"]) if (other !== name && connections[`${other}Url`] && connections[`${other}Url`] !== connections[`${name}Url`]) await createComfy(connections[`${other}Url`]).free();
     }),
     capture: deps.capture ?? runCapture,
     fetchImpl: deps.fetchImpl ?? fetch,
@@ -139,18 +138,18 @@ async function finishVideo(context, source, dest, { keepAudio, audio, fit }) {
   }
 }
 
-/** The RTX 2-pass upscale on the second ComfyUI. The main server is busy while the node runs, so waiting is patient. */
+/** The RTX 2-pass upscale on the second (Rev0) ComfyUI. The main server is busy while the node runs, so waiting is patient. */
 async function rtxUpscale(context, source, dest, scale) {
-  await context.ensure("rtx");
-  const rtx = context.comfy(context.connections.rtxUrl);
+  await context.ensure("ref");
+  const rtx = context.comfy(context.connections.refUrl);
   const name = await rtx.upload(source, path.basename(source));
   const prefix = `RTXvsom_${path.basename(source, path.extname(source))}`;
   const promptId = await rtx.submit(rtxGraph({ video: name, scale, prefix }));
   const entry = await rtx.wait(promptId, { timeoutMs: 900_000, signal: context.signal, pollMs: 3000 });
   const item = (entry.outputs?.["3"]?.gifs ?? [])[0];
   if (!item) throw new ToolError("RTX 확대의 결과 파일이 없습니다.");
-  // The desktop ComfyUI writes into a known folder; copying is faster and does not depend on its web server being free.
-  const local = path.join(context.connections.rtxOutputDir, item.subfolder ?? "", item.filename);
+  // The Rev0 ComfyUI writes into a known folder; copying is faster and does not depend on its web server being free.
+  const local = path.join(context.connections.refDir, "ComfyUI", "output", item.subfolder ?? "", item.filename);
   if (await exists(local)) await copyFile(local, dest);
   else await rtx.download(item, dest);
 }

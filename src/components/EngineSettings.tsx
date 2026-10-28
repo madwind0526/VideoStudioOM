@@ -116,9 +116,9 @@ export default function EngineSettings({ get, set, errors }: Props) {
       <div className="field wide" key={path}>
         <label>LoRA</label>
         {list.map((lora, index) => (
-          <div className="row" style={{ gap: 8, marginBottom: 6 }} key={index}>
-            <input type="text" list="engine-lora-list" aria-label="LoRA 이름" value={lora.name} placeholder="LoRA 파일 이름" onChange={(event) => update(index, { name: event.target.value })} style={{ flex: 1 }} />
-            <input type="number" aria-label="강도" step={0.05} min={-4} max={4} value={lora.strength} onChange={(event) => update(index, { strength: Number(event.target.value) })} style={{ width: 90 }} />
+          <div className="lora-row" key={index}>
+            <input type="text" list="engine-lora-list" aria-label="LoRA 이름" value={lora.name} placeholder="LoRA 파일 이름" onChange={(event) => update(index, { name: event.target.value })} style={{ flex: 1, minWidth: 0 }} />
+            <input type="number" aria-label="강도" title="강도(가중치)" step={0.05} min={-4} max={4} value={lora.strength} onChange={(event) => update(index, { strength: Number(event.target.value) })} />
             <button className="icon-btn" type="button" aria-label="LoRA 지우기" onClick={() => set(path, list.filter((_, i) => i !== index))}>
               <Trash2 size={16} />
             </button>
@@ -137,28 +137,34 @@ export default function EngineSettings({ get, set, errors }: Props) {
   return (
     <>
       <datalist id="engine-lora-list">{models?.loras.map((name) => <option key={name} value={name} />)}</datalist>
-      <h3 className="sub-head">이미지</h3>
-      <div className="fields">
-        {workflowRow("engine.image.workflowT2I", "T2I 워크플로", "비워 두면 기본(Krea 2 Turbo)")}
-        {workflowRow("engine.image.workflowI2I", "I2I 워크플로", "비워 두면 기본 워크플로")}
-        {workflowRow("engine.image.workflowSheet", "캐릭터 시트 워크플로", "비워 두면 기본(Krea 2 + 시트 프롬프트)")}
-        {modelRow("engine.image.diffusion", "diffusion 모델", models?.diffusion)}
-        {modelRow("engine.image.textEncoder", "text encoder", models?.textEncoder)}
-        {modelRow("engine.image.vae", "VAE", models?.vae)}
-        {loraRows("engine.image.loras")}
-      </div>
-      <h3 className="sub-head">영상</h3>
-      <div className="fields">
-        {workflowRow("engine.video.workflowT2V", "T2V 워크플로", "비워 두면 기본(MiniMax H3)")}
-        {workflowRow("engine.video.workflowI2V", "I2V 워크플로 (FL2V·S2V 포함)", "비워 두면 기본(MiniMax H3)")}
-        {workflowRow("engine.video.workflowR2V", "R2V 워크플로", "비워 두면 기본(MiniMax H3 R2V)")}
-        {modelRow("engine.video.diffusion", "diffusion 모델", models?.diffusion)}
-        {modelRow("engine.video.textEncoder", "text encoder", models?.textEncoder)}
-        {modelRow("engine.video.vae", "VAE", models?.vae)}
-        {loraRows("engine.video.loras")}
+      <div className="engine-cols">
+        <div>
+          <h3 className="sub-head">이미지</h3>
+          <div className="fields stack">
+            {workflowRow("engine.image.workflowT2I", "T2I 워크플로", "비워 두면 기본(Krea 2 Turbo)")}
+            {workflowRow("engine.image.workflowI2I", "I2I 워크플로", "비워 두면 기본 워크플로")}
+            {workflowRow("engine.image.workflowSheet", "캐릭터 시트 워크플로", "비워 두면 기본(Krea 2 + 시트 프롬프트)")}
+            {modelRow("engine.image.diffusion", "diffusion 모델", models?.diffusion)}
+            {modelRow("engine.image.textEncoder", "text encoder", models?.textEncoder)}
+            {modelRow("engine.image.vae", "VAE", models?.vae)}
+            {loraRows("engine.image.loras")}
+          </div>
+        </div>
+        <div>
+          <h3 className="sub-head">영상</h3>
+          <div className="fields stack">
+            {workflowRow("engine.video.workflowT2V", "T2V 워크플로", "비워 두면 기본(MiniMax H3)")}
+            {workflowRow("engine.video.workflowI2V", "I2V 워크플로 (FL2V·S2V 포함)", "비워 두면 기본(MiniMax H3)")}
+            {workflowRow("engine.video.workflowR2V", "R2V 워크플로", "비워 두면 기본(MiniMax H3 R2V)")}
+            {modelRow("engine.video.diffusion", "diffusion 모델", models?.diffusion)}
+            {modelRow("engine.video.textEncoder", "text encoder", models?.textEncoder)}
+            {modelRow("engine.video.vae", "VAE", models?.vae)}
+            {loraRows("engine.video.loras")}
+          </div>
+        </div>
       </div>
       <h3 className="sub-head">업스케일</h3>
-      <div className="fields">{modelRow("engine.upscale.model", "업스케일 모델", models?.upscale)}</div>
+      <div className="fields stack">{modelRow("engine.upscale.model", "업스케일 모델", models?.upscale)}</div>
       {picking && (
         <FileNavigator
           title="워크플로 선택"

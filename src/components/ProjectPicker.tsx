@@ -1,5 +1,5 @@
 import { Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectSummary } from "../api";
 import ProjectCard from "./ProjectCard";
 import { compareProjects, DEFAULT_SORT, nextSort, sortOptions, type SortState } from "./projectSort";
@@ -10,20 +10,31 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onFavorite: (id: string, favorite: boolean) => void;
+  onDelete: (id: string) => void;
   onNew: () => void;
 }
 
 /** The middle column of the project screen: project cards in one scrolling vertical list. */
-export default function ProjectPicker({ projects, selectedId, onSelect, onFavorite, onNew }: Props) {
+export default function ProjectPicker({ projects, selectedId, onSelect, onFavorite, onDelete, onNew }: Props) {
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [query, setQuery] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = projects.filter((project) => !needle || `${project.title} ${project.description}`.toLowerCase().includes(needle));
     return [...list].sort(compareProjects(sort));
   }, [projects, sort, query]);
+
+  // Opening a project from anywhere brings its card into view in the list (a search that hides it is cleared first).
+  useEffect(() => {
+    if (!selectedId || projects.length === 0) return;
+    if (!visible.some((project) => project.id === selectedId)) return setQuery("");
+    scrollRef.current?.querySelector(".pcard.current")?.scrollIntoView({ block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, projects.length]);
 
   return (
     <aside className="proj-list" aria-label="프로젝트 목록">
@@ -42,7 +53,7 @@ export default function ProjectPicker({ projects, selectedId, onSelect, onFavori
         </label>
         <SortBar options={sortOptions(sort)} value={sort.group} onChange={(group) => setSort((current) => nextSort(current, group))} />
       </div>
-      <div className="proj-list-scroll">
+      <div className="proj-list-scroll" ref={scrollRef}>
         {visible.length === 0 ? (
           <p className="muted" style={{ padding: "8px 4px", fontSize: 12 }}>
             {projects.length === 0 ? "아직 프로젝트가 없어요." : "검색 결과가 없어요."}
@@ -58,6 +69,7 @@ export default function ProjectPicker({ projects, selectedId, onSelect, onFavori
               onOpenDetail={onSelect}
               onWork={onSelect}
               onFavorite={onFavorite}
+              onDelete={onDelete}
             />
           ))
         )}

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { CODEC_IDS, CODECS } from "./codecs.mjs";
 import { ffmpegFor, trimOf } from "./concat.mjs";
 import { HttpError } from "./http.mjs";
 import { killTree } from "./proc.mjs";
@@ -162,15 +163,7 @@ export async function checkClip(ffmpegPath, file) {
   return { durationSeconds: duration, issues };
 }
 
-const CODECS = {
-  h264: { label: "H.264 (CPU)", encoder: "libx264", args: ["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"] },
-  h265: { label: "H.265 (CPU)", encoder: "libx265", args: ["-crf", "21", "-preset", "medium", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
-  nvenc_h264: { label: "H.264 (NVENC)", encoder: "h264_nvenc", args: ["-cq", "19", "-preset", "p5", "-pix_fmt", "yuv420p"] },
-  nvenc_h265: { label: "H.265 (NVENC)", encoder: "hevc_nvenc", args: ["-cq", "21", "-preset", "p5", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
-  nvenc_av1: { label: "AV1 (NVENC)", encoder: "av1_nvenc", args: ["-cq", "26", "-preset", "p5", "-pix_fmt", "yuv420p"] },
-};
-export const CODEC_IDS = Object.keys(CODECS);
-export const codecLabels = () => Object.fromEntries(Object.entries(CODECS).map(([id, codec]) => [id, codec.label]));
+export { CODEC_IDS, codecLabels } from "./codecs.mjs";
 
 /** Which of the codecs this ffmpeg can encode (a missing NVENC or an old build leaves it out). */
 export async function availableCodecs(ffmpegPath) {

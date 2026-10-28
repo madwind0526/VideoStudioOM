@@ -102,6 +102,9 @@ export default function SettingField({ field, value, onChange, error, badge, onR
     case "chain":
       control = <ChainEditor value={Array.isArray(value) ? (value as string[]) : []} onChange={onChange} />;
       break;
+    case "textarea":
+      control = <textarea id={id} rows={16} value={String(value ?? "")} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} spellCheck={false} />;
+      break;
     default:
       control = <input id={id} type="text" value={String(value ?? "")} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} />;
   }

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
+import { CODECS } from "./codecs.mjs";
 import { HttpError } from "./http.mjs";
 import { buildMixFilter } from "./mixfilter.mjs";
 import { ffprobeFor } from "./probe.mjs";
@@ -48,7 +49,7 @@ function run(command, args, { timeoutMs = 600_000 } = {}) {
 /** Seconds cut off the end of clip `i`: one number for every clip, or one per clip. */
 export const trimOf = (trimEnd, i) => Number(Array.isArray(trimEnd) ? trimEnd[i] : trimEnd) || 0;
 
-export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = [], trimEnd = 0, seamGains = [], seamRamp = 3 }) {
+export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = [], trimEnd = 0, seamGains = [], seamRamp = 3, videoCodec = "h264" }) {
   if (!Array.isArray(inputs) || inputs.length === 0) throw new HttpError(400, "이어 붙일 파일을 고르세요.");
   const ffmpeg = ffmpegFor(ffmpegPath);
   const ffprobe = ffprobeFor(ffmpegPath);
@@ -90,7 +91,9 @@ export async function concatMedia({ ffmpegPath, kind, inputs, output, gains = []
     const joined = inputs.map((_, i) => `[v${i}]${audible ? `[a${i}]` : ""}`).join("");
     filter = `${parts.join(";")};${joined}concat=n=${inputs.length}:v=1:a=${audible ? 1 : 0}[v]${audible ? "[a]" : ""}`;
     maps = ["-map", "[v]", ...(audible ? ["-map", "[a]"] : [])];
-    codec = ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p", ...(audible ? ["-c:a", "aac"] : [])];
+    const choice = CODECS[videoCodec];
+    if (!choice) throw new HttpError(400, "지원하지 않는 코덱입니다.");
+    codec = ["-c:v", choice.encoder, ...choice.args, ...(audible ? ["-c:a", "aac"] : [])];
   }
   const ext = path.extname(output);
   const temp = `${output.slice(0, -ext.length)}.part${ext}`;

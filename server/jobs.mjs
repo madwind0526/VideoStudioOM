@@ -18,8 +18,9 @@ const COMFY_TOOLS = new Set(["comfyui_krea_image", "h3_local_video", "h3_referen
  * that fails or is cancelled (the rest can be resumed).
  * `getConfig()` returns { connections, ffmpegPath }; `run` is the tool runner (tests replace it).
  * `onFinished(job)` is called after every finished job (the server uses it to save how a file was made).
+ * `onIdle()` is called when a job ended and nothing else follows (the server frees the VRAM the engines keep).
  */
-export function createJobQueue({ dir, getConfig, events, onFinished, run = runTool }) {
+export function createJobQueue({ dir, getConfig, events, onFinished, onIdle, run = runTool }) {
   const file = path.join(dir, "jobs.json");
   const mutex = createMutex();
   let history = [];
@@ -181,6 +182,7 @@ export function createJobQueue({ dir, getConfig, events, onFinished, run = runTo
       void persist();
       await afterJob(job, result);
       publish(job);
+      if (current === null) void Promise.resolve(onIdle?.()).catch(() => {});
     });
     return job;
   }

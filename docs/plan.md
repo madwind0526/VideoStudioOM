@@ -9,7 +9,7 @@
 | 프로젝트 | `E:\Claude\VideoStudioOM` (백엔드 4314, Vite dev 5184) |
 | 엔진 | `E:\Claude\OpenMontage` (venv: `.venv`, 도구: `tools/`, 프로젝트 데이터: `projects/<id>/`). 도구로만 쓰며 파이프라인/에이전트는 쓰지 않는다 |
 | 음악 | SongYUE2 `http://127.0.0.1:4311` (`C:\Claude\SongYUE2`). GPU 작업은 한 번에 하나, 진행 중이면 409 |
-| 이미지/영상 | ComfyUI 8190(SongYUE2 내장), RTX 확대용 8191(기본 ComfyUI). OpenMontage 도구가 필요할 때 자동으로 켠다 |
+| 이미지/영상 | ComfyUI 8190(SongYUE2 내장), Rev0 ComfyUI 8188(참조 영상·RTX 확대). OpenMontage 도구가 필요할 때 자동으로 켠다 |
 | LLM | MusicAutomation 방식의 텍스트 호출: claude-cli(기본) → codex-cli → opencode-cli → ollama (`RULES.md` P-01, P-02) |
 | 원칙 | 줄거리/시나리오/대본은 LLM 텍스트 호출, 단계마다 사람이 검토/수정/승인. OpenMontage는 제작 도구 |
 

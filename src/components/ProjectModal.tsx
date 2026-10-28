@@ -1,7 +1,8 @@
-import { Check, X } from "lucide-react";
+import { Check, Play, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type ProjectDetail } from "../api";
 import { formatDate, formatTime, stagesDone } from "../format";
+import VideoPlayer from "./VideoPlayer";
 
 type TabId = "story" | "scenario" | "script" | "images" | "videos";
 
@@ -52,6 +53,7 @@ export default function ProjectModal({ id, onClose, onWork }: Props) {
   const [texts, setTexts] = useState<Record<string, string | null>>({});
   const [tab, setTab] = useState<TabId>("story");
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
   const [error, setError] = useState("");
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -75,13 +77,13 @@ export default function ProjectModal({ id, onClose, onWork }: Props) {
   useEffect(() => {
     closeRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || playing) return; // the player closes itself first
       if (lightbox) setLightbox(null);
       else onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [lightbox, onClose]);
+  }, [lightbox, playing, onClose]);
 
   const scenes = rowsOf(texts[TEXT_FILES.scenario], "scenes");
   const sections = rowsOf(texts[TEXT_FILES.script], "sections");
@@ -212,14 +214,18 @@ export default function ProjectModal({ id, onClose, onWork }: Props) {
 
           {tab === "videos" &&
             (videos.length > 0 ? (
-              <div className="videos">
+              <div className="video-cards">
                 {videos.map((file) => (
-                  <div key={file.path}>
-                    <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>
-                      {file.path}
-                    </div>
-                    <video controls preload="metadata" src={mediaUrl(id, file.path)} />
-                  </div>
+                  <button key={file.path} className="video-card" type="button" title={file.path} onClick={() => setPlaying(file.path)}>
+                    <span className="vthumb">
+                      {/* The first frame stands in as the thumbnail; a click opens the pop-up player. */}
+                      <video src={`${mediaUrl(id, file.path, file.mtimeMs)}#t=0.1`} preload="metadata" muted playsInline />
+                      <span className="play">
+                        <Play size={30} fill="currentColor" />
+                      </span>
+                    </span>
+                    <span className="vname">{file.path.replace(/^(assets\/video|renders)\//, "")}</span>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -236,6 +242,8 @@ export default function ProjectModal({ id, onClose, onWork }: Props) {
           </button>
         </div>
       </div>
+
+      {playing && <VideoPlayer src={mediaUrl(id, playing, videos.find((file) => file.path === playing)?.mtimeMs)} title={playing} onClose={() => setPlaying(null)} />}
 
       {lightbox && (
         <button className="lightbox" type="button" aria-label="이미지 닫기" onClick={() => setLightbox(null)}>

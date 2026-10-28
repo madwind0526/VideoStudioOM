@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary } from "./api";
 import { BRAND } from "./brand";
 import Logo from "./components/Logo";
+import ErrorBoundary from "./components/ErrorBoundary";
 import ProjectModal from "./components/ProjectModal";
+import VideoPlayer from "./components/VideoPlayer";
 import ResourceBar from "./components/ResourceBar";
 import { setIn } from "./fields";
 import { LibraryPage, LikesPage } from "./pages/LibraryPage";
@@ -80,6 +82,7 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(() => remembered("currentProject"));
   const [recentIds, setRecentIds] = useState<string[]>(() => rememberedList("recentProjects"));
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [playerId, setPlayerId] = useState<string | null>(null);
   const [projectView, setProjectView] = useState<ProjectSettingsView | null>(null);
   const [message, setMessage] = useState("준비됨");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -99,6 +102,7 @@ export default function App() {
     const onHash = () => {
       setRoute(parseRoute());
       setDetailId(null); // a details window belongs to the page it was opened on
+      setPlayerId(null);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -159,7 +163,21 @@ export default function App() {
     if (openedId) select(openedId);
   }, [openedId, select]);
 
+  const playerProject = projects.find((project) => project.id === playerId);
+
   const openProject = (id: string, section: SectionId = "title") => go({ page: "project", id, section });
+
+  async function deleteProject(id: string) {
+    try {
+      await api("DELETE", `/api/projects/${encodeURIComponent(id)}`);
+      setMessage("프로젝트를 지웠습니다. (projects/.trash로 옮겨짐)");
+      // The project that was open is gone: back to the list.
+      if (route.page === "project" && route.id === id) go({ page: "projects" });
+      reload();
+    } catch (e) {
+      setMessage(e instanceof ApiError ? e.message : "프로젝트를 지우지 못했습니다.");
+    }
+  }
 
   async function toggleFavorite(id: string, favorite: boolean) {
     try {
@@ -255,13 +273,17 @@ export default function App() {
       </header>
 
       <main className="main">
+        {/* A crash inside one page keeps the menu and the status bar; moving to another page tries again. */}
+        <ErrorBoundary resetKey={hashOf(route)}>
         {route.page === "create" && (
           <StartPage
             projects={projects}
             currentId={currentId}
             view={projectView}
             onWork={(id) => openProject(id)}
-            onOpenDetail={select}
+            onOpenDetail={setDetailId}
+            onSelect={select}
+            onDelete={deleteProject}
             onFavorite={onFavorite}
             onCreated={(project) => {
               select(project.id);
@@ -285,19 +307,23 @@ export default function App() {
             onSection={(section) => route.page === "project" && openProject(route.id, section)}
             onNew={() => go({ page: "create" })}
             onFavorite={onFavorite}
+            onDelete={deleteProject}
             onChanged={reload}
             notify={setMessage}
           />
         )}
-        {route.page === "library" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onNew={() => go({ page: "create" })} />}
-        {route.page === "likes" && <LikesPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} />}
+        {route.page === "library" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} onNew={() => go({ page: "create" })} />}
+        {route.page === "likes" && <LikesPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} />}
         {route.page === "settings" && <SettingsPage notify={setMessage} onSaved={reload} />}
+        </ErrorBoundary>
       </main>
 
       <footer className="status">
         <span className="msg">{connected ? message : "서버에 연결할 수 없습니다. 연결을 다시 시도합니다."}</span>
         <span>{projects.length}개 프로젝트</span>
       </footer>
+
+      {playerProject?.video && <VideoPlayer src={mediaUrl(playerProject.id, playerProject.video)} poster={playerProject.poster ? mediaUrl(playerProject.id, playerProject.poster) : undefined} title={playerProject.title} onClose={() => setPlayerId(null)} />}
 
       {detailId && (
         <ProjectModal

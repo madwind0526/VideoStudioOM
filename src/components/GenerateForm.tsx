@@ -228,7 +228,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
           <div className="field">
             <label htmlFor="gen-duration">길이(초)</label>
             <input id="gen-duration" type="number" min={kind === "sfx" ? 1 : 2} max={kind === "sfx" ? 30 : 15} step={0.5} value={duration} onChange={(event) => setDuration(event.target.value)} />
-            {isVideo && <span className="hint">{size && `생성 ${size.generate.join("×")} → 최종 ${size.final.join("×")}. 5초 영상은 약 1분 걸립니다.`}</span>}
+            {isVideo && <span className="hint">{size && `영상 크기 ${size.generate.join("×")}. 5초 영상은 약 1분 걸립니다.`}</span>}
           </div>
         )}
       </div>

@@ -9,17 +9,19 @@ interface Props {
   onOpen: (id: string) => void;
   onOpenDetail: (id: string) => void;
   onFavorite: (id: string, favorite: boolean) => void;
+  onDelete: (id: string) => void;
+  onPlay: (id: string) => void;
   onNew: () => void;
 }
 
 /** Finished videos only. */
-export function LibraryPage({ projects, currentId, onOpen, onOpenDetail, onFavorite, onNew }: Props) {
+export function LibraryPage({ projects, currentId, onOpen, onOpenDetail, onFavorite, onDelete, onPlay, onNew }: Props) {
   return (
     <div className="page">
       <ProjectBoard
         kicker="나의 영상을 한곳에"
         title="라이브러리"
-        subtitle="완성된 동영상만 모아 봅니다. 카드를 누르면 바로 재생돼요."
+        subtitle="완성된 동영상만 모아 봅니다. 카드의 그림을 누르면 팝업 플레이어로 재생돼요."
         action={
           <button className="btn primary" type="button" onClick={onNew}>
             <Plus size={15} /> 새 영상 만들기
@@ -31,13 +33,15 @@ export function LibraryPage({ projects, currentId, onOpen, onOpenDetail, onFavor
         onWork={onOpen}
         onOpenDetail={onOpenDetail}
         onFavorite={onFavorite}
+        onDelete={onDelete}
+        onPlayPopup={onPlay}
       />
     </div>
   );
 }
 
 /** Finished videos marked as liked. */
-export function LikesPage({ projects, currentId, onOpen, onOpenDetail, onFavorite }: Omit<Props, "onNew">) {
+export function LikesPage({ projects, currentId, onOpen, onOpenDetail, onFavorite, onDelete, onPlay }: Omit<Props, "onNew">) {
   return (
     <div className="page">
       <ProjectBoard
@@ -50,6 +54,8 @@ export function LikesPage({ projects, currentId, onOpen, onOpenDetail, onFavorit
         onWork={onOpen}
         onOpenDetail={onOpenDetail}
         onFavorite={onFavorite}
+        onDelete={onDelete}
+        onPlayPopup={onPlay}
       />
     </div>
   );

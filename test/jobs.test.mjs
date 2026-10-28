@@ -294,3 +294,51 @@ test("work left over from a stopped server is offered for resume", async () => {
     await f.cleanup();
   }
 });
+
+test("API: a job made for `candidateOf` becomes another version of that file, the shown file stays", async () => {
+  const f = await fixture();
+  const projectsRoot = path.join(f.base, "projects");
+  const { port, token, stop } = await startServer({ port: 0, dataDir: f.dataDir, projectsRoot, runTool: fakeRun });
+  const call = async (method, url, body) => {
+    const res = await fetch(`http://127.0.0.1:${port}${url}`, { method, headers: { "content-type": "application/json", [TOKEN_HEADER]: token }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    await mkdir(path.join(f.project, "assets", "images"), { recursive: true });
+    await writeFile(path.join(f.project, "assets", "images", "a.png"), "first");
+    const record = { kind: "image", prompt: "second prompt" };
+    const started = await call("POST", "/api/jobs", { project: "demo", tool: "comfyui_krea_image", inputs: { output_path: "assets/versions/a-2.png" }, record, candidateOf: "assets/images/a.png" });
+    assert.equal(started.status, 202);
+    for (let i = 0; i < 100; i += 1) {
+      if (!(await call("GET", "/api/jobs")).body.current) break;
+      await sleep(50);
+    }
+    const { entry } = (await call("GET", "/api/projects/demo/versions?path=assets%2Fimages%2Fa.png")).body;
+    assert.deepEqual(entry.versions.map((item) => [item.id, item.file]), [["v1", "assets/images/a.png"], ["v2", "assets/versions/a-2.png"]]);
+    assert.equal(entry.versions[1].record.prompt, "second prompt");
+    assert.equal(await readFile(path.join(f.project, "assets", "images", "a.png"), "utf8"), "first");
+
+    const chosen = await call("POST", "/api/projects/demo/versions", { path: "assets/images/a.png", select: "v2" });
+    assert.equal(chosen.body.entry.selected, "v2");
+    assert.equal(await readFile(path.join(f.project, "assets", "images", "a.png"), "utf8"), "ok");
+  } finally {
+    await stop();
+    await f.cleanup();
+  }
+});
+
+test("onIdle runs once when the queue is empty, not between the jobs of a batch", async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), "vsom-idle-"));
+  try {
+    let idles = 0;
+    const queue = createJobQueue({ dir: path.join(base, "runtime"), getConfig: async () => ({ connections: { comfyUrl: "http://127.0.0.1:9", songyueUrl: "http://127.0.0.1:9" }, ffmpegPath: "" }), events: { broadcast() {} }, run: fakeRun, onIdle: () => void (idles += 1) });
+    const item = (name) => ({ tool: "comfyui_krea_image", inputs: { output_path: path.join(base, name) }, allowRoot: [base], meta: { batch: true } });
+    await queue.startBatch([item("a.png"), item("b.png"), item("c.png")]);
+    for (let i = 0; i < 200 && (idles === 0 || (await queue.list()).current); i += 1) await sleep(50);
+    await sleep(100);
+    assert.equal((await queue.list()).history.filter((job) => job.status === "done").length, 3);
+    assert.equal(idles, 1);
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

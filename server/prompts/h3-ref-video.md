@@ -17,12 +17,13 @@ retention_analysis:
 
 detailed_description:
 - First, one or two English sentences that set the overall style and light ("The target video is a high-end fashion editorial in a clean white studio with soft diffused light."), then the shots in playback order.
-- [Shot 1] has no timestamp. Later shots start "[Shot 2] At 00:03.500, ..." with strictly increasing times inside the clip length. A cut must bring new information; if only distance or angle changes use camera motion instead. Short clips are normally one or two shots.
+- [Shot 1] has no timestamp. Later shots start "[Shot 2] At 00:03.500, ..." with strictly increasing times inside the clip length. A cut must bring new information; if only distance or angle changes use camera motion instead. Short clips are normally one or two shots. Decide the clip length first, then place the cuts: about one cut per 3 seconds at most, every shot at least 3 seconds long.
 - Insert the labels where they apply and keep each label's meaning for the whole prompt: at the first clear appearance describe the referenced person's key features, position in the frame and action ("<Subject 1>, the woman with long wavy black hair in the white lace gown from <Picture 1>, stands at the centre ..."); later shots just reuse the label.
 - A concrete frame anchor is written as "the shot begins from <Picture 2>".
 - Describe only what is visible or audible, in concrete observable terms; no mood words as a substitute for visual cause. Phrase everything positively (what happens, never what to avoid; no "does not move", "stays still", "freezes").
 - Camera motion as a natural sentence with type + amplitude + speed ("The camera pushes in with small amplitude at slow speed toward ..."); types: Zoom In/Out, Push In/Pull Out, Pan Left/Right, Truck Left/Right, Tilt Up/Down, Pedestal Up/Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly/Strongly, POV, Roll Clockwise/Counterclockwise.
-- Someone who speaks or sings gets an ID (S1), (S2) and the label: "<Subject 1> (S1) says, <d>[Korean] ...</d>". Put only the language tag and the exact words inside <d>; add dialogue only when the idea quotes words.
+- Someone who speaks or sings gets an ID (S1), (S2) and the label: "<Subject 1> (S1) says, <d>[Korean] ...</d>". Put only the language tag and the exact words inside <d>; add dialogue only when the idea quotes words. One speaker per shot gives the cleanest lip sync; speech runs about 2.5 words per second, so keep the words within the shot's length and leave silence at both ends. A voiceover is written "<Subject 1> (S1) says in an off-screen voiceover: <d>[English] ...</d> while the lips remain completely closed". Sounds the characters make or hear (singing, a radio) are written here in the description, not in the soundscape or music sections.
+- Pin people by screen position ("on the left", "in the centre") and refer back to earlier shots ("<Subject 1> from [Shot 1]"). A repeating event (a rotating lamp, a flickering light) gives a long take a time anchor. Text visible on screen goes in double quotes, verbatim, large and high-contrast.
 - Length: about 350-500 English words for a clip with several actions, shorter for a very simple one. The amount of action must fit the clip length. The clip settles on a stable arrangement about two seconds before its end.
 - Keep the continuity rules: restate a character's referenced look word for word, open by holding the opening arrangement for about a second with a small natural movement, add one physical lasting change in the action, and leave dialogue out of clips shorter than about 10 seconds unless the idea quotes it.
 
@@ -30,7 +31,7 @@ overall_soundscape:
 - 1-4 English sentences in one paragraph: ambience, physical action sounds, non-verbal human sounds of the whole video. No dialogue, singing or music here. N/A only for requested silence.
 
 non_diegetic_music:
-- 1-3 English sentences: the score only the audience hears (instruments, tempo, dynamics, no abstract mood words). N/A when there is none.
+- 1-3 English sentences: the score only the audience hears (instruments, tempo, dynamics, no abstract mood words: "a sustained low cello note held under the dialogue", not "tense music"). N/A when there is none; grounded, realistic scenes usually sound better without one.
 
 STORY BIBLE / CONTEXT rules:
 - Lines under STORY BIBLE are authoritative: repeat the visual style in the style sentence and each named character's description word for word inside its <Subject N> line.

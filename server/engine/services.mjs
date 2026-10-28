@@ -10,20 +10,12 @@ const portOf = (url) => new URL(url).port || "80";
  * The local services the tools depend on and how to start them when they are not running:
  *   songyue - SongYUE2 backend (music, sound effects, speech engine files)
  *   comfy   - SongYUE2's ComfyUI (Krea 2 Turbo, MiniMax H3), the main generator
- *   ref     - the Rev0 portable ComfyUI (H3 latent upscaler, Deno nodes) for two-stage reference video
- *   rtx     - the main ComfyUI desktop install (RTX 2-pass upscale nodes)
+ *   ref     - the Rev0 portable ComfyUI: two-stage reference video (H3 latent upscaler, Deno nodes) and the RTX 2-pass upscale
  * `connections` is settings.connections.
  */
 export function serviceSpecs(connections) {
   const songyue = connections.songyueDir;
   const venvPython = (root) => path.join(root, ".venv", "Scripts", "python.exe");
-  const specs = baseSpecs(connections, songyue, venvPython);
-  // Pointing rtxUrl at the Rev0 address makes that one server do the RTX upscale too (it has the same nodes).
-  if (connections.rtxUrl === connections.refUrl) specs.rtx = specs.ref;
-  return specs;
-}
-
-function baseSpecs(connections, songyue, venvPython) {
   return {
     songyue: {
       url: `${connections.songyueUrl}/api/health`,
@@ -47,14 +39,6 @@ function baseSpecs(connections, songyue, venvPython) {
       args: ["-I", "-W", "ignore::FutureWarning", "ComfyUI/main.py", "--windows-standalone-build", "--listen", "127.0.0.1", "--port", portOf(connections.refUrl), "--disable-auto-launch"],
       cwd: connections.refDir,
       log: path.join(connections.refDir, "comfy_videostudio.log"),
-      waitSeconds: 180,
-    },
-    rtx: {
-      url: `${connections.rtxUrl}/system_stats`,
-      command: venvPython(connections.rtxRoot),
-      args: ["main.py", "--listen", "127.0.0.1", "--port", portOf(connections.rtxUrl), "--disable-auto-launch", "--base-directory", connections.rtxRoot],
-      cwd: connections.rtxApp,
-      log: path.join(connections.rtxRoot, "comfy_videostudio.log"),
       waitSeconds: 180,
     },
   };

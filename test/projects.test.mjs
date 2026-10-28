@@ -116,20 +116,20 @@ test("project settings: validate, merge, unset back to the global value", async 
     const { id } = await store.create("demo");
     assert.deepEqual(await store.getSettings(id), {});
 
-    await store.updateSettings(id, { set: { defaults: { sizeId: "s916-1080" }, video: { finalFps: 30 } } });
+    await store.updateSettings(id, { set: { defaults: { aspect: "21x9" }, video: { finalFps: 30 } } });
     await store.updateSettings(id, { set: { llm: { provider: "codex-cli" } } });
     assert.deepEqual(await store.getSettings(id), {
-      defaults: { sizeId: "s916-1080" },
+      defaults: { aspect: "21x9" },
       video: { finalFps: 30 },
       llm: { provider: "codex-cli" },
     });
 
-    await assert.rejects(store.updateSettings(id, { set: { defaults: { sizeId: "bad" } } }), { status: 400 });
+    await assert.rejects(store.updateSettings(id, { set: { defaults: { aspect: "bad" } } }), { status: 400 });
     await assert.rejects(store.updateSettings(id, { set: { nope: 1 } }), { status: 400 });
-    assert.equal((await store.getSettings(id)).defaults.sizeId, "s916-1080");
+    assert.equal((await store.getSettings(id)).defaults.aspect, "21x9");
 
     const after = await store.updateSettings(id, { unset: ["video.finalFps", "llm.provider"] });
-    assert.deepEqual(after, { defaults: { sizeId: "s916-1080" } });
+    assert.deepEqual(after, { defaults: { aspect: "21x9" } });
   } finally {
     await cleanup();
   }
@@ -159,6 +159,37 @@ test("concurrent saves are serialized: exactly one wins", async () => {
     ]);
     assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
     assert.equal(results.filter((r) => r.status === "rejected")[0].reason.status, 409);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a card plays the final video, else the newest render, else the newest clip", async () => {
+  const { root, store, cleanup } = await setup();
+  try {
+    const { id } = await store.create("demo");
+    assert.equal((await store.get(id)).video, null);
+    const dir = path.join(root, id);
+    await writeFile(path.join(dir, "assets", "video", "clip-a.mp4"), "x");
+    assert.equal((await store.get(id)).video, "assets/video/clip-a.mp4");
+    await writeFile(path.join(dir, "renders", "export.mp4"), "x");
+    assert.equal((await store.get(id)).video, "renders/export.mp4");
+    await writeFile(path.join(dir, "renders", "final.mp4"), "x");
+    assert.equal((await store.get(id)).video, "renders/final.mp4");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("removing a project moves it into .trash and it is no longer listed", async () => {
+  const { root, store, cleanup } = await setup();
+  try {
+    const { id } = await store.create("demo");
+    await store.remove(id);
+    assert.deepEqual(await store.list(), []);
+    await assert.rejects(store.get(id), { status: 404 });
+    const kept = await readFile(path.join(root, ".trash", (await (await import("node:fs/promises")).readdir(path.join(root, ".trash")))[0], "project.json"), "utf8");
+    assert.match(kept, /demo/);
   } finally {
     await cleanup();
   }

@@ -2,41 +2,44 @@
 // Global values live in data/settings.json (Settings screen, changed rarely). Per-project values live
 // in studio/settings.json (start page, changed often) and only hold the keys that differ.
 
-// Video size presets: the size the video model renders (`generate`) and the size of the finished file
-// (`final`); the RTX pass scales one into the other. Every side is a multiple of 32. Only the 16:9 1080p
-// pair was tried end to end (the h3_local_video defaults of the old OpenMontage engine); the others are untested until P5.
-export const SIZE_PRESETS = [
-  { id: "s169-1080", group: "가로 16:9", label: "1080p (1920×1088)", generate: [736, 416], final: [1920, 1088], tested: true },
-  { id: "s169-720", group: "가로 16:9", label: "720p (1280×704)", generate: [736, 416], final: [1280, 704], tested: false },
-  { id: "s169-draft", group: "가로 16:9", label: "시안 (736×416, 확대 없음)", generate: [736, 416], final: [736, 416], tested: false },
-  { id: "s219-cinema", group: "와이드 21:9", label: "시네마 (1792×768)", generate: [896, 384], final: [1792, 768], tested: false },
-  { id: "s43-960", group: "가로 4:3", label: "960p (1280×960)", generate: [640, 480], final: [1280, 960], tested: false },
-  { id: "s916-1080", group: "세로 9:16", label: "쇼츠·릴스 1080p (1088×1920)", generate: [416, 736], final: [1088, 1920], tested: false },
-  { id: "s916-720", group: "세로 9:16", label: "720p (704×1280)", generate: [416, 736], final: [704, 1280], tested: false },
-  { id: "s45-1280", group: "세로 4:5", label: "인스타 (1024×1280)", generate: [512, 640], final: [1024, 1280], tested: false },
-  { id: "s34-1280", group: "세로 3:4", label: "1280p (960×1280)", generate: [480, 640], final: [960, 1280], tested: false },
-  { id: "s11-1080", group: "정사각 1:1", label: "1080 (1088×1088)", generate: [576, 576], final: [1088, 1088], tested: false },
-  { id: "s11-720", group: "정사각 1:1", label: "720 (704×704)", generate: [576, 576], final: [704, 704], tested: false },
+// Video size = the size the video model renders (`generate`): a pixel budget x an aspect ratio, each side a multiple of 32.
+// Nothing is enlarged afterwards for now (the finished size is the generated size). "custom" in place of a ratio uses
+// `customSize.generate` as typed.
+export const SIZE_MEGAPIXELS = [0.3, 0.5, 0.7, 1, 1.5];
+export const ASPECTS = [
+  { id: "16x9", label: "16:9", w: 16, h: 9 },
+  { id: "21x9", label: "21:9", w: 21, h: 9 },
+  { id: "4x3", label: "4:3", w: 4, h: 3 },
+  { id: "5x4", label: "5:4", w: 5, h: 4 },
+  { id: "1x1", label: "1:1", w: 1, h: 1 },
 ];
+// A ratio is written wide (16:9); "portrait" turns it around (9:16).
+export const ORIENTATIONS = ["landscape", "portrait"];
 export const CUSTOM_SIZE_ID = "custom";
 export const VIDEO_MODES = ["T2V", "I2V", "FL2V", "R2V"];
 export const AUDIO_SOURCES = ["input", "songyue", "h3", "s2v"];
 export const IMAGE_MODELS = ["krea2-turbo", "h3-still"];
 export const UPSCALES = ["rtx-2pass", "none", "lanczos"];
+// Same ids as server/codecs.mjs (a test keeps them equal).
+export const VIDEO_CODECS = ["h264", "h265", "nvenc_h264", "nvenc_h265", "nvenc_av1"];
 export const MUSIC_FORMATS = ["wav", "flac", "mp3", "mp4"];
 export const LLM_PROVIDERS = ["claude-cli", "codex-cli", "opencode-cli", "ollama"];
 
-// Sizes are [width, height]. `sizeId` picks a preset from SIZE_PRESETS or "custom", which uses `customSize`.
+// Sizes are [width, height]. `sizeMegapixels`, `aspect` and `orientation` give the video size; aspect "custom" uses `customSize`.
 export const DEFAULTS = {
   defaults: {
-    sizeId: "s169-1080",
-    customSize: { generate: [736, 416], final: [1920, 1088] },
+    sizeMegapixels: 1,
+    aspect: "16x9",
+    orientation: "landscape",
+    customSize: { generate: [736, 416] },
     durationSeconds: 60,
     videoMode: "I2V",
     audioSource: "input",
+    // Project path of the song picked for audioSource "input" (set per project on the start page).
+    songFile: "",
     imageModel: "krea2-turbo",
   },
-  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3 },
+  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3, codec: "h264", freeVramWhenIdle: true },
   audio: { musicFormat: "flac", voice: { tool: "qwen3_tts", name: "Sohee", language: "ko" } },
   llm: {
     provider: "claude-cli",
@@ -44,20 +47,18 @@ export const DEFAULTS = {
     model: "",
     ollama: { endpoint: "http://127.0.0.1:11434", model: "" },
     timeoutSec: 180,
+    // System prompt of the character-sheet prompt maker. Empty means the bundled server/prompts/character-sheet.md.
+    sheetPrompt: "",
   },
   connections: {
     songyueUrl: "http://127.0.0.1:4311",
     comfyUrl: "http://127.0.0.1:8190",
     // Where SongYUE2 lives (its backend, its ComfyUI with Krea and H3, its speech engine).
     songyueDir: "C:\\Claude\\SongYUE2",
-    // The second ComfyUI with the RTX upscale nodes: address, install folder, program folder and where it writes results.
-    // The third ComfyUI (Rev0 portable) with the H3 latent upscaler and the Deno nodes: the two-stage reference video and character sheet run here.
+    // The second ComfyUI (Rev0 portable): the two-stage reference video (H3 latent upscaler, Deno nodes) and the RTX 2-pass upscale
+    // run here. Its results are read from <refDir>/ComfyUI/output.
     refUrl: "http://127.0.0.1:8188",
     refDir: "C:\\ComfyUI-Portable\\ComfyUI-Rev0",
-    rtxUrl: "http://127.0.0.1:8191",
-    rtxRoot: "C:\\Users\\madwi\\Documents\\ComfyUI",
-    rtxApp: "C:\\Users\\madwi\\AppData\\Local\\Programs\\@comfyorgcomfyui-electron\\resources\\ComfyUI",
-    rtxOutputDir: "G:\\output",
     ffmpegPath: "",
   },
   // Advanced: empty means the built-in workflow and models. A workflow file (ComfyUI API format) replaces the built-in
@@ -74,7 +75,8 @@ export const DEFAULTS = {
 // Fields shown on the start page. Keep this at 7 or fewer; move the least-used one to the
 // collapsed "this project only" area when it grows (docs/design.md 4.2).
 export const START_PAGE_FIELDS = [
-  "defaults.sizeId",
+  "defaults.sizeMegapixels",
+  "defaults.aspect",
   "defaults.durationSeconds",
   "defaults.videoMode",
   "defaults.audioSource",
@@ -134,17 +136,21 @@ const providerChain = (label) => (value) =>
 
 // One rule per leaf path of DEFAULTS (a test checks that none is missing).
 const RULES = {
-  "defaults.sizeId": oneOf("영상 크기", [...SIZE_PRESETS.map((preset) => preset.id), CUSTOM_SIZE_ID]),
+  "defaults.sizeMegapixels": oneOf("영상 크기(백만 화소)", SIZE_MEGAPIXELS),
+  "defaults.aspect": oneOf("영상 비율", [...ASPECTS.map((aspect) => aspect.id), CUSTOM_SIZE_ID]),
+  "defaults.orientation": oneOf("영상 방향", ORIENTATIONS),
   "defaults.customSize.generate": size("직접 입력 생성 크기"),
-  "defaults.customSize.final": size("직접 입력 최종 크기"),
   "defaults.durationSeconds": numBetween("목표 길이(초)", 2, 600),
   "defaults.videoMode": oneOf("영상 모드", VIDEO_MODES),
   "defaults.audioSource": oneOf("오디오 원천", AUDIO_SOURCES),
+  "defaults.songFile": text("노래 파일", 300),
   "defaults.imageModel": oneOf("이미지 모델", IMAGE_MODELS),
   "video.model": oneOf("영상 모델", ["minimax-h3-turbo"]),
   "video.upscale": oneOf("확대 방식", UPSCALES),
   "video.finalFps": intBetween("최종 FPS", 12, 60),
   "video.seamRampSeconds": numBetween("이음새 색 보정 구간(초)", 0.5, 10),
+  "video.codec": oneOf("영상 저장 방식", VIDEO_CODECS),
+  "video.freeVramWhenIdle": bool("작업이 끝나면 VRAM 비우기"),
   "audio.musicFormat": oneOf("노래 저장 형식", MUSIC_FORMATS),
   "audio.voice.tool": text("음성 도구", 60),
   "audio.voice.name": text("음성 이름", 60),
@@ -155,15 +161,12 @@ const RULES = {
   "llm.ollama.endpoint": localUrl("Ollama 주소"),
   "llm.ollama.model": text("Ollama 모델", 100),
   "llm.timeoutSec": intBetween("LLM 호출 제한 시간(초)", 30, 900),
+  "llm.sheetPrompt": text("캐릭터 시트 시스템 프롬프트", 20000),
   "connections.songyueUrl": localUrl("SongYUE2 주소"),
   "connections.comfyUrl": localUrl("ComfyUI 주소"),
   "connections.songyueDir": folder("SongYUE2 폴더"),
   "connections.refUrl": localUrl("참조 영상 ComfyUI 주소"),
   "connections.refDir": folder("참조 영상 ComfyUI 폴더"),
-  "connections.rtxUrl": localUrl("RTX ComfyUI 주소"),
-  "connections.rtxRoot": folder("RTX ComfyUI 폴더"),
-  "connections.rtxApp": folder("RTX ComfyUI 프로그램 폴더"),
-  "connections.rtxOutputDir": folder("RTX ComfyUI 결과 폴더"),
   "connections.ffmpegPath": text("ffmpeg 경로"),
   "engine.image.workflowT2I": folder("image T2I 워크플로"),
   "engine.image.workflowI2I": folder("image I2I 워크플로"),
@@ -268,19 +271,24 @@ export function shapeGap(a, b) {
   return Math.abs(ratioA - ratioB) / ratioB;
 }
 
-/** The effective video size of a settings tree: the chosen preset, or the custom size. */
+/** [width, height] of a given pixel count at one aspect ratio, each side a multiple of 32 (64..4096). */
+export function sizeFor(pixels, aspect, orientation = "landscape") {
+  const [w, h] = orientation === "portrait" ? [aspect.h, aspect.w] : [aspect.w, aspect.h];
+  const fit = (value) => Math.min(4096, roundTo32(value));
+  return [fit(Math.sqrt((pixels * w) / h)), fit(Math.sqrt((pixels * h) / w))];
+}
+
+/** The effective video size of a settings tree: the chosen budget at the chosen ratio, or the custom size. `final` is `generate` (no enlargement). */
 export function resolveSize(settings) {
-  const { sizeId, customSize } = settings.defaults;
-  const preset = SIZE_PRESETS.find((item) => item.id === sizeId);
-  const generate = preset ? preset.generate : customSize.generate;
-  const final = preset ? preset.final : customSize.final;
+  const { sizeMegapixels, aspect, orientation, customSize } = settings.defaults;
+  const ratio = ASPECTS.find((item) => item.id === aspect);
+  const generate = ratio ? sizeFor(sizeMegapixels * 1_000_000, ratio, orientation) : customSize.generate;
   return {
-    id: preset ? preset.id : CUSTOM_SIZE_ID,
-    label: preset ? `${preset.group} ${preset.label}` : "직접 입력",
+    id: ratio ? `${sizeMegapixels}m-${ratio.id}-${orientation}` : CUSTOM_SIZE_ID,
+    label: ratio ? `${sizeMegapixels}M ${ratio.label} ${orientation === "portrait" ? "세로" : "가로"}` : "직접 입력",
     generate,
-    final,
-    image: imageSizeFor(final),
-    tested: preset ? preset.tested : false,
+    final: generate,
+    image: imageSizeFor(generate),
   };
 }
 

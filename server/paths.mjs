@@ -45,8 +45,9 @@ export async function resolveInside(root, rel) {
   for (;;) {
     try {
       const real = await realpath(probe);
-      assertInside(rootReal, path.join(real, path.relative(probe, target)));
-      return target;
+      const resolved = path.join(real, path.relative(probe, target));
+      assertInside(rootReal, resolved);
+      return resolved;
     } catch (error) {
       if (error instanceof HttpError) throw error;
       if (error.code !== "ENOENT") throw error;

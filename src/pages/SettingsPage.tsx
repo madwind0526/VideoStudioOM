@@ -20,12 +20,19 @@ const PROVIDER_TILES = [
 
 const FOLDER_KEYS: Record<string, string> = { "storage.projectsDir": "projects", "storage.inputDir": "input", "storage.outputDir": "output" };
 
-const LLM_PATHS = ["llm.provider", "llm.model", "llm.ollama.endpoint", "llm.ollama.model", "llm.chain", "llm.timeoutSec"];
-const SIZE_PATHS = ["defaults.sizeId", "defaults.customSize.generate", "defaults.customSize.final"];
-const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps", "video.seamRampSeconds"];
+const LLM_PATHS = ["llm.provider", "llm.model", "llm.ollama.endpoint", "llm.ollama.model", "llm.chain", "llm.timeoutSec", "llm.sheetPrompt"];
+const SIZE_PATHS = ["defaults.sizeMegapixels", "defaults.aspect", "defaults.orientation", "defaults.customSize.generate"];
+const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps", "video.codec", "video.freeVramWhenIdle", "video.seamRampSeconds"];
 const IMAGE_PATHS = ["defaults.imageModel"];
 const AUDIO_PATHS = ["defaults.audioSource", "audio.musicFormat", "audio.voice.tool", "audio.voice.name", "audio.voice.language"];
-const LOCAL_PATHS = ["connections.songyueUrl", "connections.comfyUrl", "connections.refUrl", "connections.refDir", "connections.songyueDir", "connections.rtxUrl", "connections.rtxRoot", "connections.rtxApp", "connections.rtxOutputDir", "connections.ffmpegPath", "storage.projectsDir", "storage.inputDir", "storage.outputDir"];
+// Settings of the local engines, grouped by the program they belong to (two ComfyUI servers: see docs/engine.md).
+const LOCAL_GROUPS = [
+  { title: "SongYUE2 (음악·효과음·음성)", paths: ["connections.songyueUrl", "connections.songyueDir"] },
+  { title: "ComfyUI ① 이미지·영상 생성 (SongYUE2에 들어 있음)", paths: ["connections.comfyUrl"] },
+  { title: "ComfyUI ② Rev0 (참조 영상 · RTX 확대)", paths: ["connections.refUrl", "connections.refDir"] },
+  { title: "도구와 폴더", paths: ["connections.ffmpegPath", "storage.projectsDir", "storage.inputDir", "storage.outputDir"] },
+];
+const LOCAL_PATHS = LOCAL_GROUPS.flatMap((group) => group.paths);
 
 interface SectionProps {
   icon: LucideIcon;
@@ -146,6 +153,16 @@ export default function SettingsPage({ notify, onSaved }: Props) {
     }
   }
 
+  /** Puts the bundled sheet prompt into the text window (it is saved with the section's 설정 저장). */
+  async function loadDefaultSheetPrompt() {
+    try {
+      const { sheet } = await api<{ sheet: string }>("GET", "/api/prompts/default");
+      change("llm.sheetPrompt", sheet);
+    } catch {
+      notify("기본 프롬프트를 불러오지 못했습니다.");
+    }
+  }
+
   const folderNote = (path: string): ReactNode => {
     const info = folders[FOLDER_KEYS[path]];
     if (!info) return null;
@@ -160,12 +177,20 @@ export default function SettingsPage({ notify, onSaved }: Props) {
     );
   };
 
-  const renderField = (path: string) => (
-    <div key={path} style={FIELDS[path].wide ? { gridColumn: "1 / -1" } : undefined}>
-      <SettingField field={{ ...FIELDS[path], wide: false }} value={getIn(draft, path)} error={errors[path]} onChange={(value) => change(path, value)} />
-      {folderNote(path)}
-    </div>
-  );
+  // A folder's hint and its current state share one line.
+  const renderField = (path: string) => {
+    const note = folderNote(path);
+    return (
+      <div key={path} style={FIELDS[path].wide ? { gridColumn: "1 / -1" } : undefined}>
+        <SettingField field={{ ...FIELDS[path], wide: false, hint: note ? undefined : FIELDS[path].hint }} value={getIn(draft, path)} error={errors[path]} onChange={(value) => change(path, value)} />
+        {note && (
+          <span className="hint">
+            {FIELDS[path].hint} {note}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const section = (paths: string[]) => ({ dirty: dirtyOf(paths).length, onCancel: () => cancel(paths), onSave: () => void save(paths) });
 
@@ -242,25 +267,35 @@ export default function SettingsPage({ notify, onSaved }: Props) {
           )}
           {renderField("llm.chain")}
           {renderField("llm.timeoutSec")}
+          {renderField("llm.sheetPrompt")}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <button className="btn" type="button" onClick={() => void loadDefaultSheetPrompt()}>
+              기본 프롬프트 불러오기
+            </button>
+          </div>
         </div>
       </Section>
 
-      <Section icon={Film} title="영상 기본값" subtitle="새 프로젝트가 따르는 영상 설정입니다. 크기는 프리셋에서 고르거나 직접 입력하고, 프로젝트마다 시작 화면에서 바꿀 수 있어요." {...section(VIDEO_PATHS)}>
+      <Section icon={Film} title="영상 기본값" subtitle="새 프로젝트가 따르는 영상 설정입니다. 크기는 영상 모델이 만드는 크기이고, 프로젝트마다 시작 화면에서 바꿀 수 있어요." {...section(VIDEO_PATHS)}>
         <div className="fields">
           <div style={{ gridColumn: "1 / -1" }}>
             <SizePicker
-              sizeId={String(getIn(draft, "defaults.sizeId"))}
-              custom={{ generate: getIn(draft, "defaults.customSize.generate"), final: getIn(draft, "defaults.customSize.final") }}
-              errors={{ sizeId: errors["defaults.sizeId"], generate: errors["defaults.customSize.generate"], final: errors["defaults.customSize.final"] }}
-              onSizeId={(id) => change("defaults.sizeId", id)}
-              onCustom={(which, value) => change(`defaults.customSize.${which}`, value)}
+              megapixels={Number(getIn(draft, "defaults.sizeMegapixels"))}
+              aspect={String(getIn(draft, "defaults.aspect"))}
+              orientation={String(getIn(draft, "defaults.orientation"))}
+              custom={{ generate: getIn(draft, "defaults.customSize.generate") }}
+              errors={{ size: errors["defaults.sizeMegapixels"] ?? errors["defaults.aspect"], generate: errors["defaults.customSize.generate"] }}
+              onMegapixels={(value) => change("defaults.sizeMegapixels", value)}
+              onAspect={(id) => change("defaults.aspect", id)}
+              onOrientation={(value) => change("defaults.orientation", value)}
+              onCustom={(value) => change("defaults.customSize.generate", value)}
             />
           </div>
           {VIDEO_PATHS.filter((path) => !SIZE_PATHS.includes(path)).map(renderField)}
         </div>
       </Section>
 
-      <Section icon={ImageIcon} title="이미지" subtitle="장면 이미지를 만드는 모델입니다. 이미지 크기는 영상 최종 크기에 맞춰 자동으로 정해집니다." {...section(IMAGE_PATHS)}>
+      <Section icon={ImageIcon} title="이미지" subtitle="장면 이미지를 만드는 모델입니다. 이미지 크기는 영상 크기에 맞춰 자동으로 정해집니다." {...section(IMAGE_PATHS)}>
         <div className="fields">{IMAGE_PATHS.map(renderField)}</div>
       </Section>
 
@@ -279,7 +314,12 @@ export default function SettingsPage({ notify, onSaved }: Props) {
       </Section>
 
       <Section icon={FolderCog} title="로컬 실행 환경" subtitle="엔진 연결과 작업 폴더 위치입니다. 비워 둔 칸은 연한 글씨의 기본값을 씁니다." note="상대 경로는 이 앱 폴더 기준입니다. 폴더를 바꿔도 기존 파일은 옮기지 않습니다." {...section(LOCAL_PATHS)}>
-        <div className="fields">{LOCAL_PATHS.map(renderField)}</div>
+        {LOCAL_GROUPS.map((group) => (
+          <div key={group.title}>
+            <h3 className="sub-head">{group.title}</h3>
+            <div className="fields">{group.paths.map(renderField)}</div>
+          </div>
+        ))}
       </Section>
     </div>
   );

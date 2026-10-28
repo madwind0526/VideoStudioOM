@@ -1,11 +1,11 @@
 # 프롬프트 만들기
 
-화면의 "프롬프트 만들기"와 "전체 만들기"는 LLM(설정의 LLM 제공자, 실패하면 폴백 순서)에게 짧은 설명을 모델이 좋아하는 프롬프트로 바꾸게 한다. 시스템 프롬프트는 `server/prompts/`에 있다.
+화면의 "프롬프트 만들기"와 "빠진 ... 모두 만들기"는 LLM(설정의 LLM 제공자, 실패하면 폴백 순서)에게 짧은 설명을 모델이 좋아하는 프롬프트로 바꾸게 한다. 시스템 프롬프트는 `server/prompts/`에 있다.
 
 | 대상 | 파일 | 근거 |
 |---|---|---|
 | 이미지(Krea 2) | `krea-image.md` | Krea 공식 `docs/prompting.md`, `docs/expansion.txt`(github.com/krea-ai/krea-2): 자연어 문단, 충실성 우선, 매체 존중, 글자는 큰따옴표 |
-| 영상(MiniMax H3) | `h3-video.md` + `server/prompt-maker.mjs` | MiniMax 공식 Video Prompt Writing Guide(huggingface.co/MiniMaxAI/MiniMax-H3/docs): `integrated_multimodal_description`/`overall_soundscape`/`non_diegetic_music` 세 필드, `[Shot n]`, 카메라(종류+폭+속도), `(S1)`와 `<d>`, 정렬 문장(I2V/FL2V). Deno 워크플로 `minimax-h3-r2v-audio-reference`의 프롬프트 디렉터도 참고 |
+| 영상(MiniMax H3) | `h3-video.md` + `server/prompt-maker.mjs` | MiniMax 공식 Video Prompt Writing Guide(huggingface.co/MiniMaxAI/MiniMax-H3/docs): `integrated_multimodal_description`/`overall_soundscape`/`non_diegetic_music` 세 필드, `[Shot n]`, 카메라(종류+폭+속도), `(S1)`와 `<d>`, 정렬 문장(I2V/FL2V). Deno 워크플로 `minimax-h3-r2v-audio-reference`의 프롬프트 디렉터도 참고. deAPI의 "MiniMax H3 Prompting Guide"(2026-08-06)에서 컷 간격(약 3초에 한 컷, 샷당 3초 이상), 발화 속도(초당 약 2.5단어), 샷당 화자 1명, 보이스오버는 `says in an off-screen voiceover` + 입을 다문다는 문장, 화면 위치로 인물 고정, 반복되는 사건, 소리 칸 구분(인물이 내는/듣는 소리는 본문), 글자는 크고 대비 높게, 음악 칸은 악기로 쓰기를 가져옴 |
 | 효과음 | `sfx.md` | Stable Audio SFX는 영어 설명 |
 
 - 정렬 문장(`For the target video, at 0.00 seconds ...`, `How the reference pictures align ...`)은 LLM이 아니라 코드가 붙인다(글자 그대로여야 하므로). 클립 길이는 H3 프레임 격자(17k+5)로 맞춘 초를 쓴다.

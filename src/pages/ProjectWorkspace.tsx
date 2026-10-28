@@ -1,8 +1,9 @@
-import { BookOpen, Check, Clapperboard, Film, Image as ImageIcon, Mic, ScrollText, Type, UserRound, type LucideIcon } from "lucide-react";
+import { BookOpen, Check, Clapperboard, Film, Image as ImageIcon, Mic, PackageCheck, ScrollText, Type, UserRound, type LucideIcon } from "lucide-react";
 import type { ProjectSettingsView, ProjectSummary } from "../api";
 import ProjectPicker from "../components/ProjectPicker";
 import { AudioSection, ImagesSection, VideosSection } from "../sections/MediaSections";
 import CharactersSection from "../sections/CharactersSection";
+import FinalSection from "../sections/FinalSection";
 import ScenarioSection from "../sections/ScenarioSection";
 import ScriptSection from "../sections/ScriptSection";
 import SynopsisSection from "../sections/SynopsisSection";
@@ -19,6 +20,7 @@ export const SECTIONS: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: "images", label: "이미지", icon: ImageIcon },
   { id: "audio", label: "오디오", icon: Mic },
   { id: "videos", label: "동영상", icon: Film },
+  { id: "finals", label: "완성본", icon: PackageCheck },
 ];
 
 interface PaneProps {
@@ -50,7 +52,9 @@ function ProjectPane({ project, section, view, jobTick, refreshKey, onSection, o
       case "audio":
         return detail ? String(detail.media.audio.length) : false;
       case "videos":
-        return detail ? String(detail.media.videos.length) : false;
+        return detail ? String(detail.media.videos.filter((file) => file.path.startsWith("assets/video/")).length) : false;
+      case "finals":
+        return detail ? String(detail.media.videos.filter((file) => file.path.startsWith("renders/")).length) : false;
       default:
         return false;
     }
@@ -78,6 +82,7 @@ function ProjectPane({ project, section, view, jobTick, refreshKey, onSection, o
     images: <ImagesSection {...props} />,
     audio: <AudioSection {...props} />,
     videos: <VideosSection {...props} />,
+    finals: <FinalSection {...props} />,
   }[section];
 
   return (
@@ -115,16 +120,17 @@ interface Props {
   onSection: (section: SectionId) => void;
   onNew: () => void;
   onFavorite: (id: string, favorite: boolean) => void;
+  onDelete: (id: string) => void;
   onChanged: () => void;
   notify: (text: string) => void;
 }
 
 /** The project screen: a scrolling list of project cards in the middle, the chosen project's parts on the right. */
-export default function ProjectsScreen({ projects, projectsLoaded, selectedId, section, view, jobTick, refreshKey, onSelect, onSection, onNew, onFavorite, onChanged, notify }: Props) {
+export default function ProjectsScreen({ projects, projectsLoaded, selectedId, section, view, jobTick, refreshKey, onSelect, onSection, onNew, onFavorite, onDelete, onChanged, notify }: Props) {
   const project = projects.find((item) => item.id === selectedId);
   return (
     <div className="proj-layout">
-      <ProjectPicker projects={projects} selectedId={selectedId} onSelect={onSelect} onFavorite={onFavorite} onNew={onNew} />
+      <ProjectPicker projects={projects} selectedId={selectedId} onSelect={onSelect} onFavorite={onFavorite} onDelete={onDelete} onNew={onNew} />
       <div className="proj-detail">
         {!selectedId ? (
           <div className="empty fill">

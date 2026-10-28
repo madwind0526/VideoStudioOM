@@ -66,3 +66,16 @@ test("a junction pointing outside the root is refused", async () => {
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test("a junction that stays inside the root is followed: the returned path is the real one", async () => {
+  const { base, root } = await sandbox();
+  try {
+    await mkdir(path.join(root, "studio", "real"));
+    await writeFile(path.join(root, "studio", "real", "a.txt"), "x");
+    await symlink(path.join(root, "studio", "real"), path.join(root, "studio", "link"), "junction");
+    const got = await resolveInside(root, "studio/link/a.txt");
+    assert.equal(got.toLowerCase(), path.join(await (await import("node:fs/promises")).realpath(root), "studio", "real", "a.txt").toLowerCase());
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

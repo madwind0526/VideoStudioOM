@@ -64,13 +64,14 @@ export function applyEngine(settings, call) {
   return { tool: "comfyui_workflow", inputs: mapped, allowRoots: [path.dirname(workflow)] };
 }
 
-/** Quick-jump folders of the file picker: the usual user folders, the project folder, ComfyUI's workflows and the drives. */
-async function pickerShortcuts(projectsDir) {
+/** Quick-jump folders of the file picker: the usual user folders, the open project, ComfyUI's workflows, the projects folder and the drives. */
+async function pickerShortcuts(projectsDir, projectDir) {
   const home = os.homedir();
   const candidates = [
     { label: "바탕화면", path: path.join(home, "Desktop") },
     { label: "문서", path: path.join(home, "Documents") },
     { label: "다운로드", path: path.join(home, "Downloads") },
+    ...(projectDir ? [{ label: "현재 프로젝트", path: projectDir }] : []),
     { label: "ComfyUI 워크플로", path: path.join(home, "Documents", "ComfyUI", "user", "default", "workflows") },
     ...(projectsDir ? [{ label: "프로젝트 폴더", path: projectsDir }] : []),
   ];
@@ -85,8 +86,8 @@ async function pickerShortcuts(projectsDir) {
  * opened comes back with `error` (and no entries) instead of failing, so the picker can show the message and stay open.
  * With no `dir` it opens the user's Documents folder.
  */
-export async function listDir(dir, { projectsDir } = {}) {
-  const shortcuts = await pickerShortcuts(projectsDir);
+export async function listDir(dir, { projectsDir, projectDir } = {}) {
+  const shortcuts = await pickerShortcuts(projectsDir, projectDir);
   const target = dir && dir.trim() ? dir.trim() : path.join(os.homedir(), "Documents");
   if (target.includes("\0") || !path.isAbsolute(target)) throw new HttpError(400, "폴더 경로가 올바르지 않습니다.");
   const resolved = path.resolve(target);

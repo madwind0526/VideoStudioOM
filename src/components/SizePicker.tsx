@@ -1,75 +1,79 @@
-import { CUSTOM_SIZE_ID, resolveSize, shapeGap, SIZE_PRESETS } from "../../shared/settings.mjs";
+import { ASPECTS, CUSTOM_SIZE_ID, resolveSize, SIZE_MEGAPIXELS } from "../../shared/settings.mjs";
 import { FIELDS } from "../fields";
 import SettingField from "./SettingField";
 
 interface Props {
-  sizeId: string;
-  custom: { generate: unknown; final: unknown };
-  onSizeId: (id: string) => void;
-  onCustom: (which: "generate" | "final", value: unknown) => void;
+  megapixels: number;
+  aspect: string;
+  orientation: string;
+  custom: { generate: unknown };
+  onMegapixels: (value: number) => void;
+  onAspect: (id: string) => void;
+  onOrientation: (value: string) => void;
+  onCustom: (value: unknown) => void;
   errors?: Record<string, string | undefined>;
-  /** Shown next to the label, e.g. "기본값 따름" / "이 프로젝트만". */
-  badge?: string;
-  onReset?: () => void;
 }
 
-const GROUPS = [...new Set(SIZE_PRESETS.map((preset) => preset.group))];
-
 /**
- * Video size: pick a preset from the drop-down, or "직접 입력" to type any generate/final size.
- * Controlled; the parent decides when typed values are saved.
+ * Video size (the size the model renders): a pixel budget (0.5M ... 4M), one aspect ratio and wide or tall; the width and height follow from them.
+ * "직접 입력" in the ratio list lets the size be typed instead. Controlled; the parent decides when typed values are saved.
  */
-export default function SizePicker({ sizeId, custom, onSizeId, onCustom, errors = {}, badge, onReset }: Props) {
-  const isCustom = sizeId === CUSTOM_SIZE_ID;
-  // resolveSize only needs these two keys, so a minimal settings-shaped object is enough here.
-  const size = resolveSize({ defaults: { sizeId, customSize: custom } } as Parameters<typeof resolveSize>[0]);
+export default function SizePicker({ megapixels, aspect, orientation, custom, onMegapixels, onAspect, onOrientation, onCustom, errors = {} }: Props) {
+  const isCustom = aspect === CUSTOM_SIZE_ID;
+  const isSquare = aspect === "1x1";
+  // resolveSize only needs these keys, so a minimal settings-shaped object is enough here.
+  const sizeOf = (mp: number) => resolveSize({ defaults: { sizeMegapixels: mp, aspect, orientation, customSize: custom } } as Parameters<typeof resolveSize>[0]);
+  const size = sizeOf(megapixels);
   const valid = (value: unknown): value is [number, number] => Array.isArray(value) && value.length === 2 && value.every((n) => Number.isFinite(n));
-  const sizesKnown = valid(size.generate) && valid(size.final);
-  const mismatch = sizesKnown && shapeGap(size.generate, size.final) > 0.03;
+  const sizesKnown = valid(size.generate);
 
   return (
     <div className="field">
-      <label htmlFor="size-preset">
-        영상 크기
-        {badge && <span className="tag">{badge}</span>}
-        {onReset && (
-          <button type="button" className="link" onClick={onReset}>
-            기본값으로
-          </button>
-        )}
-      </label>
-      <select id="size-preset" value={sizeId} onChange={(event) => onSizeId(event.target.value)}>
-        {GROUPS.map((group) => (
-          <optgroup key={group} label={group}>
-            {SIZE_PRESETS.filter((preset) => preset.group === group).map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.label}
-                {preset.tested ? "" : " · 시험 전"}
+      <div className="size-row">
+        <div className="field">
+          <label htmlFor="size-mp">영상 크기</label>
+          <select id="size-mp" value={megapixels} disabled={isCustom} onChange={(event) => onMegapixels(Number(event.target.value))}>
+            {SIZE_MEGAPIXELS.map((mp) => {
+              const [width, height] = sizeOf(mp).generate;
+              return (
+                <option key={mp} value={mp}>
+                  {isCustom ? `${mp}M` : `${mp}M (${width}×${height})`}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="size-aspect">비율</label>
+          <select id="size-aspect" value={aspect} onChange={(event) => onAspect(event.target.value)}>
+            {ASPECTS.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
               </option>
             ))}
-          </optgroup>
-        ))}
-        <optgroup label="직접">
-          <option value={CUSTOM_SIZE_ID}>직접 입력…</option>
-        </optgroup>
-      </select>
+            <option value={CUSTOM_SIZE_ID}>직접 입력…</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="size-orientation">방향</label>
+          <select id="size-orientation" value={orientation} disabled={isCustom || isSquare} onChange={(event) => onOrientation(event.target.value)}>
+            <option value="landscape">가로</option>
+            <option value="portrait">세로</option>
+          </select>
+        </div>
+      </div>
 
       {isCustom && (
         <div className="size-custom">
-          <SettingField field={{ ...FIELDS["defaults.customSize.generate"], hint: undefined }} value={custom.generate} error={errors.generate} onChange={(value) => onCustom("generate", value)} />
-          <SettingField field={{ ...FIELDS["defaults.customSize.final"], hint: undefined }} value={custom.final} error={errors.final} onChange={(value) => onCustom("final", value)} />
+          <SettingField field={{ ...FIELDS["defaults.customSize.generate"], hint: undefined }} value={custom.generate} error={errors.generate} onChange={onCustom} />
         </div>
       )}
 
-      {errors.sizeId ? (
-        <span className="error">{errors.sizeId}</span>
+      {errors.size ? (
+        <span className="error">{errors.size}</span>
       ) : (
         sizesKnown && (
-          <span className="hint">
-            생성 {size.generate.join("×")} → 최종 {size.final.join("×")}
-            {mismatch && " · 생성과 최종의 모양이 달라 가장자리가 잘립니다."}
-            {!size.tested && !isCustom && " · 이 크기는 아직 시험하지 않았습니다."}
-          </span>
+          <span className="hint">생성 크기 {size.generate.join("×")}</span>
         )
       )}
     </div>

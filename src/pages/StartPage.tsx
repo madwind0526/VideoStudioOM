@@ -1,11 +1,13 @@
-import { Film, Plus, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { FolderOpen, Film, Music, Plus, Sparkles, X } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 import { snapFrames } from "../../shared/settings.mjs";
 import { api, ApiError, type ProjectSettingsView, type ProjectSummary } from "../api";
+import FileNavigator from "../components/FileNavigator";
 import ProjectBoard from "../components/ProjectBoard";
 import SettingField from "../components/SettingField";
 import SizePicker from "../components/SizePicker";
 import { FIELDS, getIn, PROJECT_ONLY_PATHS } from "../fields";
+import { importAudio } from "../sections/mediaJobs";
 
 type Update = (path: string, value: unknown) => Promise<string | null>;
 
@@ -15,6 +17,8 @@ interface Props {
   view: ProjectSettingsView | null;
   onWork: (id: string) => void;
   onOpenDetail: (id: string) => void;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
   onFavorite: (id: string, favorite: boolean) => void;
   onCreated: (project: ProjectSummary) => void;
   onSet: Update;
@@ -24,7 +28,6 @@ interface Props {
 
 // Fields on the start page, in the order they are used (docs/design.md 4.2). The LLM is chosen in Settings.
 const START_PATHS = ["defaults.durationSeconds", "defaults.videoMode", "defaults.audioSource", "defaults.imageModel"];
-const SIZE_PATHS = ["defaults.sizeId", "defaults.customSize.generate", "defaults.customSize.final"];
 
 /** One setting of the selected project: shows whether it follows the global default and saves on change. */
 function ProjectField({ path, view, onSet, onReset, note }: { path: string; view: ProjectSettingsView; onSet: Update; onReset: Props["onReset"]; note?: string }) {
@@ -64,34 +67,64 @@ function ProjectField({ path, view, onSet, onReset, note }: { path: string; view
 }
 
 /** Video size of the selected project: a preset from the drop-down, or any custom size typed in. */
-function ProjectSize({ view, onSet, onReset }: { view: ProjectSettingsView; onSet: Update; onReset: Props["onReset"] }) {
+function ProjectSize({ view, onSet }: { view: ProjectSettingsView; onSet: Update }) {
   const saved = view.effective.defaults;
-  const [custom, setCustom] = useState({ generate: saved.customSize.generate as unknown, final: saved.customSize.final as unknown });
+  const [custom, setCustom] = useState({ generate: saved.customSize.generate as unknown });
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
-  const savedKey = JSON.stringify([saved.sizeId, saved.customSize]);
-  useEffect(() => setCustom({ generate: saved.customSize.generate, final: saved.customSize.final }), [savedKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const overridden = SIZE_PATHS.some((path) => view.overridden.includes(path));
+  const savedKey = JSON.stringify([saved.sizeMegapixels, saved.aspect, saved.orientation, saved.customSize]);
+  useEffect(() => setCustom({ generate: saved.customSize.generate }), [savedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Typed sizes are saved when the focus leaves the size fields, so a half-typed number is never sent.
   const commitCustom = async () => {
-    for (const which of ["generate", "final"] as const) {
-      if (JSON.stringify(custom[which]) === JSON.stringify(saved.customSize[which])) continue;
-      const error = await onSet(`defaults.customSize.${which}`, custom[which]);
-      setErrors((current) => ({ ...current, [which]: error ?? undefined }));
-    }
+    if (JSON.stringify(custom.generate) === JSON.stringify(saved.customSize.generate)) return;
+    const error = await onSet("defaults.customSize.generate", custom.generate);
+    setErrors((current) => ({ ...current, generate: error ?? undefined }));
   };
 
   return (
     <div onBlur={() => void commitCustom()}>
       <SizePicker
-        sizeId={saved.sizeId}
+        megapixels={saved.sizeMegapixels}
+        aspect={saved.aspect}
+        orientation={saved.orientation}
         custom={custom}
         errors={errors}
-        badge={overridden ? "이 프로젝트만" : "기본값 따름"}
-        onReset={overridden ? () => void Promise.all(SIZE_PATHS.map((path) => onReset(path))).then(() => setErrors({})) : undefined}
-        onSizeId={(id) => void onSet("defaults.sizeId", id).then((error) => setErrors({ sizeId: error ?? undefined }))}
-        onCustom={(which, value) => setCustom((current) => ({ ...current, [which]: value }))}
+        onMegapixels={(value) => void onSet("defaults.sizeMegapixels", value).then((error) => setErrors({ size: error ?? undefined }))}
+        onAspect={(id) => void onSet("defaults.aspect", id).then((error) => setErrors({ size: error ?? undefined }))}
+        onOrientation={(value) => void onSet("defaults.orientation", value).then((error) => setErrors({ size: error ?? undefined }))}
+        onCustom={(value) => setCustom({ generate: value })}
       />
+    </div>
+  );
+}
+
+/** The song for audio source "입력한 노래": picked in the file browser, copied into the project, remembered as a project setting. */
+function SongPicker({ projectId, view, onSet, notify }: { projectId: string; view: ProjectSettingsView; onSet: Update; notify: (text: string) => void }) {
+  const [picking, setPicking] = useState(false);
+  const file = String(getIn(view.effective, "defaults.songFile") ?? "");
+  const pick = (from: string) => {
+    setPicking(false);
+    importAudio(projectId, from)
+      .then((rel) => onSet("defaults.songFile", rel))
+      .then((error) => notify(error ?? "노래를 가져왔습니다."))
+      .catch((e) => notify(e instanceof ApiError ? e.message : "노래를 가져오지 못했습니다."));
+  };
+  return (
+    <div className="field wide">
+      <label htmlFor="song-file">노래 파일</label>
+      <div className="row" style={{ gap: 8 }}>
+        <Music size={16} className="muted" />
+        <input id="song-file" readOnly value={file.replace(/^assets\/audio\//, "")} placeholder="선택한 노래가 없습니다" style={{ flex: 1 }} title={file} />
+        <button className="btn" type="button" onClick={() => setPicking(true)}>
+          <FolderOpen size={15} /> 찾아보기
+        </button>
+        {file && (
+          <button className="icon-btn" type="button" aria-label="노래 지우기" title="선택 해제" onClick={() => void onSet("defaults.songFile", "")}>
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      {picking && <FileNavigator title="노래 선택" projectId={projectId} accept={[".wav", ".mp3", ".flac", ".ogg", ".m4a"]} start={String(view.effective.storage.inputDir ?? "") || undefined} onClose={() => setPicking(false)} onPick={pick} />}
     </div>
   );
 }
@@ -144,7 +177,7 @@ function TopicEditor({ projectId, notify }: { projectId: string; notify: (text: 
 }
 
 /** Start page like SongYUE2's "만들기": the work settings panel sits between the menu and the project cards. */
-export default function StartPage({ projects, currentId, view, onWork, onOpenDetail, onFavorite, onCreated, onSet, onReset, notify }: Props) {
+export default function StartPage({ projects, currentId, view, onWork, onOpenDetail, onSelect, onDelete, onFavorite, onCreated, onSet, onReset, notify }: Props) {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -197,16 +230,18 @@ export default function StartPage({ projects, currentId, view, onWork, onOpenDet
               <p className="section-title">작업 설정 · {current.title}</p>
               <div className="fields">
                 <TopicEditor projectId={current.id} notify={notify} />
-                <ProjectSize view={view} onSet={onSet} onReset={onReset} />
+                <ProjectSize view={view} onSet={onSet} />
                 {START_PATHS.map((path) => (
-                  <ProjectField
-                    key={path}
-                    path={path}
-                    view={view}
-                    onSet={onSet}
-                    onReset={onReset}
-                    note={path === "defaults.durationSeconds" && snapped ? `실제 길이 ${snapped.seconds.toFixed(1)}초 (${snapped.frames}프레임)` : undefined}
-                  />
+                  <Fragment key={path}>
+                    <ProjectField
+                      path={path}
+                      view={view}
+                      onSet={onSet}
+                      onReset={onReset}
+                      note={path === "defaults.durationSeconds" && snapped ? `실제 길이 ${snapped.seconds.toFixed(1)}초 (${snapped.frames}프레임)` : undefined}
+                    />
+                    {path === "defaults.audioSource" && settings.defaults.audioSource === "input" && <SongPicker projectId={current.id} view={view} onSet={onSet} notify={notify} />}
+                  </Fragment>
                 ))}
               </div>
               <details className="advanced">
@@ -236,11 +271,13 @@ export default function StartPage({ projects, currentId, view, onWork, onOpenDet
         <ProjectBoard
           kicker="나의 영상을 한곳에"
           title="내 작업"
-          subtitle="카드의 이름을 누르면 왼쪽에서 설정하고, 화살표를 누르면 프로젝트를 엽니다."
+          subtitle="카드를 누르면 왼쪽에서 설정하고, 그림은 재생/정지, 아래 글은 자세히 보기, 화살표는 프로젝트 열기입니다."
           projects={projects}
           currentId={currentId}
           onWork={onWork}
           onOpenDetail={onOpenDetail}
+          onSelect={onSelect}
+          onDelete={onDelete}
           onFavorite={onFavorite}
         />
       </section>

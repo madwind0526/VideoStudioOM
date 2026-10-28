@@ -7,6 +7,7 @@ import { createEventHub, watchProjects } from "./events.mjs";
 import { ensureWorkFolders, folderPaths } from "./folders.mjs";
 import { createGuard } from "./guard.mjs";
 import { HttpError, sendJson } from "./http.mjs";
+import { createComfy } from "./engine/comfy.mjs";
 import { createJobQueue } from "./jobs.mjs";
 import { createDurationProbe, ffprobeFor } from "./probe.mjs";
 import { createProjectStore } from "./projects.mjs";
@@ -76,7 +77,19 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
     dir: path.join(dataDir, "runtime"),
     events,
     // Keep how a generated file was made, so it can be made again from the screen.
-    onFinished: (job, result) => (job.meta?.output && job.meta?.record ? projects.setAssetRecord(job.meta.project, job.meta.output, { ...job.meta.record, ...(result?.sentPrompts?.length ? { sent: result.sentPrompts } : {}) }) : undefined),
+    onFinished: async (job, result) => {
+      if (!job.meta?.output || !job.meta?.record) return;
+      const record = { ...job.meta.record, ...(result?.sentPrompts?.length ? { sent: result.sentPrompts } : {}) };
+      await projects.setAssetRecord(job.meta.project, job.meta.output, record);
+      // A re-made file is kept next to the shown one as another version.
+      if (job.meta.candidateOf) await projects.addVersion(job.meta.project, job.meta.candidateOf, { file: job.meta.output, record });
+    },
+    // The engines keep their models in VRAM after a run; when the queue is empty they are let go (a setting), so SongYUE2 and others can use the card.
+    onIdle: async () => {
+      const { connections, video } = await settings.get();
+      if (!video.freeVramWhenIdle) return;
+      for (const url of [connections.comfyUrl, connections.refUrl]) await createComfy(url).free();
+    },
     // `runTool` replaces the tool runner (tests use a fake one that only writes a file).
     run: runToolOverride,
     getConfig: async () => {

@@ -6,6 +6,9 @@ import { askLlm } from "./llm.mjs";
 
 const read = (name) => readFile(new URL(`./prompts/${name}`, import.meta.url), "utf8");
 
+/** The bundled system prompt of the character-sheet maker (used while the setting `llm.sheetPrompt` is empty). */
+export const defaultSheetPrompt = () => read("character-sheet.md");
+
 export const TARGETS = ["image", "video", "sfx", "sheet"];
 export const VIDEO_MODES = ["t2v", "i2v", "fl2v", "s2v", "r2v"];
 
@@ -35,7 +38,7 @@ const serial = (job) => {
  * Writes the prompt for one image, video clip or sound effect from the user's short idea.
  * `ask(system, user)` returns the LLM text (the server passes askLlm bound to the settings; tests pass a fake).
  */
-export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], bible = "" }, ask) {
+export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], bible = "", sheetSystem = "" }, ask) {
   if (!TARGETS.includes(target)) throw new HttpError(400, "만들 대상이 올바르지 않습니다.");
   if (typeof text !== "string" || !text.trim() || text.length > 4000) throw new HttpError(400, "설명은 1~4000자로 입력하세요.");
   const context = [title ? `Project title: ${title}` : "", firstPrompt ? `Prompt of <Picture 1> (what the first frame shows): ${firstPrompt}` : "", lastPrompt ? `Prompt of <Picture 2> (what the last frame shows): ${lastPrompt}` : "", bible].filter(Boolean).join("\n");
@@ -49,7 +52,7 @@ export async function makePrompt({ target, mode, text, duration, title, firstPro
   }
   if (target === "sheet") {
     // The description is the character itself; the bible adds only the shared visual style.
-    return serial(async () => ask(await read("character-sheet.md"), `CHARACTER:\n${text.trim()}${context ? `\n\n${context}` : ""}`));
+    return serial(async () => ask(sheetSystem.trim() || (await defaultSheetPrompt()), `CHARACTER:\n${text.trim()}${context ? `\n\n${context}` : ""}`));
   }
   if (target === "sfx") return serial(async () => ask(await read("sfx.md"), `IDEA:\n${text.trim()}`));
 

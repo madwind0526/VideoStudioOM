@@ -10,10 +10,10 @@ import { availableCodecs, averageRgb, checkClip, CODEC_IDS, codecLabels, autoTri
 import { createComfy } from "./engine/comfy.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
-import { askWith, makePrompt } from "./prompt-maker.mjs";
+import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
-import { folderStatus } from "./folders.mjs";
+import { folderPaths, folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
 import { writeFileAtomic } from "./fs-util.mjs";
 import { resolveInside } from "./paths.mjs";
@@ -40,8 +40,9 @@ async function withPromptLog(projects, id, stage, ask, run) {
         const all = { ...JSON.parse(content || "{}"), [stage]: { at: new Date().toISOString(), calls } };
         await projects.writeText(id, PROMPT_LOG, `${JSON.stringify(all, null, 2)}
 `, mtimeMs);
-      } catch {
-        // The log is a convenience; it must never fail the generation itself.
+      } catch (error) {
+        // The log is a convenience; it must never fail the generation itself, but the reason is kept in the server console.
+        console.error(`프롬프트 기록을 저장하지 못했습니다 (${id}/${stage}): ${error instanceof Error ? error.message : error}`);
       }
     }
   }
@@ -119,7 +120,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     }
     // export
     if (exporting.has(id)) throw new HttpError(409, "이미 내보내는 중입니다.");
-    const codec = CODEC_IDS.includes(body.codec) ? body.codec : "h264";
+    const codec = CODEC_IDS.includes(body.codec) ? body.codec : resolveSettings(await settings.get(), await projects.getSettings(id)).value.video.codec;
     const video = await projects.statMedia(id, "renders/final.mp4").catch(() => {
       throw new HttpError(400, "먼저 동영상 화면에서 구간 영상을 이어 붙여 완성본을 만드세요.");
     });
@@ -177,8 +178,9 @@ export async function handleApi(req, res, url, { settings, projects, events, job
         const trimEnd = body.kind === "video" && body.overlapSeconds === "auto" ? await autoTrims(ffmpegPath, inputs, keeps) : Number(body.overlapSeconds ?? 0);
         if (!(Array.isArray(trimEnd) || (trimEnd >= 0 && trimEnd <= 5))) throw new HttpError(400, "겹침 시간은 0~5초여야 합니다.");
         const seams = body.kind === "video" && body.seamColor === true ? await seamGainsOf(ffmpegPath, inputs, trimEnd) : [];
-        const seamRamp = resolveSettings(await settings.get(), await projects.getSettings(id)).value.video.seamRampSeconds;
-        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains, trimEnd, seamGains: seams, seamRamp });
+        const { seamRampSeconds: seamRamp, codec: videoCodec } = resolveSettings(await settings.get(), await projects.getSettings(id)).value.video;
+        if (body.kind === "video" && !(await availableCodecs(ffmpegPath)).includes(videoCodec)) throw new HttpError(400, `이 PC의 ffmpeg에서 ${codecLabels()[videoCodec]}을(를) 쓸 수 없습니다. 영상 저장 방식을 바꾸세요.`);
+        await concatMedia({ ffmpegPath, kind: body.kind, inputs, output, gains, trimEnd, seamGains: seams, seamRamp, videoCodec });
       }
     } finally {
       joining.delete(id);
@@ -242,7 +244,9 @@ export async function handleApi(req, res, url, { settings, projects, events, job
         // `record` is how the file was made (prompt, scene, ...); it is saved so the file can be made again.
         // `output` (project-relative) lets the screen find the result; `label` is only for the job list.
         const record = item.record === undefined ? undefined : requireObject(item.record);
-        const meta = { project: body.project, output: item.inputs.output_path, label: typeof item.label === "string" ? item.label.slice(0, 40) : undefined, record };
+        // `candidateOf`: the file is a new version of that file instead of a file of its own.
+        const candidateOf = typeof item.candidateOf === "string" ? item.candidateOf : undefined;
+        const meta = { project: body.project, output: item.inputs.output_path, label: typeof item.label === "string" ? item.label.slice(0, 40) : undefined, record, candidateOf };
         prepared.push({ tool: prepared_.tool, inputs: prepared_.inputs, allowRoot: [dir, ...prepared_.allowRoots], meta });
       }
       if (Array.isArray(body.items)) sendJson(res, 202, await jobs.startBatch(prepared));
@@ -307,19 +311,25 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     // A sheet is about one character: only the style is shared. Other prompts take every bible entry the idea names.
     const bibleText = body.target === "sheet" ? (bible.style.trim() ? `Visual style: ${bible.style.trim()}` : "") : typeof body.text === "string" ? bibleContext(bible, body.text) : "";
     const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 9).map((ref) => ref.slice(0, 600)) : [];
+    const sheetSystem = (await settings.get()).llm.sheetPrompt;
     const prompt = await withPromptLog(projects, body.project, `prompt-${body.target}`, askWith((await settings.get()).llm), (ask) =>
-      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined }, ask),
+      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, sheetSystem, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined }, ask),
     );
     sendJson(res, 200, { prompt });
+    return true;
+  }
+  if (pathname === "/api/prompts/default") {
+    if (method !== "GET") methodNotAllowed();
+    sendJson(res, 200, { sheet: await defaultSheetPrompt() });
     return true;
   }
   if (pathname === "/api/gpu/free") {
     if (method !== "POST") methodNotAllowed();
     if ((await jobs.list()).current) throw new HttpError(409, "작업이 진행 중일 때는 VRAM을 비울 수 없습니다.");
     const { connections } = await settings.get();
-    // Both ComfyUI servers (the generator and the RTX upscaler) keep models loaded after a run.
+    // Both ComfyUI servers (the generator and Rev0, which upscales) keep models loaded after a run.
     const freed = [];
-    for (const [name, url] of [["comfy", connections.comfyUrl], ["rtx", connections.rtxUrl]]) if (await createComfy(url).free()) freed.push(name);
+    for (const [name, url] of [["comfy", connections.comfyUrl], ["ref", connections.refUrl]]) if (await createComfy(url).free()) freed.push(name);
     sendJson(res, 200, { freed });
     return true;
   }
@@ -331,7 +341,9 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   }
   if (pathname === "/api/fs") {
     if (method !== "GET") methodNotAllowed();
-    sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? "", { projectsDir: folderPaths(await settings.get(), appRoot).projects }));
+    // `project` (an id) adds the open project's folder to the shortcuts.
+    const open = url.searchParams.get("project");
+    sendJson(res, 200, await listDir(url.searchParams.get("dir") ?? "", { projectsDir: folderPaths(await settings.get(), appRoot).projects, projectDir: open ? await projects.dir(open) : undefined }));
     return true;
   }
   if (pathname === "/api/comfy/models") {
@@ -358,11 +370,17 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa|import))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa|import|versions))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
   if (!match[2]) {
+    if (method === "DELETE") {
+      if ((await jobs.list()).current?.meta?.project === id) throw new HttpError(409, "이 프로젝트의 작업이 진행 중입니다. 끝난 뒤에 지우세요.");
+      await projects.remove(id);
+      sendJson(res, 200, { removed: id });
+      return true;
+    }
     if (method !== "GET") methodNotAllowed();
     sendJson(res, 200, { project: await projects.get(id) });
   } else if (match[2] === "meta") {
@@ -377,9 +395,20 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     } else methodNotAllowed();
   } else if (match[2] === "subtitles" || match[2] === "export" || match[2] === "qa") {
     sendJson(res, 200, await postProduce(id, match[2], method, requireObject(method === "POST" ? await readJsonBody(req) : {})));
+  } else if (match[2] === "versions") {
+    // GET: the versions and prompt history of one file; PUT: keep an edited prompt; POST: choose a version.
+    if (method === "GET") sendJson(res, 200, { entry: await projects.versionsOf(id, url.searchParams.get("path")) });
+    else if (method === "PUT") {
+      const body = requireObject(await readJsonBody(req));
+      sendJson(res, 200, { entry: await projects.saveDraft(id, body.path, body) });
+    } else if (method === "POST") {
+      const body = requireObject(await readJsonBody(req));
+      sendJson(res, 200, { entry: await projects.selectVersion(id, body.path, body.select) });
+    } else methodNotAllowed();
   } else if (match[2] === "import") {
     if (method !== "POST") methodNotAllowed();
-    sendJson(res, 200, { path: await projects.importImage(id, requireObject(await readJsonBody(req)).from) });
+    const body = requireObject(await readJsonBody(req));
+    sendJson(res, 200, { path: await (body.kind === "audio" ? projects.importAudio(id, body.from) : projects.importImage(id, body.from)) });
   } else if (match[2] === "concat") {
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));

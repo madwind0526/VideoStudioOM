@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { cleanOutput, askLlm } from "../server/llm.mjs";
-import { makePrompt, referenceVideoPrompt } from "../server/prompt-maker.mjs";
+import { defaultSheetPrompt, makePrompt, referenceVideoPrompt } from "../server/prompt-maker.mjs";
 
 const REF_OK = [
   "subject_definitions:\n<Subject 1> is the woman in <Picture 1>, with long black hair and a white lace gown.",
@@ -120,4 +120,17 @@ test("bible: an outfit named in the text replaces the default clothes for that s
   const bible = { ...BIBLE, characters: [{ ...BIBLE.characters[0], outfits: [{ name: "swimsuit", description: "a navy one-piece swimsuit" }] }] };
   assert.match(bibleContext(bible, "Mina in her swimsuit at the beach"), /Wearing in this scene \(replaces the default outfit; face and hair unchanged\): a navy one-piece swimsuit/);
   assert.ok(!bibleContext(bible, "Mina at the cafe").includes("Wearing in this scene"));
+});
+
+test("the character-sheet system prompt comes from the setting; empty means the bundled file", async () => {
+  let seen = "";
+  const ask = async (system) => {
+    seen = system;
+    return "ok";
+  };
+  await makePrompt({ target: "sheet", text: "Mina", sheetSystem: "  MY SHEET RULES  " }, ask);
+  assert.equal(seen, "MY SHEET RULES");
+  await makePrompt({ target: "sheet", text: "Mina", sheetSystem: "" }, ask);
+  assert.equal(seen, await defaultSheetPrompt());
+  assert.match(seen, /CHARACTER REFERENCE SHEET/);
 });

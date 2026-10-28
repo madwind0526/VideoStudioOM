@@ -7,7 +7,7 @@
 ComfyUI(이미지·영상)와 SongYUE2(음악·효과음·음성) 위에 얹는 **영상 제작 GUI**. 주제/줄거리 → 시나리오 → 대본 → 장면 이미지 → 영상(+오디오/노래) → 라이브러리까지를 화면에서 조종하고, 중간 산출물(시나리오, 대본, 이미지, 오디오, 영상)을 폴더에 저장해 읽고 수정한다.
 
 - **줄거리/시나리오/대본은 LLM 텍스트 호출(MusicAutomation 방식)로 만들고, 단계마다 사람이 검토/수정/승인한다.** 이미지/영상/음성/음악 생성은 백엔드가 ComfyUI와 SongYUE2를 직접 호출한다(`server/engine/`). 도구 권한을 가진 에이전트는 쓰지 않는다 (`memory-bank/knowledge/RULES.md` P-01, 근거 `docs/spike-agent.md`).
-- 엔진: ComfyUI 8190(SongYUE2 내장: Krea 2 Turbo, MiniMax H3), RTX 확대용 ComfyUI 8191, Qwen3-TTS(SongYUE2 audio.cpp). 프로젝트 데이터는 앱 폴더의 `projects/<id>/` (설정에서 바꿈, git 제외). OpenMontage는 더 이상 쓰지 않는다
+- 엔진: ComfyUI 8190(SongYUE2 내장: Krea 2 Turbo, MiniMax H3), Rev0 ComfyUI 8188(참조 영상·RTX 확대), Qwen3-TTS(SongYUE2 audio.cpp). 프로젝트 데이터는 앱 폴더의 `projects/<id>/` (설정에서 바꿈, git 제외). OpenMontage는 더 이상 쓰지 않는다
 - 음악: SongYUE2 백엔드 `http://127.0.0.1:4311`
 - 설계: `docs/design.md`, 구현 계획: `docs/plan.md`
 - UI 참고: `C:\Claude\SongYUE2\app` (미니멀, 아이콘 중심, 좌측 메뉴 / 상단 메뉴 / 하단 시스템 메시지), LLM 선택 참고: `C:\Claude\MusicAutomation\server\services\llm.mjs`, `llm-cli.mjs`, 자동 주제: `auto-song.mjs`
