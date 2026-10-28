@@ -1,5 +1,5 @@
-import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CheckCircle2, Clock, GripVertical, Image as ImageIcon, Plus, RotateCcw, Save, Trash2, Wand2, AlertCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import TimelineBar from "../components/TimelineBar";
 import { SCENE_OPTS_FILE, type SceneLora, type SceneOpts } from "./mediaJobs";
@@ -70,7 +70,8 @@ function check(scenes: Scene[]): { problems: string[]; warnings: string[] } {
 const num = (value: number) => (Number.isFinite(value) ? value : "");
 
 /** View and edit the scenario (artifacts/scene_plan.json): which scenes the video has and how long each is. */
-export default function ScenarioSection({ project, onChanged, notify }: SectionProps) {
+export default function ScenarioSection(props: SectionProps) {
+  const { project, onChanged, notify } = props;
   const file = useJsonFile<ScenePlan>(project.id, "artifacts/scene_plan.json", notify);
   const plan = file.data;
   const scenes = plan?.scenes ?? [];
@@ -87,8 +88,36 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
   const dirty = file.dirty || opts.dirty;
   const total = scenes.reduce((max, scene) => (Number.isFinite(scene.end_seconds) ? Math.max(max, scene.end_seconds) : max), 0);
 
+  const sceneImageStatus = useMemo(() => {
+    const status: Record<string, "done" | "pending" | "none"> = {};
+    const images = (props as any).detail?.media?.images ?? [];
+    for (const scene of scenes) {
+      const hasImage = images.some((img: any) => img.record?.source === scene.id || img.path?.includes(scene.id));
+      status[scene.id] = hasImage ? "done" : "none";
+    }
+    return status;
+  }, [scenes, (props as any).detail]);
+
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+
   const setScenes = (next: Scene[]) => plan && file.setData({ ...plan, scenes: next });
   const update = (index: number, patch: Partial<Scene>) => setScenes(scenes.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
+  
+  const reorderScenes = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= scenes.length || to >= scenes.length) return;
+    const next = [...scenes];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    // Recalculate times to maintain continuity
+    let currentTime = 0;
+    const reordered = next.map((scene, idx) => {
+      const duration = scene.end_seconds - scene.start_seconds;
+      const updated = { ...scene, start_seconds: currentTime, end_seconds: currentTime + duration };
+      currentTime += duration;
+      return updated;
+    });
+    setScenes(reordered);
+  };
 
   async function save() {
     const saved = file.dirty ? await file.save() : true;
@@ -179,14 +208,37 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
             segments={scenes.map((scene, index) => ({ label: String(index + 1), start: scene.start_seconds, end: scene.end_seconds }))}
             onBoundary={(boundary, seconds) => setScenes(scenes.map((scene, i) => (i === boundary ? { ...scene, end_seconds: seconds } : i === boundary + 1 ? { ...scene, start_seconds: seconds } : scene)))}
           />
-          <div className="edit-list">
+          <div className="scene-cards">
             {scenes.map((scene, index) => (
-              <article className="edit-row" key={index}>
-                <span className="no">{index + 1}</span>
-                <div className="edit-body">
-                  <div className="edit-line">
-                    <label>
-                      <span>종류</span>
+              <article
+                className="scene-card"
+                key={scene.id || index}
+                draggable
+                onDragStart={(e) => {
+                  setDragIndex(index);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragIndex !== null && dragIndex !== index) {
+                    reorderScenes(dragIndex, index);
+                  }
+                  setDragIndex(null);
+                }}
+                onDragEnd={() => setDragIndex(null)}
+                style={{ opacity: dragIndex === index ? 0.5 : 1, cursor: "grab" }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  <GripVertical size={18} style={{ color: "var(--muted-fg)" }} />
+                  <div className="scene-number">{index + 1}</div>
+                </div>
+                <div className="scene-card-content">
+                  <div className="scene-card-header">
+                    <div className="scene-card-meta">
                       <select value={scene.type} onChange={(event) => update(index, { type: event.target.value })}>
                         {SCENE_TYPES.map(([value, label]) => (
                           <option key={value} value={value}>
@@ -195,7 +247,31 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
                         ))}
                         {!SCENE_TYPES.some(([value]) => value === scene.type) && <option value={scene.type}>{scene.type}</option>}
                       </select>
-                    </label>
+                      <span className="muted">
+                        {formatTime(scene.start_seconds)} - {formatTime(scene.end_seconds)} ({(scene.end_seconds - scene.start_seconds).toFixed(1)}초)
+                      </span>
+                      {scene.script_section_id && (
+                        <span className="scene-badge" title="이 장면과 이어진 대본 구간">
+                          대본 {scene.script_section_id}
+                        </span>
+                      )}
+                    </div>
+                    <div className="scene-card-badges">
+                      {sceneImageStatus[scene.id] === "done" ? (
+                        <span className="scene-badge done">
+                          <CheckCircle2 size={12} /> 이미지 완료
+                        </span>
+                      ) : (
+                        <span className="scene-badge pending">
+                          <ImageIcon size={12} /> 이미지 대기
+                        </span>
+                      )}
+                      <button className="icon-btn danger" type="button" title="장면 지우기" aria-label={`${index + 1}번 장면 지우기`} onClick={() => setScenes(scenes.filter((_, i) => i !== index))}>
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="edit-line">
                     <label>
                       <span>시작(초)</span>
                       <input type="number" min={0} step={0.5} value={num(scene.start_seconds)} onChange={(event) => update(index, { start_seconds: event.target.value === "" ? NaN : Number(event.target.value) })} />
@@ -204,14 +280,6 @@ export default function ScenarioSection({ project, onChanged, notify }: SectionP
                       <span>끝(초)</span>
                       <input type="number" min={0} step={0.5} value={num(scene.end_seconds)} onChange={(event) => update(index, { end_seconds: event.target.value === "" ? NaN : Number(event.target.value) })} />
                     </label>
-                    {scene.script_section_id && (
-                      <span className="chip" title="이 장면과 이어진 대본 구간">
-                        대본 {scene.script_section_id}
-                      </span>
-                    )}
-                    <button className="icon-btn danger" type="button" title="장면 지우기" aria-label={`${index + 1}번 장면 지우기`} onClick={() => setScenes(scenes.filter((_, i) => i !== index))}>
-                      <Trash2 size={15} />
-                    </button>
                   </div>
                   <textarea rows={4} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
                   <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
