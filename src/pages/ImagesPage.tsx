@@ -9,6 +9,7 @@ import { ItemTools, useVersionDialog } from "../sections/MediaSections";
 import { makePrompt, startItems, stamp, type MakeItem } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 import { useJobs, useProjectDetail } from "../useProject";
+import ImageRandom from "./ImageRandom";
 import ImageVary from "./ImageVary";
 
 /** The id of the image library: a hidden project (see server/projects.mjs ensureHidden), so jobs, versions and records work as in any project. */
@@ -51,7 +52,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
   const { detail, reload } = useProjectDetail(project.id, jobTick);
   const jobs = useJobs(jobTick);
   const [open, setOpen] = useState<string | null>(null);
-  const [tab, setTab] = useState<"make" | "vary">("make");
+  const [tab, setTab] = useState<"make" | "vary" | "random">("make");
   const images = detail?.media.images ?? [];
 
   const props: SectionProps = {
@@ -82,8 +83,11 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
         <button className="tab" role="tab" aria-selected={tab === "vary"} onClick={() => setTab("vary")}>
           분석해서 변주
         </button>
+        <button className="tab" role="tab" aria-selected={tab === "random"} onClick={() => setTab("random")}>
+          랜덤 조합
+        </button>
       </div>
-      {tab === "make" ? <Maker props={props} /> : <ImageVary props={props} images={images} />}
+      {tab === "make" ? <Maker props={props} /> : tab === "vary" ? <ImageVary props={props} images={images} /> : <ImageRandom props={props} />}
       <JobList projectId={project.id} jobs={jobs.history} outputs={["assets/images/"]} pending={jobs.pending} paused={jobs.paused} onChanged={props.onJobsChanged} />
       {images.length === 0 ? (
         <p className="muted">아직 그림이 없습니다. 위에서 설명을 적고 만들어 보세요.</p>

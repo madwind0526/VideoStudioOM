@@ -25,3 +25,51 @@ test("variations: bad input and a model that keeps failing are refused", async (
   await assert.rejects(makeVariations({ prompt: "x", axis: "weather", count: 2 }, async () => ""), /바꿀 항목/);
   await assert.rejects(makeVariations({ prompt: "x", axis: "mood", count: 3 }, async () => '{"prompts": ["only one"]}'), /LLM의 답을 쓸 수 없습니다/);
 });
+
+test("pool: built in until a file is saved, checked on the way in, saved whole", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { checkPool, DEFAULT_POOL, readPool, writePool } = await import("../server/image-pool.mjs");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-pool-"));
+  try {
+    const file = path.join(dir, "image-pools.json");
+    assert.deepEqual(await readPool(file), checkPool(DEFAULT_POOL));
+    const saved = await writePool(file, { person: [" a ", "a", "b"], place: ["x"] });
+    assert.deepEqual(saved.person, ["a", "b"]);
+    assert.deepEqual((await readPool(file)).place, ["x"]);
+    assert.deepEqual((await readPool(file)).outfit, []);
+    assert.throws(() => checkPool({ weather: ["x"] }), /알 수 없는 항목/);
+    assert.throws(() => checkPool({ person: [] }), /하나 이상/);
+    assert.throws(() => checkPool([]), /목록/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("pool: combinations take one phrase per category, differ while the pool allows it, keep what is locked and skip empty categories", async () => {
+  const { pickCombinations, pickOne } = await import("../server/image-pool.mjs");
+  let seed = 7;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const pool = { person: ["p1", "p2", "p3"], outfit: ["o1", "o2"], style: ["s1"], place: ["l1", "l2", "l3"], action: [], prop: [] };
+  const combos = pickCombinations(pool, { count: 3, locked: { style: "S!" }, random });
+  assert.equal(combos.length, 3);
+  assert.deepEqual(new Set(combos.map((item) => item.person)).size, 3);
+  assert.ok(combos.every((item) => item.style === "S!" && !("action" in item) && !("prop" in item)));
+  assert.equal(pickCombinations(pool, { count: 99, random }).length, 24);
+  assert.notEqual(pickOne(pool, "person", { avoid: "p1", random }), "p1");
+  assert.equal(pickOne(pool, "style", { avoid: "s1", random }), "s1");
+  assert.throws(() => pickOne(pool, "action"), /문구가 없습니다/);
+});
+
+test("compose: one prompt per combination from one call, an empty combination is refused", async () => {
+  const { composePrompts } = await import("../server/images.mjs");
+  const seen = [];
+  const prompts = await composePrompts({ combinations: [{ person: "여성", place: "골목" }, { person: "남성", prop: "우산" }] }, async (system, user) => {
+    seen.push(user);
+    return '{"prompts": ["one", "two"]}';
+  });
+  assert.deepEqual(prompts, ["one", "two"]);
+  assert.match(seen[0], /1\. person: 여성 \| place: 골목\n2\. person: 남성 \| prop: 우산/);
+  await assert.rejects(composePrompts({ combinations: [{}] }, async () => ""), /비어 있습니다/);
+});

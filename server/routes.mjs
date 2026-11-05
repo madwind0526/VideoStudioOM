@@ -12,7 +12,8 @@ import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
 import { describePictures } from "./describe.mjs";
-import { makeVariations } from "./images.mjs";
+import { composePrompts, makeVariations } from "./images.mjs";
+import { DEFAULT_POOL, pickCombinations, pickOne, POOL_CATEGORIES, readPool, writePool } from "./image-pool.mjs";
 import { runTool } from "./engine/tools.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
@@ -90,7 +91,7 @@ const joining = new Set();
 const exporting = new Set();
 
 /** Handles /api/* requests. Returns false when no route matches. */
-export async function handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot }) {
+export async function handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot, dataDir }) {
   const { pathname } = url;
   const method = req.method;
   const methodNotAllowed = () => {
@@ -370,6 +371,29 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     // The image library is a hidden project (see projects.ensureHidden): jobs, versions, records and descriptions work on it as on any project.
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, { project: await projects.ensureHidden(IMAGE_LIBRARY, "이미지 보관함") });
+    return true;
+  }
+  if (pathname === "/api/images/pool" || pathname === "/api/images/random" || pathname === "/api/images/compose") {
+    // The mixing pool of the image menu (data/image-pools.json, or the built-in one until it is saved).
+    const poolFile = path.join(dataDir, "image-pools.json");
+    if (pathname === "/api/images/pool") {
+      if (method === "GET") sendJson(res, 200, { pool: await readPool(poolFile), categories: POOL_CATEGORIES, defaults: DEFAULT_POOL });
+      else if (method === "PUT") sendJson(res, 200, { pool: await writePool(poolFile, requireObject(await readJsonBody(req)).pool) });
+      else methodNotAllowed();
+      return true;
+    }
+    if (method !== "POST") methodNotAllowed();
+    const body = requireObject(await readJsonBody(req));
+    if (pathname === "/api/images/random") {
+      const pool = await readPool(poolFile);
+      const locked = body.locked && typeof body.locked === "object" && !Array.isArray(body.locked) ? Object.fromEntries(Object.entries(body.locked).filter(([key, value]) => POOL_CATEGORIES.some((category) => category.id === key) && typeof value === "string" && value.trim()).map(([key, value]) => [key, value.trim().slice(0, 200)])) : {};
+      // `redo` = { category, avoid }: one category of one combination again (the dice button of the screen).
+      if (body.redo && typeof body.redo.category === "string") sendJson(res, 200, { phrase: pickOne(pool, body.redo.category, { avoid: typeof body.redo.avoid === "string" ? body.redo.avoid : "" }) });
+      else sendJson(res, 200, { combinations: pickCombinations(pool, { count: body.count, locked }) });
+      return true;
+    }
+    const prompts = await withPromptLog(projects, IMAGE_LIBRARY, "image-compose", askWith((await settings.get()).llm), (logged) => composePrompts({ combinations: body.combinations }, logged));
+    sendJson(res, 200, { prompts });
     return true;
   }
   if (pathname === "/api/images/analyze" || pathname === "/api/images/vary") {

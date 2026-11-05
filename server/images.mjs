@@ -39,3 +39,30 @@ export async function makeVariations({ prompt, axis, count }, ask) {
   }
   throw new HttpError(502, `LLM의 답을 쓸 수 없습니다: ${problem}`);
 }
+
+const PART_NAMES = { person: "person", outfit: "outfit", style: "style", place: "place", action: "action", prop: "prop" };
+
+/** One Krea prompt per combination from the pool (one LLM call for all, so they differ from each other). */
+export async function composePrompts({ combinations }, ask) {
+  if (!Array.isArray(combinations) || combinations.length < 1 || combinations.length > 24) throw new HttpError(400, "조합은 1~24개여야 합니다.");
+  const lines = combinations.map((combination, index) => {
+    const parts = Object.entries(PART_NAMES).filter(([id]) => typeof combination?.[id] === "string" && combination[id].trim()).map(([id, name]) => `${name}: ${combination[id].trim().slice(0, 200)}`);
+    if (parts.length === 0) throw new HttpError(400, `${index + 1}번 조합이 비어 있습니다.`);
+    return `${index + 1}. ${parts.join(" | ")}`;
+  });
+  const system = await readFile(new URL("./prompts/image-compose.md", import.meta.url), "utf8");
+  const user = `COMBINATIONS (${lines.length}):\n${lines.join("\n")}`;
+  let problem = "";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const answer = await ask(system, attempt === 0 ? user : `${user}\n\nYour previous answer was rejected: ${problem}\nReturn only valid JSON in the format above.`);
+    try {
+      const list = parseJson(answer).prompts;
+      const prompts = (Array.isArray(list) ? list : []).filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+      if (prompts.length < lines.length) throw new Error(`${lines.length}개가 필요한데 ${prompts.length}개입니다.`);
+      return prompts.slice(0, lines.length);
+    } catch (error) {
+      problem = error.message;
+    }
+  }
+  throw new HttpError(502, `LLM의 답을 쓸 수 없습니다: ${problem}`);
+}

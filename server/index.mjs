@@ -106,7 +106,7 @@ export function startServer({ port = API_PORT, extraHosts = [], dataDir = path.j
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname === "/api/session") return sendJson(res, 200, { token: guard.token });
       if (url.pathname.startsWith("/api/")) {
-        if (await handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot })) return;
+        if (await handleApi(req, res, url, { settings, projects, events, jobs, systemStats, appRoot, dataDir })) return;
         return sendJson(res, 404, { error: "없는 API입니다." });
       }
       if (req.method !== "GET" && req.method !== "HEAD") return sendJson(res, 405, { error: "허용되지 않은 메서드입니다." });
