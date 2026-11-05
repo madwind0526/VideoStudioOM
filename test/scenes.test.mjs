@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { chainFrom, clipPathOf, clipStatus, continuesPrevious, firstImagePath, lastImagePath, modeOf, safeName, slotImages, songRange, usesSong } from "../shared/scenes.mjs";
+import { chainFrom, clipPathOf, clipStatus, continuesPrevious, defaultMode, firstImagePath, lastImagePath, modeOf, pictureMoves, safeName, slotImages, songRange, usesSong, withProjectMode } from "../shared/scenes.mjs";
 
 const scenes = [
   { id: "scene-1", start_seconds: 0, end_seconds: 6 },
@@ -83,4 +83,48 @@ test("a clip made from pictures is out of date when a picture was made or replac
   assert.equal(state([{ path: "assets/images/1-1.png", mtimeMs: 3000 }, { path: "assets/images/2-1.png", mtimeMs: 3000 }]).state, "ready");
   assert.deepEqual(state([{ path: "assets/images/1-1.png", mtimeMs: 3000 }, { path: "assets/images/2-1.png", mtimeMs: 9000 }]).reasons, ["끝 이미지가 바뀌었습니다"]);
   assert.deepEqual(state([{ path: "assets/images/1-1.png", mtimeMs: 9000 }]).reasons, ["시작 이미지가 바뀌었습니다"]);
+});
+
+test("a scene added in the middle: the pictures of the scenes after it move one number up and the shared one stays for both neighbours", () => {
+  const added = [scenes[0], scenes[1], { id: "scene-5", start_seconds: 13, end_seconds: 18 }, ...scenes.slice(2)];
+  const { moves, clips } = pictureMoves(scenes, {}, added, {});
+  const to = (path) => moves.find((move) => move.to === path)?.from;
+  assert.equal(to("assets/images/1-1.png"), "assets/images/1-1.png");
+  assert.equal(to("assets/images/3-1.png"), "assets/images/3-1.png");
+  // the new scene has no picture of its own for its end; the old shared picture is its next scene's start now
+  assert.equal(to("assets/images/4-1.png"), "assets/images/3-1.png");
+  assert.equal(to("assets/images/5-1.png"), "assets/images/4-1.png");
+  assert.equal(to("assets/images/5-2.png"), "assets/images/4-2.png");
+  assert.deepEqual(clips.map((item) => item.clip), ["assets/video/clip-scene-3.mp4", "assets/video/clip-scene-4.mp4"]);
+  // nothing changes without a change
+  assert.ok(pictureMoves(scenes, {}, scenes, {}).moves.every((move) => move.from === move.to || move.from === null));
+  // a deleted scene puts its pictures aside
+  const deleted = pictureMoves(scenes, {}, scenes.slice(0, 3), {});
+  assert.ok(deleted.moves.some((move) => move.from === "assets/images/4-2.png" && move.to === null));
+});
+
+test("chain clips (T2V, I2V, S2V) have a picture only where a chain starts; S2V always uses the song; a reference clip has no picture", () => {
+  // scene-1 starts the chain, scene-2 is cut (own picture), scene-3 is connected, scene-4 is a reference clip
+  const opts = { "*": { mode: "i2v" }, "scene-2": { continuePrevious: false }, "scene-4": { mode: "r2v" } };
+  assert.deepEqual(slotImages(scenes, opts).map((slot) => slot.path), ["assets/images/1-1.png", "assets/images/2-1.png"]);
+  assert.deepEqual(chainFrom(scenes, opts, 0), [0]);
+  assert.deepEqual(chainFrom(scenes, opts, 1), [1, 2, 3]);
+  assert.equal(usesSong({ "*": { mode: "s2v" } }, scenes[1], "song.wav", false), true);
+  assert.equal(usesSong({ "*": { mode: "s2v" } }, scenes[1], "", false), false);
+  assert.equal(usesSong({ "*": { mode: "i2v" } }, scenes[1], "song.wav", false), false);
+  assert.equal(modeOf({ "scene-1": { mode: "nonsense" } }, scenes[0]), "fl2v");
+  // an unchanged list moves nothing: the pictures stay where they are
+  const { moves } = pictureMoves(scenes, opts, scenes, opts);
+  assert.ok(moves.every((move) => move.from === move.to));
+  // fl2v keeps its pairs: only the clips from two pictures do not depend on each other
+  assert.deepEqual(chainFrom(scenes, {}, 1), [1]);
+});
+
+test("the project's video mode is the way every clip is made unless a scene says otherwise", () => {
+  assert.equal(defaultMode({ videoMode: "R2V", audioSource: "input" }), "r2v");
+  assert.equal(defaultMode({ videoMode: "I2V", audioSource: "s2v" }), "s2v");
+  assert.equal(defaultMode({ videoMode: "T2V" }), "t2v");
+  assert.equal(defaultMode({ videoMode: "nonsense" }), "fl2v");
+  const opts = withProjectMode({ "scene-2": { mode: "i2v" } }, "r2v");
+  assert.deepEqual(scenes.map((scene) => modeOf(opts, scene)), ["r2v", "i2v", "r2v", "r2v"]);
 });

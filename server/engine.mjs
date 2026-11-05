@@ -12,8 +12,10 @@ const MAX_ENTRIES = 500;
 export function engineSlot(tool, inputs) {
   // `slot: "sheet"` marks a character-sheet image: it has its own workflow, and shares the image models and LoRAs.
   if (tool === "comfyui_krea_image") return { kind: "image", slot: inputs.slot === "sheet" ? "Sheet" : inputs.reference_image_path ? "I2I" : "T2I" };
+  // Picture edit has its own workflow slot (the I2I one): a workflow set there replaces the built-in Qwen Image 2.1 graph.
+  if (tool === "comfyui_image_edit") return { kind: "image", slot: "I2I" };
   if (tool === "h3_reference_video") return { kind: "video", slot: "R2V" };
-  if (tool === "h3_local_video") return { kind: "video", slot: inputs.reference_image_path ? "I2V" : "T2V" };
+  if (tool === "h3_local_video") return { kind: "video", slot: inputs.reference_image_path || inputs.first_frame_video_path ? "I2V" : "T2V" };
   return null;
 }
 
@@ -41,7 +43,8 @@ export function applyEngine(settings, call) {
   const section = picked && settings.engine?.[picked.kind];
   const workflow = section?.[`workflow${picked?.slot}`];
   if (!workflow) {
-    const overrides = section && overridesOf(section, extra);
+    // The built-in edit graph uses Qwen models: the Krea models and LoRAs of the settings do not belong to it.
+    const overrides = section && tool !== "comfyui_image_edit" && overridesOf(section, extra);
     return { tool, inputs: overrides ? { ...inputs, overrides } : inputs, allowRoots: [] };
   }
 

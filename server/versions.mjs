@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat, utimes } from "node:fs/promises";
 import path from "node:path";
 
 import { writeFileAtomic } from "./fs-util.mjs";
@@ -91,6 +91,68 @@ export function createVersionStore({ projectDir, mutex, readAssets, updateAssets
         note(entry, { type: "remade", version: next, prompt: record?.prompt, ...(record?.lyrics ? { lyrics: record.lyrics } : {}) });
         await save(manifest, all);
         return entry;
+      });
+    },
+
+    /**
+     * Puts the first/last pictures of the scenes where the scene list now wants them (the names follow the clip numbers).
+     * `moves` are [{ from, to }]: `to` gets a copy of `from` (same time stamp, so clips are not marked out of date); `from` null only
+     * empties the spot, `to` null only puts `from` aside; from === to stays untouched. Whatever stood at a spot is put into
+     * assets/versions first, so nothing is deleted. `clips` are [{ clip, first, last }]: the pictures the made clips are recorded with.
+     * shortcut: the version history of a picture that is put aside is dropped (its files stay), when it matters keep the entry under the archive name.
+     */
+    async arrange(id, { moves, clips = [] }) {
+      const picture = /^assets\/images\/[\p{L}\p{N}._-]+\.png$/u;
+      const bad = (rel) => rel !== null && !(typeof rel === "string" && picture.test(rel));
+      if (!Array.isArray(moves) || moves.length > 400 || moves.some((move) => bad(move?.from) || bad(move?.to))) throw new HttpError(400, "옮길 그림 목록이 올바르지 않습니다.");
+      if (!Array.isArray(clips) || clips.length > 200 || clips.some((item) => !/^assets\/video\/[\p{L}\p{N}._-]+\.mp4$/u.test(item?.clip) || bad(item.first) || bad(item.last))) throw new HttpError(400, "영상 기록 목록이 올바르지 않습니다.");
+      return locked(id, async (dir, manifest) => {
+        const keep = new Set(moves.filter((move) => move.from && move.from === move.to).map((move) => move.to));
+        const spots = [...new Set(moves.flatMap((move) => [move.from, move.to]).filter((rel) => rel && !keep.has(rel)))];
+        const stamp = Date.now().toString(36);
+        const aside = new Map();
+        await mkdir(path.join(dir, "assets", "versions"), { recursive: true });
+        for (const rel of spots) {
+          const file = await resolveInside(dir, rel);
+          if (!(await stat(file).catch(() => null))?.isFile()) continue;
+          const archive = `assets/versions/${path.basename(rel, ".png")}-moved-${stamp}.png`;
+          await rename(file, await resolveInside(dir, archive));
+          aside.set(rel, archive);
+        }
+        const copied = [];
+        for (const { from, to } of moves) {
+          if (!from || !to || keep.has(to)) continue;
+          const source = await resolveInside(dir, aside.get(from) ?? from);
+          const info = await stat(source).catch(() => null);
+          if (!info?.isFile()) continue;
+          const target = await resolveInside(dir, to);
+          await copyFile(source, target);
+          await utimes(target, info.atime, info.mtime);
+          copied.push({ from, to });
+        }
+        await updateAssets(dir, (records) => {
+          const before = { ...records };
+          for (const [rel, archive] of aside) {
+            delete records[rel];
+            if (before[rel]) records[archive] = before[rel];
+          }
+          for (const { from, to } of copied) if (before[from]) records[to] = before[from];
+          for (const item of clips) if (records[item.clip]?.first !== undefined) records[item.clip] = { ...records[item.clip], first: item.first, last: item.last };
+        });
+        const all = await readVersions(dir);
+        const entries = {};
+        for (const rel of aside.keys()) {
+          if (all[rel]) entries[rel] = all[rel];
+          delete all[rel];
+        }
+        for (const { from, to } of copied) {
+          const entry = entries[from];
+          if (!entry || all[to]) continue;
+          for (const version of entry.versions) if (version.file === from) version.file = to;
+          all[to] = entry;
+        }
+        await save(manifest, all);
+        return { copied: copied.length, aside: aside.size };
       });
     },
 

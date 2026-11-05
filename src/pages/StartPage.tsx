@@ -240,7 +240,7 @@ export default function StartPage({ projects, currentId, view, onWork, onOpenDet
                       onReset={onReset}
                       note={path === "defaults.durationSeconds" && snapped ? `실제 길이 ${snapped.seconds.toFixed(1)}초 (${snapped.frames}프레임)` : undefined}
                     />
-                    {path === "defaults.audioSource" && settings.defaults.audioSource === "input" && <SongPicker projectId={current.id} view={view} onSet={onSet} notify={notify} />}
+                    {path === "defaults.audioSource" && (settings.defaults.audioSource === "input" || settings.defaults.audioSource === "s2v") && <SongPicker projectId={current.id} view={view} onSet={onSet} notify={notify} />}
                   </Fragment>
                 ))}
               </div>

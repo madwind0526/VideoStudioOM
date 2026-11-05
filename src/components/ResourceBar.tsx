@@ -7,6 +7,7 @@ const level = (percent: number) => (percent > 90 ? "high" : percent > 70 ? "mid"
 
 const TOOL_LABELS: Record<string, string> = {
   comfyui_krea_image: "이미지 생성 중",
+  comfyui_image_edit: "이미지 편집 중",
   h3_local_video: "영상 생성 중",
   qwen3_tts: "음성 생성 중",
   songyue_music: "음악 생성 중",

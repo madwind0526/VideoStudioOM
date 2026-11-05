@@ -136,3 +136,33 @@ test("a picture is put at a fixed name, cut to the size without stretching, and 
       await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }));
+
+test("arranging pictures: a picture follows its scene, the one that stood there is put aside, a name outside assets/images is refused", () =>
+  withServer(async (call, { root }) => {
+    const { body } = await call("POST", "/api/projects", { title: "arrange" });
+    const id = encodeURIComponent(body.project.id);
+    const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-arrange-"));
+    try {
+      const picture = (name, color) => {
+        const file = path.join(dir, name);
+        execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=${color}:s=64x64`, "-frames:v", "1", file]);
+        return file;
+      };
+      for (const [name, color] of [["1-1", "red"], ["2-1", "green"]]) {
+        await call("POST", `/api/projects/${id}/import`, { from: picture(`${name}.png`, color), as: `assets/images/${name}.png`, fit: [64, 64] });
+      }
+      const at = (name) => path.join(root, body.project.id, "assets", "images", name);
+      const before = (await readFile(at("2-1.png"))).length;
+      const moved = await call("POST", `/api/projects/${id}/arrange`, { moves: [{ from: "assets/images/2-1.png", to: "assets/images/3-1.png" }, { from: "assets/images/2-1.png", to: "assets/images/2-2.png" }, { from: "assets/images/1-1.png", to: "assets/images/1-1.png" }, { from: null, to: "assets/images/2-1.png" }] });
+      assert.equal(moved.status, 200);
+      assert.equal(moved.body.copied, 2);
+      assert.equal((await readFile(at("3-1.png"))).length, before);
+      assert.equal((await readFile(at("2-2.png"))).length, before);
+      const names = (await call("GET", `/api/projects/${id}`)).body.project.media.images.map((item) => item.path);
+      // 2-1 was emptied (its picture stands at 3-1 and 2-2), 1-1 stayed where it was
+      assert.deepEqual(names.filter((name) => !name.includes("versions")).sort(), ["assets/images/1-1.png", "assets/images/2-2.png", "assets/images/3-1.png"]);
+      assert.equal((await call("POST", `/api/projects/${id}/arrange`, { moves: [{ from: "assets/images/../x.png", to: "assets/images/1-1.png" }] })).status, 400);
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }));

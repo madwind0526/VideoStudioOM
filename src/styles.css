@@ -2852,10 +2852,21 @@ details.prompt-log textarea {
   font-size: 11px;
 }
 
+.scene-extra {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.scene-extra-main {
+  flex: 1;
+  min-width: 0;
+}
+
 .scene-slots {
   display: inline-flex;
   gap: 10px;
-  margin-left: auto;
+  margin-top: 10px;
 }
 
 button.scene-slot {
