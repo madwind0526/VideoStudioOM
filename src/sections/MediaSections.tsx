@@ -1,6 +1,6 @@
 import { ClipboardCheck, Combine, FileText, Layers, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { clipPathOf } from "../../shared/scenes.mjs";
+import { clipPathOf, defaultMode, withProjectMode } from "../../shared/scenes.mjs";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
 import VersionDialog from "../components/VersionDialog";
 import VideoPlayer from "../components/VideoPlayer";
@@ -256,7 +256,7 @@ function Top({ props, kinds, outputs, creating, bible }: { props: SectionProps; 
   const { project, detail, view, jobs, onJobsChanged, notify } = props;
   return (
     <>
-      {creating && <GenerateForm projectId={project.id} kinds={kinds} view={view} media={{ images: detail?.media.images ?? [], audio: detail?.media.audio ?? [] }} bible={bible} running={jobs.current !== null} notify={notify} onStarted={onJobsChanged} />}
+      {creating && <GenerateForm projectId={project.id} kinds={kinds} view={view} media={{ images: detail?.media.images ?? [], audio: detail?.media.audio ?? [], videos: detail?.media.videos ?? [] }} bible={bible} running={jobs.current !== null} notify={notify} onStarted={onJobsChanged} />}
       <JobList projectId={project.id} jobs={jobs.history} outputs={outputs} pending={jobs.pending} paused={jobs.paused} onChanged={onJobsChanged} />
     </>
   );
@@ -275,10 +275,11 @@ export function ImagesSection(props: SectionProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const plan = useJsonFile<{ scenes?: Scene[] }>(props.project.id, "artifacts/scene_plan.json", props.notify);
-  const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
+  const savedOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
   const bible = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify).data;
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
+  const sceneOpts = withProjectMode(savedOpts, defaultMode(settings?.defaults)) as SceneOpts;
   const versionDialog = useVersionDialog(props, "image", images);
 
   // The first and last picture of every clip (named clip number-1 and -2, see shared/scenes.mjs); a connected one is shared by two clips.
@@ -413,10 +414,11 @@ export function VideosSection(props: SectionProps) {
   const [qa, setQa] = useState<ClipCheck[]>([]);
   const bibleFile = useJsonFile<Bible>(props.project.id, BIBLE_FILE, props.notify);
   const bible = bibleFile.data;
-  const sceneOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
+  const savedOpts = useJsonFile<SceneOpts>(props.project.id, SCENE_OPTS_FILE, props.notify).data;
   const videos = props.detail?.media.videos ?? [];
   const images = props.detail?.media.images ?? [];
   const settings = props.view?.effective;
+  const sceneOpts = withProjectMode(savedOpts, defaultMode(settings?.defaults)) as SceneOpts;
   // Clips in scene order (the join and the cards follow it); clips that belong to no scene come after, in name order.
   const scenes = plan.data?.scenes ?? [];
   const sceneOrder = new Map(scenes.map((scene, index) => [clipPathOf(scene.id), index]));

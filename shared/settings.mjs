@@ -33,13 +33,13 @@ export const DEFAULTS = {
     orientation: "landscape",
     customSize: { generate: [736, 416] },
     durationSeconds: 60,
-    videoMode: "I2V",
+    videoMode: "FL2V",
     audioSource: "input",
     // Project path of the song picked for audioSource "input" (set per project on the start page).
     songFile: "",
     imageModel: "krea2-turbo",
   },
-  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3, codec: "h264", freeVramWhenIdle: true },
+  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3, codec: "h264", freeVramWhenIdle: true, continueMode: "frame" },
   audio: { musicFormat: "flac", voice: { tool: "qwen3_tts", name: "Sohee", language: "ko" } },
   llm: {
     provider: "claude-cli",
@@ -151,6 +151,7 @@ const RULES = {
   "video.seamRampSeconds": numBetween("이음새 색 보정 구간(초)", 0.5, 10),
   "video.codec": oneOf("영상 저장 방식", VIDEO_CODECS),
   "video.freeVramWhenIdle": bool("작업이 끝나면 VRAM 비우기"),
+  "video.continueMode": oneOf("이어붙이기 방식", ["frame", "motion"]),
   "audio.musicFormat": oneOf("노래 저장 형식", MUSIC_FORMATS),
   "audio.voice.tool": text("음성 도구", 60),
   "audio.voice.name": text("음성 이름", 60),

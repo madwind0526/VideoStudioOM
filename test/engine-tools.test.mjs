@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { H3, h3Frames, h3Graph, h3Prompt, h3RefGraph, kreaGraph, pickKreaModels } from "../server/engine/graphs.mjs";
+import { QWENVL, H3, h3Frames, h3Graph, h3Prompt, h3RefGraph, kreaGraph, pickKreaModels } from "../server/engine/graphs.mjs";
 import { outsideRoots, promptsOf, runTool, splitSpeech } from "../server/engine/tools.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "../server/engine/workflow-patch.mjs";
 import { fakeComfy } from "./helpers/fake-comfy.mjs";
@@ -123,6 +123,47 @@ test("paths outside the allowed folders are found; speech is split in sentences 
 const run = (tool, inputs, comfy, extra = {}) =>
   runTool({ tool, inputs, connections: { comfyUrl: comfy.url, refUrl: comfy.url, refDir: "x", songyueUrl: "http://127.0.0.1:9", songyueDir: "x" }, deps: { ensure: async () => undefined, ...extra } });
 
+test("describe_image: the picture is uploaded to Rev0 and the text of the QwenVL node comes back", async () => {
+  const comfy = await fakeComfy({ nodes: { AILab_QwenVL: loader("model_name", [QWENVL.model, "Qwen3-VL-2B-Instruct"]) }, outputs: { 6: { text: ["  A girl on a beach.  "] } } });
+  const dir = await tmp();
+  try {
+    const image = path.join(dir, "a.png");
+    await writeFile(image, "IMG");
+    const result = await run("describe_image", { image_path: image, seed: 3 }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.data.text, "A girl on a beach.");
+    assert.deepEqual(comfy.seen.uploads, ["a.png"]);
+    assert.equal(comfy.seen.prompts[0][7].inputs.model_name, QWENVL.model);
+    assert.equal(comfy.seen.prompts[0][7].inputs.keep_model_loaded, false);
+    assert.equal((await run("describe_image", { image_path: path.join(dir, "none.png") }, comfy)).code, "bad_input");
+    const without = await fakeComfy({ nodes: { AILab_QwenVL: loader("model_name", ["Qwen3-VL-2B-Instruct"]) } });
+    assert.equal((await run("describe_image", { image_path: image }, without)).code, "unavailable");
+    without.close();
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("describe_video: the clip goes to the video input of QwenVL and the summary comes back", async () => {
+  const comfy = await fakeComfy({ nodes: { AILab_QwenVL: loader("model_name", [QWENVL.model]) }, outputs: { 6: { text: ["A bee flies left."] } } });
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "c.mp4");
+    await writeFile(clip, "VID");
+    const result = await run("describe_video", { video_path: clip }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.data.text, "A bee flies left.");
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[5].inputs.video, "up_c.mp4");
+    assert.deepEqual(graph[7].inputs.video, ["5", 0]);
+    assert.equal(graph[7].inputs.preset_prompt, "📹 Video Summary");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("Krea image: models are picked from ComfyUI, overrides add a LoRA, the result is saved", async () => {
   const comfy = await fakeComfy({
     nodes: { UNETLoader: loader("unet_name", ["Krea\\krea2_turbo_nvfp4.safetensors"]), CLIPLoader: loader("clip_name", ["Qwen\\qwen3vl_4b_fp8_scaled.safetensors"]), VAELoader: loader("vae_name", ["qwen\\qwen_image_vae.safetensors"]) },
@@ -212,6 +253,102 @@ test("H3 reference video: pictures become reference inputs, limits and missing f
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("motion continuation: the reference graph pins the clip before and cuts the pinned frames off again", () => {
+  const graph = h3RefGraph({ prompt: "p", seed: 1, model: "turbo", images: ["a.png"], motion: { video: "prev.mp4", total: 124, latent: "C:/x/prev.safetensors" }, saveLatent: "vsom_latents/c" });
+  assert.equal(graph[73].inputs.batch_index, 124 - 39);
+  assert.equal(graph[74].inputs.latent_path, "C:/x/prev.safetensors");
+  assert.deepEqual(graph[20].inputs.conditioning, ["75", 0]);
+  assert.deepEqual(graph[75].inputs.context_latent, ["74", 0]);
+  assert.deepEqual(graph[76].inputs.trim_frames, ["75", 1]);
+  assert.deepEqual(graph[14].inputs.images, ["76", 0]);
+  assert.deepEqual(graph[80].inputs.latent, ["11", 0]);
+  // Without motion nothing is added and the clip is decoded as before.
+  const plain = h3RefGraph({ prompt: "p", seed: 1, model: "turbo", images: ["a.png"] });
+  assert.equal(plain[75], undefined);
+  assert.deepEqual(plain[14].inputs.images, ["12", 0]);
+});
+
+test("motion continuation: with the latent of the clip before the clip continues its motion, without it the last picture is used", async () => {
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=3:r=24", "-pix_fmt", "yuv420p", clip);
+    const before = path.join(dir, "assets", "video", "clip-1.mp4");
+    await mkdir(path.dirname(before), { recursive: true });
+    await copyFile(clip, before);
+    const picture = path.join(dir, "a.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=green:s=64x48", "-frames:v", "1", picture);
+    const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.refUnets.turbo]) }, outputs: { 15: { video: [{ filename: "r.mp4" }] } }, files: { "r.mp4": await readFile(clip) } });
+    const connections = { comfyUrl: comfy.url, refUrl: comfy.url, refDir: path.join(dir, "rev0"), songyueUrl: "http://127.0.0.1:9", songyueDir: "x" };
+    const call = (output) => runTool({ tool: "h3_reference_video", inputs: { prompt: "go on", reference_image_paths: [picture], first_frame_video_path: before, continue_mode: "motion", duration_seconds: 3, width: 64, height: 48, upscale: false, model: "turbo", output_path: output }, connections, deps: { ensure: async () => undefined } });
+    // No latent next to the clip before: falls back to its last picture.
+    const plain = await call(path.join(dir, "assets", "video", "clip-2.mp4"));
+    assert.equal(plain.ok, true, JSON.stringify(plain));
+    assert.match(plain.data.continue_mode, /^frame/);
+    assert.equal(comfy.seen.prompts[0][75], undefined);
+    // With it: the motion nodes are in the graph, the clip is 39 frames longer, the video of the clip before was uploaded.
+    await writeFile(path.join(dir, "assets", "video", "clip-1.latent"), "LATENT");
+    const motion = await call(path.join(dir, "assets", "video", "clip-3.mp4"));
+    comfy.close();
+    assert.equal(motion.ok, true, JSON.stringify(motion));
+    assert.equal(motion.data.continue_mode, "motion");
+    const graph = comfy.seen.prompts[1];
+    assert.equal(graph[75].class_type, "MiniMaxH3MotionContext");
+    assert.equal(graph[73].inputs.batch_index, 72 - 39);
+    assert.equal(graph[6].inputs.length, h3Frames(3 + 39 / 24));
+    assert.ok(comfy.seen.uploads.includes("clip-1.mp4"));
+    assert.equal(graph[80].class_type, "MiniMaxH3MotionContextSaveLatent");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("motion continuation, image to video: a clip without pictures pins the clip before, the first clip only saves its latent", async () => {
+  const graph = h3Graph({ prompt: "p", seed: 1, motion: { video: "prev.mp4", total: 124, latent: "C:/x/prev.safetensors" }, saveLatent: "vsom_latents/c" });
+  assert.equal(graph[6].inputs.first_frame, undefined);
+  assert.deepEqual(graph[10].inputs.conditioning, ["75", 0]);
+  assert.deepEqual(graph[14].inputs.images, ["76", 0]);
+  assert.deepEqual(graph[80].inputs.latent, ["11", 0]);
+  const first = h3Graph({ prompt: "p", seed: 1, image: "a.png", saveLatent: "vsom_latents/c" });
+  assert.equal(first[75], undefined);
+  assert.deepEqual(first[14].inputs.images, ["12", 0]);
+  assert.equal(first[80].class_type, "MiniMaxH3MotionContextSaveLatent");
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=3:r=24", "-pix_fmt", "yuv420p", clip);
+    const before = path.join(dir, "assets", "video", "clip-1.mp4");
+    await mkdir(path.dirname(before), { recursive: true });
+    await copyFile(clip, before);
+    const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.unet]) }, outputs: { 15: { video: [{ filename: "r.mp4" }] } }, files: { "r.mp4": await readFile(clip) } });
+    const connections = { comfyUrl: "http://127.0.0.1:9", refUrl: comfy.url, refDir: path.join(dir, "rev0"), songyueUrl: "http://127.0.0.1:9", songyueDir: "x" };
+    const call = (extra) => runTool({ tool: "h3_local_video", inputs: { prompt: "go on", first_frame_video_path: before, continue_mode: "motion", duration_seconds: 3, width: 64, height: 48, upscale: false, ...extra }, connections, deps: { ensure: async () => undefined } });
+    await writeFile(path.join(dir, "assets", "video", "clip-1.latent"), "LATENT");
+    const motion = await call({ output_path: path.join(dir, "assets", "video", "clip-2.mp4") });
+    assert.equal(motion.ok, true, JSON.stringify(motion));
+    assert.equal(motion.data.continue_mode, "motion");
+    assert.equal(comfy.seen.prompts[0][75].class_type, "MiniMaxH3MotionContext");
+    assert.equal(comfy.seen.prompts[0][6].inputs.length, h3Frames(3 + 39 / 24));
+    // A first and last picture clip keeps the last-picture way (the motion way is not tried with it).
+    const last = path.join(dir, "last.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x48", "-frames:v", "1", last);
+    const fl2v = await call({ last_frame_path: last, output_path: path.join(dir, "assets", "video", "clip-3.mp4") });
+    comfy.close();
+    assert.equal(fl2v.ok, false, "no ComfyUI on 8190 in this test: it must not have used Rev0");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("motion continuation, sound clip: the song piece starts after the pinned frames and no latent is needed", () => {
+  const graph = h3Graph({ prompt: "p", seed: 1, audio: "song.wav", motion: { video: "prev.mp4", total: 124, length: 39 } });
+  assert.equal(graph[19].inputs.frame_idx, 39);
+  assert.equal(graph[74], undefined);
+  assert.equal(graph[75].inputs.context_latent, undefined);
+  assert.deepEqual(graph[75].inputs.conditioning, ["19", 0]);
+  assert.equal(h3Graph({ prompt: "p", seed: 1, audio: "song.wav", image: "a.png" })[19].inputs.frame_idx, 0);
 });
 
 test("custom workflow: a missing node is named, a working graph runs with the prompt and files filled in", async () => {
@@ -448,6 +585,65 @@ test("H3 reference video: a piece of the song guides the clip and the clip befor
     assert.equal((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], audio_path: song, audio_range: [10, 2], output_path: out, model: "turbo", upscale: false }, comfy)).code, "bad_input");
     assert.equal((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], audio_path: song, audio_range: "x", output_path: out, model: "turbo", upscale: false }, comfy)).code, "bad_input");
     assert.match((await run("h3_reference_video", { prompt: "x", reference_image_paths: [picture], first_frame_video_path: path.join(dir, "none.mp4"), output_path: out }, comfy)).error, /앞 장면 영상 파일이 없습니다/);
+    comfy.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Qwen image edit: models are picked, the first picture is fitted and uploaded with the others, the result is cut to the size", async () => {
+  const dir = await tmp();
+  // the fake server answers with a real picture so the final cut to the size works
+  const served = path.join(dir, "served.png");
+  ffmpeg("-f", "lavfi", "-i", "color=c=green:s=320x240", "-frames:v", "1", served);
+  const comfy = await fakeComfy({
+    nodes: {
+      UNETLoader: loader("unet_name", ["Qwen\qwen_image_2.1_turbo_int8_convrot.safetensors", "Qwen\qwen_image_2.1_int8_convrot.safetensors"]),
+      CLIPLoader: loader("clip_name", ["Qwen\qwen3vl_8b_int8_convrot.safetensors"]),
+      VAELoader: loader("vae_name", ["qwen\qwen_image_2.1_vae_bf16.safetensors"]),
+    },
+    outputs: { 10: { images: [{ filename: "e.png", type: "temp" }] } },
+    files: { "e.png": await readFile(served) },
+  });
+  try {
+    const sheet = path.join(dir, "sheet.png");
+    const face = path.join(dir, "face.png");
+    ffmpeg("-f", "lavfi", "-i", "color=c=red:s=200x100", "-frames:v", "1", sheet);
+    ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x64", "-frames:v", "1", face);
+    const out = path.join(dir, "assets", "images", "1-2.png");
+    const result = await run("comfyui_image_edit", { prompt: "<image1> turns around", reference_image_path: sheet, reference_image_paths: [face], width: 96, height: 128, output_path: out, seed: 7 }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[1].inputs.unet_name, "Qwen\qwen_image_2.1_int8_convrot.safetensors");
+    assert.equal(graph[5].inputs.prompt, "<image1> turns around");
+    assert.deepEqual(graph[5].inputs["images.image_2"], ["21", 0]);
+    assert.deepEqual(graph[6].inputs.latent_image, ["5", 2]);
+    assert.equal(graph[6].inputs.seed, 7);
+    assert.equal(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", out]).toString().trim(), "96,128");
+    assert.equal((await run("comfyui_image_edit", { prompt: "x", output_path: out }, comfy)).code, "bad_input");
+    assert.equal((await run("comfyui_image_edit", { prompt: "x", reference_image_path: path.join(dir, "none.png"), output_path: out }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("H3 video: a chained clip starts from the last frame of the clip before; a missing clip before is refused", async () => {
+  const dir = await tmp();
+  try {
+    const clip = path.join(dir, "served.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=1:r=24", "-pix_fmt", "yuv420p", clip);
+    const before = path.join(dir, "before.mp4");
+    ffmpeg("-f", "lavfi", "-i", "testsrc=s=64x48:d=2:r=24", "-pix_fmt", "yuv420p", before);
+    const comfy = await fakeComfy({ nodes: { UNETLoader: loader("unet_name", [H3.unet]) }, outputs: { 15: { video: [{ filename: "clip.mp4" }] } }, files: { "clip.mp4": await readFile(clip) } });
+    const out = path.join(dir, "assets", "video", "c2.mp4");
+    const result = await run("h3_local_video", { prompt: "she waves", first_frame_video_path: before, width: 64, height: 48, duration_seconds: 3, upscale: false, output_path: out }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    // the picture taken from the clip before went to ComfyUI as the first picture; no temporary file is left
+    assert.deepEqual(comfy.seen.uploads, ["c2.first.png"]);
+    await assert.rejects(stat(path.join(dir, "assets", "video", "c2.cont.png")));
+    const missing = await run("h3_local_video", { prompt: "x", first_frame_video_path: path.join(dir, "none.mp4"), output_path: out }, comfy);
+    assert.equal(missing.code, "bad_input");
     comfy.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

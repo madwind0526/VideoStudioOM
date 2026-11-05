@@ -48,6 +48,7 @@ add({ path: "video.upscale", label: "확대 방식", kind: "select", options: op
 add({ path: "video.seamRampSeconds", label: "이음새 색 보정 구간(초)", kind: "number", min: 0.5, max: 10, step: 0.5, hint: "이어 붙일 때 각 구간의 시작 색을 앞 구간 끝에 맞춘 뒤, 이 시간에 걸쳐 원래 색으로 되돌립니다." });
 add({ path: "video.codec", label: "영상 저장 방식", kind: "select", options: options(VIDEO_CODECS, CODEC_LABELS), hint: "이어 붙인 영상과 내보내기의 기본 코덱입니다. NVENC는 이 PC의 ffmpeg가 지원할 때만 됩니다." });
 add({ path: "video.freeVramWhenIdle", label: "작업이 끝나면 VRAM 자동 비우기", kind: "bool", hint: "대기 중인 작업이 없어지면 ComfyUI 두 서버가 들고 있는 모델을 내려 VRAM을 비웁니다. 다음 작업은 모델을 다시 올리느라 처음에 조금 더 걸립니다." });
+add({ path: "video.continueMode", label: "이어붙이기 방식", kind: "select", options: [{ value: "frame", label: "마지막 그림 (기본)" }, { value: "motion", label: "모션 이어받기 (Chain)" }], hint: "앞 클립에 이어지는 클립을 만드는 방법입니다. 마지막 그림: 앞 클립의 마지막 그림 한 장에서 시작합니다. 모션 이어받기: 앞 클립의 마지막 39프레임과 소리를 이어받아 움직임이 끊기지 않게 합니다(참조 영상(R2V), 이미지→영상(I2V), 소리(S2V) 클립에 적용, 첫·끝 이미지(FL2V)는 항상 마지막 그림. 앞 클립도 같은 방식으로 만들어야 하고 Rev0 ComfyUI에서 돕니다. 이어지는 클립은 겹친 만큼 길게 만든 뒤 잘라 냅니다)." });
 add({ path: "video.finalFps", label: "최종 FPS", kind: "number", min: 12, max: 60, step: 1, hint: "생성은 24fps, 최종 파일에서 변환합니다." });
 
 add({ path: "audio.musicFormat", label: "노래 저장 형식", kind: "select", options: options(MUSIC_FORMATS) });

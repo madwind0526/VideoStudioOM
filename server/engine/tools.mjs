@@ -6,7 +6,7 @@ import { concatMedia, ffmpegFor } from "../concat.mjs";
 import { ffprobeFor } from "../probe.mjs";
 import { runCapture } from "../post.mjs";
 import { createComfy } from "./comfy.mjs";
-import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, rtxGraph } from "./graphs.mjs";
+import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, pickQwenEditModels, qwenEditGraph, QWENVL, qwenVlGraph, qwenVlVideoGraph, rtxGraph } from "./graphs.mjs";
 import { composeSheet, extractFrame, SHEET_SECONDS, SHEET_SHOTS, sheetPrompt, sheetReferencePrompt } from "./sheet.mjs";
 import { ensureService } from "./services.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "./workflow-patch.mjs";
@@ -21,10 +21,13 @@ class ToolError extends Error {
 
 const REQUIRED = {
   comfyui_krea_image: ["prompt", "output_path"],
+  comfyui_image_edit: ["prompt", "output_path"],
   h3_local_video: ["prompt", "output_path"],
   h3_reference_video: ["prompt", "output_path"],
   comfyui_workflow: ["workflow_path", "output_path"],
   character_sheet: ["prompt", "output_path"],
+  describe_image: ["image_path"],
+  describe_video: ["video_path"],
   qwen3_tts: ["text", "output_path"],
   songyue_music: ["prompt", "output_path"],
   songyue_sfx: ["prompt", "output_path"],
@@ -110,6 +113,19 @@ async function fitImage(context, source, width, height, dest) {
   return dest;
 }
 
+/** Uploads one picture to the Rev0 ComfyUI and returns the long description QwenVL writes for it. */
+async function describePicture(file, inputs, context, makeGraph = qwenVlGraph) {
+  await context.ensure("ref");
+  const comfy = context.comfy(context.connections.refUrl);
+  if (!(await comfy.options("AILab_QwenVL", "model_name")).includes(QWENVL.model)) throw new ToolError(`ComfyUI에 QwenVL 모델(${QWENVL.model})을 고를 수 없습니다. ComfyUI-QwenVL 노드를 확인하세요.`, "unavailable");
+  const seed = inputs.seed ?? randomSeed();
+  const image = await comfy.upload(file, path.basename(file));
+  const entry = await comfy.wait(await comfy.submit(makeGraph({ [makeGraph === qwenVlGraph ? "image" : "video"]: image, seed, maxTokens: inputs.max_tokens })), { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+  const text = String(entry.outputs?.["6"]?.text?.[0] ?? "").trim();
+  if (!text) throw new ToolError("그림 설명이 비어 있습니다.", "failed");
+  return { artifacts: [], seed, model: QWENVL.model, data: { provider: "comfyui-qwenvl", text, seed } };
+}
+
 /** The piece [start, length] (seconds) of an audio file as a wav of its own: the part of the song that belongs to one scene. */
 async function sliceAudio(context, source, range, dest) {
   const [start, length] = Array.isArray(range) ? range.map(Number) : [NaN, NaN];
@@ -125,6 +141,14 @@ async function lastFrame(context, clip, dest) {
   const seconds = Math.max(0, Number(stdout.toString().trim()) - 0.4);
   await context.capture(ffmpegFor(context.ffmpegPath), ["-loglevel", "error", "-y", "-ss", String(seconds), "-i", clip, "-frames:v", "1", dest]);
   return dest;
+}
+
+/** Number of frames of a video file (the duration times 24 when the container does not say). */
+async function frameCount(context, clip) {
+  const { stdout } = await context.capture(ffprobeFor(context.ffmpegPath), ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=nb_frames,duration", "-of", "default=noprint_wrappers=1", clip]);
+  // The fields come as name=value lines in the order ffprobe likes, not the order asked for.
+  const [frames, seconds] = ["nb_frames", "duration"].map((name) => Number(new RegExp(`^${name}=(.*)$`, "m").exec(stdout.toString())?.[1]));
+  return Number.isFinite(frames) && frames > 0 ? frames : Math.round((seconds || 0) * 24);
 }
 
 /** Width and height of a video file. */
@@ -180,6 +204,24 @@ async function h3Models(comfy, wanted) {
 }
 
 const HANDLERS = {
+  /** A long English description of a picture from the QwenVL vision model (Rev0 server). Returns data.text; makes no file. */
+  async describe_image(inputs, context) {
+    if (!(await exists(inputs.image_path))) throw new ToolError(`그림 파일이 없습니다: ${inputs.image_path}`, "bad_input");
+    // A clip stands for its last picture: the picture the next clip of a scene chain starts from.
+    const temp = /\.(mp4|mov|webm|mkv)$/i.test(inputs.image_path) ? path.join(await mkdtemp(path.join(os.tmpdir(), "vsom-desc-")), "last.png") : null;
+    try {
+      return await describePicture(temp ? await lastFrame(context, inputs.image_path, temp) : inputs.image_path, inputs, context);
+    } finally {
+      if (temp) await rm(path.dirname(temp), { recursive: true, force: true });
+    }
+  },
+
+  /** A summary of a whole clip (what happens, how the camera moves) from the QwenVL vision model. Returns data.text; makes no file. */
+  async describe_video(inputs, context) {
+    if (!(await exists(inputs.video_path))) throw new ToolError(`영상 파일이 없습니다: ${inputs.video_path}`, "bad_input");
+    return describePicture(inputs.video_path, inputs, context, qwenVlVideoGraph);
+  },
+
   async comfyui_krea_image(inputs, context) {
     await context.ensure("comfy");
     const comfy = context.comfy(context.connections.comfyUrl);
@@ -192,11 +234,50 @@ const HANDLERS = {
     return { artifacts: [dest], seed, model: models.unet, data: { provider: "comfyui-krea", output: dest, seed, model: models.unet } };
   },
 
+  /**
+   * Edits a picture with Qwen Image 2.1 from a prompt and reference pictures (the first one is the picture to edit).
+   * With `blank_canvas` (and width, height) the picture to edit is an empty grey canvas of that size and every given picture
+   * is a reference: a new picture of the people in them (the prompt names the canvas <image1>, the references <image2>, ...).
+   */
+  async comfyui_image_edit(inputs, context) {
+    const refs = [inputs.reference_image_path, ...(inputs.reference_image_paths ?? [])].filter(Boolean);
+    if (refs.length === 0) throw new ToolError("편집할 그림(reference_image_path)이 필요합니다.", "bad_input");
+    const blank = inputs.blank_canvas === true;
+    if (blank && !(inputs.width && inputs.height)) throw new ToolError("빈 캔버스에는 width와 height가 필요합니다.", "bad_input");
+    if (refs.length + (blank ? 1 : 0) > 10) throw new ToolError("그림은 캔버스를 포함해 10장까지입니다.", "bad_input");
+    for (const file of refs) if (!(await exists(file))) throw new ToolError(`그림 파일이 없습니다: ${file}`, "bad_input");
+    const output = await prepareOutput(inputs);
+    const stem = output.slice(0, -path.extname(output).length);
+    const temps = [`${stem}.edit.png`, `${stem}.base.png`];
+    const seed = inputs.seed ?? randomSeed();
+    try {
+      await context.ensure("comfy");
+      const comfy = context.comfy(context.connections.comfyUrl);
+      const models = pickQwenEditModels({ unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name") });
+      if (!models) throw new ToolError("Qwen Image 2.1 모델 파일(unet, qwen3vl_8b, qwen_image_2.1_vae)이 ComfyUI에 보이지 않습니다.", "unavailable");
+      const size = inputs.width && inputs.height ? [Number(inputs.width), Number(inputs.height)] : null;
+      // The result has the shape of the first picture: give it the wanted shape up front.
+      if (blank) await context.capture(ffmpegFor(context.ffmpegPath), ["-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=0x808080:s=${size[0]}x${size[1]}`, "-frames:v", "1", temps[1]]);
+      const files = blank ? [temps[1], ...refs] : size ? [await fitImage(context, refs[0], size[0], size[1], temps[1]), ...refs.slice(1)] : refs;
+      const names = [];
+      for (const file of files) names.push(await comfy.upload(file, path.basename(file)));
+      const graph = applyOverrides(qwenEditGraph({ prompt: inputs.prompt, negative: inputs.negative_prompt ?? "", images: names, seed, steps: inputs.steps ?? 25, models }), inputs.overrides);
+      await comfy.generate(graph, "10", size ? temps[0] : output, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+      if (size) await fitImage(context, temps[0], size[0], size[1], output);
+    } finally {
+      await cleanup(temps);
+    }
+    return { artifacts: [output], seed, model: "qwen-image-2.1-edit", data: { provider: "comfyui-qwen-edit", output, seed, references: refs.length } };
+  },
+
   async h3_local_video(inputs, context) {
-    const image = inputs.reference_image_path;
+    let image = inputs.reference_image_path;
+    // The clip before this one in a chain: its last picture is the first picture here.
+    const continued = inputs.first_frame_video_path;
     const last = inputs.last_frame_path;
     let audio = inputs.audio_path;
-    if (!image || !(await exists(image))) throw new ToolError("첫 이미지(reference_image_path) 파일이 없습니다.", "bad_input");
+    if (!image && continued && !(await exists(continued))) throw new ToolError("앞 클립(first_frame_video_path) 파일이 없습니다. 앞 클립을 먼저 만드세요.", "bad_input");
+    if (!continued && (!image || !(await exists(image)))) throw new ToolError("첫 이미지(reference_image_path) 파일이 없습니다.", "bad_input");
     if (last && !(await exists(last))) throw new ToolError("마지막 이미지(last_frame_path) 파일이 없습니다.", "bad_input");
     if (audio && !(await exists(audio))) throw new ToolError("오디오(audio_path) 파일이 없습니다.", "bad_input");
     const output = await prepareOutput(inputs);
@@ -204,24 +285,44 @@ const HANDLERS = {
     const [width, height] = [Number(inputs.width ?? 736), Number(inputs.height ?? 416)];
     const upscale = inputs.upscale ?? true;
     const seed = inputs.seed ?? randomSeed();
-    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`, `${stem}.piece.wav`];
+    const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`, `${stem}.piece.wav`, `${stem}.cont.png`];
+    // Motion continuation (settings: video.continueMode "motion"): see h3_reference_video. The latent of every clip is saved next to it as
+    // <clip>.latent. A clip with sound (S2V) pins only the pictures of the clip before: its own sound is the song piece, placed after them.
+    // shortcut: a clip with a last picture (FL2V) keeps the last-picture way; with the motion context its end picture made the clip jump to another shot (tested), upgrade when that is understood.
+    const wantsMotion = inputs.continue_mode === "motion" && !last;
+    const previous = continued ? `${continued.slice(0, -path.extname(continued).length)}.latent` : null;
+    const motionOn = wantsMotion && Boolean(continued) && !inputs.reference_image_path && (Boolean(audio) || (await exists(previous)));
+    const tag = `${path.basename(stem).replace(/[^\w-]/g, "_").slice(0, 40)}_${Date.now().toString(36)}`;
+    const latentDir = path.join(context.connections.refDir, "ComfyUI", "output", "vsom_latents");
+    const latents = [path.join(latentDir, `prev_${tag}.safetensors`), path.join(latentDir, `${tag}_00001.safetensors`)];
     try {
       // With audio_range only that piece of the audio file is used (a scene's part of the song).
       if (audio && inputs.audio_range) audio = await sliceAudio(context, audio, inputs.audio_range, temps[4]);
-      await context.ensure("comfy");
-      const comfy = context.comfy(context.connections.comfyUrl);
+      if (!image && !motionOn) image = await lastFrame(context, continued, temps[5]);
+      // The motion nodes only exist on the Rev0 ComfyUI; the same models and the turbo LoRA are there.
+      const server = wantsMotion ? "ref" : "comfy";
+      await context.ensure(server);
+      const comfy = context.comfy(context.connections[`${server}Url`]);
       await h3Models(comfy, [H3.unet]);
       let [firstFile, lastFile] = [image, last];
       if (inputs.fit_images ?? true) {
-        firstFile = await fitImage(context, image, width, height, temps[2]);
+        if (image) firstFile = await fitImage(context, image, width, height, temps[2]);
         if (last) lastFile = await fitImage(context, last, width, height, temps[3]);
       }
       const upload = (file) => (file ? comfy.upload(file, path.basename(file)) : null);
+      let motion;
+      if (motionOn) {
+        await mkdir(latentDir, { recursive: true });
+        if (!audio) await copyFile(previous, latents[0]);
+        motion = { video: await comfy.upload(continued, path.basename(continued)), total: await frameCount(context, continued), latent: audio ? undefined : latents[0], length: 39 };
+      }
       const graph = applyOverrides(
-        h3Graph({ prompt: inputs.prompt, width, height, seconds: Number(inputs.duration_seconds ?? 5), steps: Number(inputs.steps ?? 4), seed, image: await upload(firstFile), last: await upload(lastFile), audio: await upload(audio) }),
+        // The pinned frames are cut off again, so the clip is made that much longer to keep the length that was asked for.
+        h3Graph({ prompt: inputs.prompt, width, height, seconds: Number(inputs.duration_seconds ?? 5) + (motion ? motion.length / 24 : 0), steps: Number(inputs.steps ?? 4), seed, image: await upload(firstFile), last: await upload(lastFile), audio: await upload(audio), motion, saveLatent: wantsMotion ? `vsom_latents/${tag}` : undefined }),
         inputs.overrides,
       );
       await comfy.generate(graph, "15", temps[0], { timeoutMs: 3_000_000, signal: context.signal, onProgress: context.onProgress });
+      if (wantsMotion) await copyFile(latents[1], `${stem}.latent`).catch(() => undefined);
       let clip = temps[0];
       if (upscale) {
         await rtxUpscale(context, clip, temps[1], Number(inputs.upscale_scale ?? 2.6));
@@ -229,10 +330,10 @@ const HANDLERS = {
       }
       await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? audio : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
     } finally {
-      await cleanup(temps);
+      await cleanup([...temps, ...latents]);
     }
     const model = `minimax-h3-turbo-4step${upscale ? "+rtx-2pass" : ""}`;
-    return { artifacts: [output], seed, model, data: { provider: "minimax-h3-local", output: output, upscaled: upscale, seed, last_frame: Boolean(last), audio_guided: Boolean(audio) } };
+    return { artifacts: [output], seed, model, data: { provider: "minimax-h3-local", output: output, upscaled: upscale, seed, last_frame: Boolean(last), audio_guided: Boolean(audio), continue_mode: wantsMotion ? (motionOn ? "motion" : continued ? "frame (no latent of the clip before)" : "motion (first clip)") : "frame" } };
   },
 
   async h3_reference_video(inputs, context) {
@@ -258,11 +359,19 @@ const HANDLERS = {
     const upscale = inputs.upscale ?? !twoStage;
     const seed = inputs.seed ?? randomSeed();
     const temps = [`${stem}.lo.mp4`, `${stem}.up.mp4`, `${stem}.first.png`, `${stem}.last.png`, `${stem}.guide.wav`, `${stem}.cont.png`];
+    // Motion continuation (settings: video.continueMode "motion"): every clip saves its latent next to itself (<clip>.latent) and a clip that
+    // continues another one pins that clip's last frames and latent. Without the other clip's latent it falls back to the last picture.
+    const wantsMotion = inputs.continue_mode === "motion";
+    const previous = continued ? `${continued.slice(0, -path.extname(continued).length)}.latent` : null;
+    const motionOn = wantsMotion && Boolean(continued) && !first && (await exists(previous));
+    const tag = `${path.basename(stem).replace(/[^\w-]/g, "_").slice(0, 40)}_${Date.now().toString(36)}`;
+    const latentDir = path.join(context.connections.refDir, "ComfyUI", "output", "vsom_latents");
+    const latents = [path.join(latentDir, `prev_${tag}.safetensors`), path.join(latentDir, `${tag}_00001.safetensors`)];
     try {
       if (guide && inputs.audio_range) guide = await sliceAudio(context, guide, inputs.audio_range, temps[4]);
-      if (continued && !first) first = await lastFrame(context, continued, temps[5]);
-      // The Deno profile runs on the Rev0 ComfyUI (it has the H3 latent upscaler); the other profiles stay on SongYUE2's.
-      const server = model === "deno" ? "ref" : "comfy";
+      if (continued && !first && !motionOn) first = await lastFrame(context, continued, temps[5]);
+      // The Deno profile runs on the Rev0 ComfyUI (it has the H3 latent upscaler, and the motion nodes); the other profiles stay on SongYUE2's.
+      const server = model === "deno" || wantsMotion ? "ref" : "comfy";
       await context.ensure(server);
       const comfy = context.comfy(context.connections[`${server}Url`]);
       await h3Models(comfy, [H3.refUnets[model]]);
@@ -270,17 +379,25 @@ const HANDLERS = {
       const uploaded = [];
       for (const image of images) uploaded.push(await comfy.upload(image, path.basename(image)));
       const [genWidth, genHeight] = twoStage ? [half(width), half(height)] : [width, height];
+      let motion;
+      if (motionOn) {
+        await mkdir(latentDir, { recursive: true });
+        await copyFile(previous, latents[0]);
+        motion = { video: await comfy.upload(continued, path.basename(continued)), total: await frameCount(context, continued), latent: latents[0], length: 39 };
+      }
       // Pinned pictures must match the generation size.
       const pinned = async (file, dest) => (file ? comfy.upload(await fitImage(context, file, genWidth, genHeight, dest), path.basename(dest)) : null);
       const graph = applyOverrides(
         h3RefGraph({
-          prompt: inputs.prompt, width: genWidth, height: genHeight, seconds: Number(inputs.duration_seconds ?? 5), steps: inputs.steps, seed, model, twoStage,
+          // The pinned frames are cut off again, so the clip is made that much longer to keep the length that was asked for.
+          prompt: inputs.prompt, width: genWidth, height: genHeight, seconds: Number(inputs.duration_seconds ?? 5) + (motion ? motion.length / 24 : 0), steps: inputs.steps, seed, model, twoStage, motion, saveLatent: wantsMotion ? `vsom_latents/${tag}` : undefined,
           first: await pinned(first, temps[2]), last: await pinned(last, temps[3]), guideAudio: guide ? await comfy.upload(guide, path.basename(guide)) : null,
           images: uploaded, video: video ? await comfy.upload(video, path.basename(video)) : null, audio: audio ? await comfy.upload(audio, path.basename(audio)) : null, useVideoAudio: Boolean(inputs.use_video_audio),
         }),
         inputs.overrides,
       );
       await comfy.generate(graph, "15", temps[0], { timeoutMs: 3_000_000, signal: context.signal, onProgress: context.onProgress });
+      if (wantsMotion) await copyFile(latents[1], `${stem}.latent`).catch(() => undefined);
       let clip = temps[0];
       if (upscale) {
         await rtxUpscale(context, clip, temps[1], Number(inputs.upscale_scale ?? 2.6));
@@ -288,9 +405,9 @@ const HANDLERS = {
       }
       await finishVideo(context, clip, output, { keepAudio: Boolean(inputs.keep_audio), audio: (inputs.mux_audio ?? true) ? (audio ?? guide) : null, fit: Array.isArray(inputs.final_size) ? inputs.final_size.map(Number) : null });
     } finally {
-      await cleanup(temps);
+      await cleanup([...temps, ...latents]);
     }
-    return { artifacts: [output], seed, model: `minimax-h3-ref2va-${model}${upscale ? "+rtx-2pass" : ""}`, data: { provider: "minimax-h3-local", output, seed, images: images.length, reference_video: Boolean(video), reference_audio: Boolean(audio) } };
+    return { artifacts: [output], seed, model: `minimax-h3-ref2va-${model}${upscale ? "+rtx-2pass" : ""}`, data: { provider: "minimax-h3-local", output, seed, images: images.length, reference_video: Boolean(video), reference_audio: Boolean(audio), continue_mode: wantsMotion ? (motionOn ? "motion" : continued ? "frame (no latent of the clip before)" : "motion (first clip)") : "frame" } };
   },
 
   /**

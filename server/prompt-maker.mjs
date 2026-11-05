@@ -38,12 +38,17 @@ const serial = (job) => {
  * Writes the prompt for one image, video clip or sound effect from the user's short idea.
  * `ask(system, user)` returns the LLM text (the server passes askLlm bound to the settings; tests pass a fake).
  */
-export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], bible = "", sheetSystem = "" }, ask) {
+export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], seen = {}, bible = "", sheetSystem = "" }, ask) {
   if (!TARGETS.includes(target)) throw new HttpError(400, "만들 대상이 올바르지 않습니다.");
   if (typeof text !== "string" || !text.trim() || text.length > 4000) throw new HttpError(400, "설명은 1~4000자로 입력하세요.");
-  const context = [title ? `Project title: ${title}` : "", firstPrompt ? `Prompt of <Picture 1> (what the first frame shows): ${firstPrompt}` : "", lastPrompt ? `Prompt of <Picture 2> (what the last frame shows): ${lastPrompt}` : "", bible].filter(Boolean).join("\n");
+  // `seen` is what a vision model sees in the real pictures; it beats the prompt a picture was made from (an imported picture has none).
+  const looks = (label, value) => (value ? `${label} (a vision model looked at it; trust what it names, ignore small guesses): ${String(value).slice(0, 3000)}` : "");
+  const context = [title ? `Project title: ${title}` : "", firstPrompt ? `Prompt of <Picture 1> (what the first frame shows): ${firstPrompt}` : "", lastPrompt ? `Prompt of <Picture 2> (what the last frame shows): ${lastPrompt}` : "", looks("What <Picture 1> shows", seen.first), looks("What <Picture 2> shows", seen.last), bible].filter(Boolean).join("\n");
   // Reference pictures of an R2V clip, in the order they are given to the model.
-  const refLines = refs.map((ref, index) => `<Picture ${index + 1}> = ${ref}`).join("\n");
+  const refLines = [
+    ...refs.map((ref, index) => `<Picture ${index + 1}> = ${ref}${seen.refs?.[index] ? `\n  (a vision model looked at it; trust what it names, ignore small guesses): ${String(seen.refs[index]).slice(0, 3000)}` : ""}`),
+    ...(seen.video ? [`<Video 1> = the reference clip (a vision model watched it; trust what it names, ignore small guesses): ${String(seen.video).slice(0, 3000)}`] : []),
+  ].join("\n");
 
   if (target === "image") {
     const answer = await serial(async () => ask(await read("krea-image.md"), `IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`));

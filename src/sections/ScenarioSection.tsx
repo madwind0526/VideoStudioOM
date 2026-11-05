@@ -1,14 +1,14 @@
-import { AlertTriangle, CheckCircle2, Clapperboard, GripVertical, Image as ImageIcon, Plus, RefreshCw, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clapperboard, GripVertical, Image as ImageIcon, Music, Plus, RefreshCw, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { chainFrom, clipPathOf, clipStatus, continuesPrevious, firstImagePath, lastImagePath, modeOf, slotImages, usesSong } from "../../shared/scenes.mjs";
+import { chainFrom, clipPathOf, clipStatus, continuesPrevious, firstImagePath, defaultMode, lastImagePath, modeOf, needsFirstPicture, pictureMoves, slotImages, usesSong, withProjectMode } from "../../shared/scenes.mjs";
 import { resolveSize } from "../../shared/settings.mjs";
 import { api, ApiError, mediaUrl } from "../api";
 import { BIBLE_FILE, charactersIn, describeReference, type Bible } from "../bible";
 import FileNavigator from "../components/FileNavigator";
 import PictureDialog from "../components/PictureDialog";
 import TimelineBar from "../components/TimelineBar";
-import { importPicture, makeItem, makePrompt, refineItem, SCENE_OPTS_FILE, startItems, stamp, type MakeItem, type SceneLora, type SceneOpt, type SceneOpts } from "./mediaJobs";
-import { refsOfScene, sceneItems, sceneSeconds, slotImageItems, slotText } from "./sceneJobs";
+import { arrangePictures, importPicture, makeItem, makePrompt, refineItem, SCENE_OPTS_FILE, startItems, stamp, type MakeItem, type SceneLora, type SceneOpt, type SceneOpts } from "./mediaJobs";
+import { refsOfScene, sceneItems, sceneSeconds, lacksReference, slotImageItems, slotRecipe, slotText } from "./sceneJobs";
 import PromptLog from "../components/PromptLog";
 import { storyApi } from "../story";
 import { formatTime } from "../format";
@@ -16,18 +16,14 @@ import { useJsonFile } from "../useFile";
 import type { SectionProps } from "./types";
 
 // scene_plan.json follows OpenMontage's schema: scenes need id, type, description and start/end seconds.
-// Fields this screen does not edit (script_section_id, framing, ...) are kept untouched.
-const SCENE_TYPES: [string, string][] = [
-  ["generated", "생성 장면"],
-  ["broll", "보조 화면(B-roll)"],
-  ["talking_head", "말하는 얼굴"],
-  ["animation", "애니메이션"],
-  ["character_scene", "캐릭터 장면"],
-  ["diagram", "도표"],
-  ["text_card", "자막 카드"],
-  ["transition", "전환"],
-  ["screen_recording", "화면 녹화"],
-];
+// Fields this screen does not edit (type, script_section_id, framing, ...) are kept untouched.
+const MODE_LABELS: Record<string, string> = {
+  fl2v: "FL2V (시작·끝 이미지)",
+  t2v: "T2V (글로 만든 첫 이미지, 이어가기)",
+  i2v: "I2V (참조 이미지로 만든 첫 이미지, 이어가기)",
+  s2v: "S2V (노래 + 첫 이미지, 이어가기)",
+  r2v: "R2V (인물 참조)",
+};
 
 interface Scene {
   id: string;
@@ -99,6 +95,8 @@ export default function ScenarioSection(props: SectionProps) {
   const videos = props.detail?.media.videos ?? [];
   const settings = props.view?.effective;
   const songFile = settings?.defaults.songFile ?? "";
+  /** The scene options with the way clips are made (the project's video mode, chosen on the start page) filled in. */
+  const optData = withProjectMode(opts.data, defaultMode(settings?.defaults));
   const running = props.jobs.current !== null;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [working, setWorking] = useState<string | null>(null);
@@ -114,7 +112,14 @@ export default function ScenarioSection(props: SectionProps) {
   const setScenes = (next: Scene[]) => plan && file.setData({ ...plan, scenes: next });
   const update = (index: number, patch: Partial<Scene>) => setScenes(scenes.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
   
-  const reorderScenes = (from: number, to: number) => {
+  /** A new 5 s scene right below scene `index`; the scenes after it move later by its length (their song pieces change, so made clips are marked out of date). */
+  const insertAfter = (index: number) => {
+    const end = scenes[index].end_seconds;
+    const added: Scene = { id: nextId(scenes), type: "generated", description: "", start_seconds: end, end_seconds: end + 5 };
+    setScenes([...scenes.slice(0, index + 1), added, ...scenes.slice(index + 1).map((scene) => ({ ...scene, start_seconds: scene.start_seconds + 5, end_seconds: scene.end_seconds + 5 }))]);
+  };
+
+  const reorderScenes =(from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= scenes.length || to >= scenes.length) return;
     // Moving a scene moves its place in the song and its place in the join: clips already made for the scenes in between are marked as out of date.
     const touched = scenes.slice(Math.min(from, to), Math.max(from, to) + 1).filter((scene) => videos.some((video) => video.path === clipPathOf(scene.id)));
@@ -133,7 +138,7 @@ export default function ScenarioSection(props: SectionProps) {
     setScenes(reordered);
   };
 
-  const slots = slotImages(scenes, opts.data);
+  const slots = slotImages(scenes, optData);
   const imageSize = settings ? (resolveSize(settings).image as [number, number]) : null;
 
   /** A first or last picture is made with the prompt maker and Krea; one that exists gets the new picture as its next version. */
@@ -142,13 +147,14 @@ export default function ScenarioSection(props: SectionProps) {
     if (!settings || !slot) return;
     setWorking(path);
     try {
-      const prompt = await makePrompt(project.id, { target: "image", text: slotText(scenes, opts.data, slot) });
+      const prompt = await makePrompt(project.id, { target: "image", text: slotText(scenes, optData, slot) });
       const exists = images.some((file) => file.path === path);
       const output = exists ? `assets/versions/${path.slice("assets/images/".length, -4)}-${stamp()}.png` : path;
-      const item = makeItem(settings, { kind: "image", prompt, source: scenes[slot.index].id }, output);
+      const recipe = slotRecipe({ scenes, opts: optData, bible, images }, slot, prompt);
+      const item = makeItem(settings, recipe, output);
       if (typeof item === "string") return notify(item);
       await startItems(project.id, [{ ...item, final: true, ...(exists ? { candidateOf: path } : {}) }]);
-      notify(exists ? "새 버전을 만듭니다. 끝나면 이미지 화면에서 비교하고 고르세요." : "이미지를 만듭니다.");
+      notify(`${exists ? "새 버전을 만듭니다. 끝나면 이미지 화면에서 비교하고 고르세요." : "이미지를 만듭니다."}${lacksReference(scenes, optData, slot, recipe) ? " 참조 이미지가 없어 글로만 만듭니다(등장인물 시트를 만들거나 영상 계획에서 참조 그림을 고르세요)." : ""}`);
       props.onJobsChanged();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "이미지를 만들지 못했습니다.");
@@ -164,10 +170,16 @@ export default function ScenarioSection(props: SectionProps) {
     try {
       const describe = (path: string) => describeReference(bible, path, images);
       const items: MakeItem[] = [];
-      for (const item of slotImageItems({ settings, scenes, opts: opts.data, bible, images, videos })) items.push(await refineItem(project.id, settings, item, describe).catch(() => item));
+      const wanted = slotImages(scenes, optData).filter((slot) => !images.some((file) => file.path === slot.path));
+      let plain = 0;
+      for (const item of slotImageItems({ settings, scenes, opts: optData, bible, images, videos })) {
+        const slot = wanted.find((entry) => entry.path === item.inputs.output_path);
+        if (slot && lacksReference(scenes, optData, slot, item.record)) plain += 1;
+        items.push(await refineItem(project.id, settings, item, describe).catch(() => item));
+      }
       if (items.length === 0) return notify("만들 이미지가 없습니다.");
       await startItems(project.id, items);
-      notify(`${items.length}개 이미지를 차례로 만듭니다.`);
+      notify(`${items.length}개 이미지를 차례로 만듭니다.${plain > 0 ? ` 그중 ${plain}개는 참조 이미지가 없어 글로만 만듭니다(등장인물 시트를 만들거나 영상 계획에서 참조 그림을 고르세요).` : ""}`);
       props.onJobsChanged();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "이미지를 만들지 못했습니다.");
@@ -183,7 +195,7 @@ export default function ScenarioSection(props: SectionProps) {
     setWorking(scenes[index].id);
     try {
       const describe = (path: string) => describeReference(bible, path, images);
-      const made = sceneItems({ settings, scenes, opts: opts.data, bible, images, videos }, { only: chainFrom(scenes, opts.data, index), asVersions: true });
+      const made = sceneItems({ settings, scenes, opts: optData, bible, images, videos }, { only: chainFrom(scenes, optData, index), asVersions: true });
       if (made.length === 0) return notify("다시 만들 수 있는 장면이 없습니다. 인물 시트나 장면 이미지가 필요합니다.");
       const items: MakeItem[] = [];
       for (const item of made) {
@@ -204,8 +216,16 @@ export default function ScenarioSection(props: SectionProps) {
   async function writePrompt(scene: Scene) {
     setWorking(scene.id);
     try {
-      const refs = refsOfScene({ bible, images, opts: opts.data }, scene);
-      const prompt = await makePrompt(project.id, { target: "video", mode: refs.length > 0 ? "r2v" : "i2v", text: scene.description, duration: sceneSeconds(scene), refs: refs.map((path) => describeReference(bible, path, images)) });
+      const mode = modeOf(optData, scene);
+      const refs = mode === "r2v" ? refsOfScene({ bible, images, opts: optData }, scene) : [];
+      // The pictures the clip starts from and ends on, or the clip before it (its last picture) where the scene continues: a vision model describes them for the prompt.
+      const at = scenes.findIndex((item) => item.id === scene.id);
+      const before = at > 0 ? clipPathOf(scenes[at - 1].id) : "";
+      const hasVideo = (path: string) => (props.detail?.media.videos ?? []).some((file) => file.path === path);
+      const own = mode !== "r2v" && needsFirstPicture(optData, scene, at) ? firstImagePath(at) : "";
+      const first = own && images.some((file) => file.path === own) ? own : mode !== "r2v" && before && hasVideo(before) ? before : undefined;
+      const last = mode === "fl2v" ? lastImagePath(scenes, optData, at) : undefined;
+      const prompt = await makePrompt(project.id, { target: "video", mode, text: scene.description, duration: sceneSeconds(scene), hasAudio: mode === "s2v", first, last, refs: refs.map((path) => describeReference(bible, path, images)), refPaths: refs });
       setOpt(scene.id, { prompt });
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "프롬프트를 만들지 못했습니다.");
@@ -214,7 +234,32 @@ export default function ScenarioSection(props: SectionProps) {
     }
   }
 
+  /** The picture names follow the clip numbers: when the saved scene list changes, each scene takes its pictures along. */
+  async function arrangeBeforeSave() {
+    const parse = (text: string): { scenes?: Scene[] } | SceneOpts => {
+      try {
+        return JSON.parse(text) as { scenes?: Scene[] };
+      } catch {
+        return {};
+      }
+    };
+    const before = (parse(file.raw) as { scenes?: Scene[] }).scenes;
+    if (!before || before.length === 0) return;
+    const { moves, clips } = pictureMoves(before, withProjectMode(parse(opts.raw) as SceneOpts, defaultMode(settings?.defaults)), scenes, optData);
+    const exists = (path: string | null) => path !== null && images.some((image) => image.path === path);
+    if (!moves.some((move) => move.from !== move.to && (exists(move.from) || exists(move.to)))) return;
+    const done = await arrangePictures(project.id, { moves, clips });
+    if (done.aside > 0) notify("바뀐 장면 번호에 맞게 이미지를 옮겼습니다. 쓰지 않는 이미지는 assets/versions에 보관했습니다.");
+  }
+
   async function save() {
+    if (file.dirty || opts.dirty) {
+      try {
+        await arrangeBeforeSave();
+      } catch (e) {
+        return notify(e instanceof ApiError ? e.message : "이미지를 옮기지 못했습니다. 저장하지 않았습니다.");
+      }
+    }
     const saved = file.dirty ? await file.save() : true;
     if (saved && opts.dirty) await opts.save();
     if (saved) onChanged();
@@ -241,10 +286,10 @@ export default function ScenarioSection(props: SectionProps) {
         {plan && (
           <div className="row">
             <span className="muted">
-              {scenes.length}장면 · 총 {formatTime(total)}
+              {scenes.length}장면 · 총 {formatTime(total)} · 영상 방식 {MODE_LABELS[defaultMode(settings?.defaults)]}
             </span>
-            <button className="btn" type="button" disabled={running || working !== null || !settings || slotImageItems({ settings, scenes, opts: opts.data, bible, images, videos }).length === 0} title="시작·끝 이미지가 없는 장면의 이미지를 장면 글로 차례로 만듭니다." onClick={() => void makeMissingSlots()}>
-              <ImageIcon size={15} /> {working === "slots" ? "준비 중..." : `없는 이미지 모두 만들기${settings ? ` (${slotImageItems({ settings, scenes, opts: opts.data, bible, images, videos }).length})` : ""}`}
+            <button className="btn" type="button" disabled={running || working !== null || !settings || slotImageItems({ settings, scenes, opts: optData, bible, images, videos }).length === 0} title="시작·끝 이미지가 없는 장면의 이미지를 장면 글로 차례로 만듭니다." onClick={() => void makeMissingSlots()}>
+              <ImageIcon size={15} /> {working === "slots" ? "준비 중..." : `없는 이미지 모두 만들기${settings ? ` (${slotImageItems({ settings, scenes, opts: optData, bible, images, videos }).length})` : ""}`}
             </button>
             <button className="btn" type="button" onClick={() => setScenes([...scenes, newScene(scenes)])}>
               <Plus size={15} /> 장면 추가
@@ -345,14 +390,6 @@ export default function ScenarioSection(props: SectionProps) {
                 <div className="scene-card-content">
                   <div className="scene-card-header">
                     <div className="scene-card-meta">
-                      <select value={scene.type} onChange={(event) => update(index, { type: event.target.value })}>
-                        {SCENE_TYPES.map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                        {!SCENE_TYPES.some(([value]) => value === scene.type) && <option value={scene.type}>{scene.type}</option>}
-                      </select>
                       <span className="muted">
                         {formatTime(scene.start_seconds)} - {formatTime(scene.end_seconds)} ({(scene.end_seconds - scene.start_seconds).toFixed(1)}초)
                       </span>
@@ -364,7 +401,7 @@ export default function ScenarioSection(props: SectionProps) {
                     </div>
                     <div className="scene-card-badges">
                       {(() => {
-                        const clip = clipStatus({ scene, index, scenes, opts: opts.data, videos, images });
+                        const clip = clipStatus({ scene, index, scenes, opts: optData, videos, images });
                         return clip.state === "none" ? (
                           <span className="scene-badge pending">
                             <Clapperboard size={12} /> 영상 없음
@@ -379,11 +416,28 @@ export default function ScenarioSection(props: SectionProps) {
                           </span>
                         );
                       })()}
-                      {modeOf(opts.data, scene) === "fl2v" && !(images.some((file) => file.path === firstImagePath(index)) && images.some((file) => file.path === lastImagePath(scenes, opts.data, index))) && (
-                        <span className="scene-badge pending" title="영상을 만들려면 시작 이미지와 끝 이미지가 필요합니다">
-                          <ImageIcon size={12} /> 이미지 필요
-                        </span>
-                      )}
+                      {(() => {
+                        const mode = modeOf(optData, scene);
+                        const has = (path: string) => images.some((file) => file.path === path);
+                        const missing = (needsFirstPicture(optData, scene, index) && !has(firstImagePath(index))) || (mode === "fl2v" && !has(lastImagePath(scenes, optData, index)));
+                        return (
+                          <>
+                            {missing && (
+                              <span className="scene-badge pending" title={mode === "fl2v" ? "영상을 만들려면 시작 이미지와 끝 이미지가 필요합니다" : "영상을 만들려면 시작 이미지가 필요합니다"}>
+                                <ImageIcon size={12} /> 이미지 필요
+                              </span>
+                            )}
+                            {mode === "s2v" && !songFile && (
+                              <span className="scene-badge pending" title="S2V는 노래가 필요합니다. 만들기 화면에서 노래를 고르세요.">
+                                <Music size={12} /> 노래 필요
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
+                      <button className="icon-btn" type="button" title="이 장면 바로 아래에 새 장면 추가 (뒤 장면의 시간이 5초씩 밀립니다)" aria-label={`${index + 1}번 장면 아래에 장면 추가`} onClick={() => insertAfter(index)}>
+                        <Plus size={15} />
+                      </button>
                       <button className="icon-btn danger" type="button" title="장면 지우기" aria-label={`${index + 1}번 장면 지우기`} onClick={() => setScenes(scenes.filter((_, i) => i !== index))}>
                         <Trash2 size={15} />
                       </button>
@@ -400,37 +454,18 @@ export default function ScenarioSection(props: SectionProps) {
                     </label>
                   </div>
                   <textarea rows={4} value={scene.description} placeholder="이 장면에서 보이는 것과 움직임을 적어 주세요." onChange={(event) => update(index, { description: event.target.value })} />
+                  <div className="scene-extra">
+                  <div className="scene-extra-main">
                   <div className="opts" style={{ margin: "10px 0 0" }}>
-                    <label>
-                      영상 방식
-                      <select value={modeOf(opts.data, scene)} onChange={(event) => setOpt(scene.id, { mode: event.target.value as "fl2v" | "r2v" })}>
-                        <option value="fl2v">FL2V (시작·끝 이미지)</option>
-                        <option value="r2v">R2V (인물 참조)</option>
-                      </select>
+                    <label title={modeOf(optData, scene) === "fl2v" ? "켜면 앞 장면의 끝 이미지와 이 장면의 시작 이미지가 같은 그림이라 장면 사이가 이어집니다. 끄면 서로 다른 그림입니다." : modeOf(optData, scene) === "r2v" ? "켜면 앞 장면 영상의 마지막 그림에서 이 장면이 시작해 장면 사이가 이어집니다. 끄면 새로 시작합니다." : "켜면 앞 장면 영상의 마지막 프레임에서 이 장면이 시작합니다. 끄면 이 장면 전용 시작 이미지가 필요합니다(장면이 크게 바뀔 때)."}>
+                      <input type="checkbox" disabled={index === 0} checked={continuesPrevious(optData, scene, index)} onChange={(event) => setOpt(scene.id, { continuePrevious: event.target.checked })} /> 앞 장면과 연결
                     </label>
-                    <label title={modeOf(opts.data, scene) === "fl2v" ? "켜면 앞 장면의 끝 이미지와 이 장면의 시작 이미지가 같은 그림이라 장면 사이가 이어집니다. 끄면 서로 다른 그림입니다." : "켜면 앞 장면 영상의 마지막 그림에서 이 장면이 시작해 장면 사이가 이어집니다. 끄면 새로 시작합니다."}>
-                      <input type="checkbox" disabled={index === 0} checked={continuesPrevious(opts.data, scene, index)} onChange={(event) => setOpt(scene.id, { continuePrevious: event.target.checked })} /> 앞 장면과 연결
+                    <label title={modeOf(optData, scene) === "s2v" ? "S2V는 항상 노래의 이 장면 시간대를 씁니다." : modeOf(optData, scene) === "i2v" ? "I2V는 노래를 쓰지 않습니다. 노래에 입을 맞추려면 S2V를 고르세요." : songFile ? "프로젝트의 노래에서 이 장면 시간대의 소리를 입 모양 가이드로 씁니다." : "먼저 만들기 화면에서 노래를 고르세요."}>
+                      <input type="checkbox" disabled={!songFile || modeOf(optData, scene) === "s2v" || modeOf(optData, scene) === "i2v"} checked={usesSong(optData, scene, songFile, hasPeople(scene))} onChange={(event) => setOpt(scene.id, { song: event.target.checked })} /> 노래 사용
                     </label>
-                    <label title={songFile ? "프로젝트의 노래에서 이 장면 시간대의 소리를 입 모양 가이드로 씁니다." : "먼저 만들기 화면에서 노래를 고르세요."}>
-                      <input type="checkbox" disabled={!songFile} checked={usesSong(opts.data, scene, songFile, hasPeople(scene))} onChange={(event) => setOpt(scene.id, { song: event.target.checked })} /> 노래 사용
-                    </label>
-                    <button className="btn" type="button" disabled={running || working !== null || !videos.some((video) => video.path === clipPathOf(scene.id))} title="이 장면과, 이어받는 뒤 장면들을 새 버전으로 다시 만듭니다." onClick={() => void remakeFrom(index)}>
-                      <RefreshCw size={14} /> {working === scene.id ? "준비 중..." : chainFrom(scenes, opts.data, index).length > 1 ? "이 장면부터 다시 만들기" : "이 장면 다시 만들기"}
+                    <button className="btn" type="button" disabled={running || working !== null || !videos.some((video) => video.path === clipPathOf(scene.id))} title="이 장면의 영상 클립을 새 버전으로 다시 만듭니다(이미지는 그대로 씁니다). 인물 참조(R2V)는 이어받는 뒤 장면의 영상도 함께 만듭니다." onClick={() => void remakeFrom(index)}>
+                      <RefreshCw size={14} /> {working === scene.id ? "준비 중..." : chainFrom(scenes, optData, index).length > 1 ? "영상부터 다시 만들기" : "영상 다시 만들기"}
                     </button>
-                    {modeOf(opts.data, scene) === "fl2v" && (
-                      <span className="scene-slots">
-                        {(["first", "last"] as const).map((role) => {
-                          const path = role === "first" ? firstImagePath(index) : lastImagePath(scenes, opts.data, index);
-                          const file = images.find((image) => image.path === path);
-                          return (
-                            <button key={role} className="scene-slot" type="button" title={`${role === "first" ? "시작" : "끝"} 이미지 (${path.replace("assets/images/", "")}): 눌러서 보기·새로 만들기·파일에서 읽기`} onClick={() => setViewing(path)}>
-                              <span className="slot-label">{role === "first" ? "시작" : "끝"}</span>
-                              <span className="slot-thumb">{file ? <img src={mediaUrl(project.id, path, file.mtimeMs)} alt={path} loading="lazy" /> : <span className="slot-empty">No Image</span>}</span>
-                            </button>
-                          );
-                        })}
-                      </span>
-                    )}
                   </div>
                   <details className="scene-plan">
                     <summary className="muted">영상 계획 (프롬프트 · 참조 그림){optOf(scene.id).prompt || optOf(scene.id).refs ? " · 저장됨" : ""}</summary>
@@ -452,14 +487,14 @@ export default function ScenarioSection(props: SectionProps) {
                       <label>참조 그림 ({optOf(scene.id).refs ? "직접 고름" : "장면 글에 이름이 나온 인물의 시트·사진"})</label>
                       <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
                         {images.map((image) => {
-                          const on = refsOfScene({ bible, images, opts: opts.data }, scene).includes(image.path);
+                          const on = refsOfScene({ bible, images, opts: optData }, scene).includes(image.path);
                           return (
                             <label key={image.path} className="chip" style={{ cursor: "pointer" }}>
                               <input
                                 type="checkbox"
                                 checked={on}
                                 onChange={() => {
-                                  const now = refsOfScene({ bible, images, opts: opts.data }, scene);
+                                  const now = refsOfScene({ bible, images, opts: optData }, scene);
                                   setOpt(scene.id, { refs: (on ? now.filter((path) => path !== image.path) : [...now, image.path]).slice(0, 9) });
                                 }}
                               />{" "}
@@ -475,7 +510,7 @@ export default function ScenarioSection(props: SectionProps) {
                       </div>
                     </div>
                   </details>
-                  <div>
+                  <div style={{ marginTop: 10 }}>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       <span className="hint">이 장면만 쓰는 LoRA:</span>
                       {lorasOf(scene.id).map((lora, loraIndex) => (
@@ -491,6 +526,22 @@ export default function ScenarioSection(props: SectionProps) {
                         <Plus size={14} /> LoRA
                       </button>
                     </div>
+                  </div>
+                  </div>
+                  {needsFirstPicture(optData, scene, index) && (
+                    <span className="scene-slots">
+                      {(modeOf(optData, scene) === "fl2v" ? (["first", "last"] as const) : (["first"] as const)).map((role) => {
+                        const path = role === "first" ? firstImagePath(index) : lastImagePath(scenes, optData, index);
+                        const file = images.find((image) => image.path === path);
+                        return (
+                          <button key={role} className="scene-slot" type="button" title={`${role === "first" ? "시작" : "끝"} 이미지 (${path.replace("assets/images/", "")}): 눌러서 보기·새로 만들기·파일에서 읽기`} onClick={() => setViewing(path)}>
+                            <span className="slot-label">{role === "first" ? "시작" : "끝"}</span>
+                            <span className="slot-thumb">{file ? <img src={mediaUrl(project.id, path, file.mtimeMs)} alt={path} loading="lazy" /> : <span className="slot-empty">No Image</span>}</span>
+                          </button>
+                        );
+                      })}
+                    </span>
+                  )}
                   </div>
                 </div>
               </article>

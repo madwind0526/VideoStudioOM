@@ -11,6 +11,8 @@ import { createComfy } from "./engine/comfy.mjs";
 import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
+import { describePictures } from "./describe.mjs";
+import { runTool } from "./engine/tools.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
 import { folderPaths, folderStatus } from "./folders.mjs";
@@ -341,8 +343,21 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const bibleText = body.target === "sheet" ? (bible.style.trim() ? `Visual style: ${bible.style.trim()}` : "") : typeof body.text === "string" ? bibleContext(bible, body.text) : "";
     const refs = Array.isArray(body.refs) ? body.refs.filter((ref) => typeof ref === "string").slice(0, 9).map((ref) => ref.slice(0, 600)) : [];
     const sheetSystem = (await settings.get()).llm.sheetPrompt;
+    // A video prompt starts from what the pictures really show: the first/last picture (or the clip before, whose last picture the clip continues from) and the references.
+    // Skipped while a job holds the GPU: describing loads a model on the same card.
+    const refPaths = Array.isArray(body.refPaths) ? body.refPaths.filter((ref) => typeof ref === "string").slice(0, 9) : [];
+    const wanted = body.target === "video" ? [typeof body.first === "string" ? body.first : "", typeof body.last === "string" ? body.last : "", ...refPaths] : [];
+    const refVideo = typeof body.refVideo === "string" ? body.refVideo : "";
+    let seen = {};
+    if ((wanted.some(Boolean) || refVideo) && body.target === "video" && body.describe !== false && !(await jobs.list()).current) {
+      const config = (await settings.get()).connections;
+      const describe = (tool, inputs) => runTool({ tool, inputs, connections: config, ffmpegPath: config.ffmpegPath }).then((result) => (result.ok ? result.data.text : Promise.reject(new Error(result.error))));
+      const looked = await describePictures({ projects, id: body.project, rels: wanted, run: (file) => describe("describe_image", { image_path: file }) });
+      const clip = refVideo ? await describePictures({ projects, id: body.project, rels: [refVideo], kind: "video:", run: (file) => describe("describe_video", { video_path: file }) }) : {};
+      seen = { first: looked[wanted[0]], last: looked[wanted[1]], refs: refPaths.map((rel) => looked[rel]), video: clip[refVideo] };
+    }
     const prompt = await withPromptLog(projects, body.project, `prompt-${body.target}`, askWith((await settings.get()).llm), (ask) =>
-      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, sheetSystem, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined }, ask),
+      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, sheetSystem, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined, seen }, ask),
     );
     sendJson(res, 200, { prompt });
     return true;
@@ -399,7 +414,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
-  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa|import|versions))?$/.exec(pathname);
+  const match = /^\/api\/projects\/([^/]+)(?:\/(file|settings|media|meta|concat|export|subtitles|qa|import|versions|arrange))?$/.exec(pathname);
   if (!match) return false;
   const id = decodeId(match[1]);
 
@@ -434,6 +449,9 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       const body = requireObject(await readJsonBody(req));
       sendJson(res, 200, { entry: await projects.selectVersion(id, body.path, body.select) });
     } else methodNotAllowed();
+  } else if (match[2] === "arrange") {
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, await projects.arrange(id, requireObject(await readJsonBody(req))));
   } else if (match[2] === "import") {
     if (method !== "POST") methodNotAllowed();
     const body = requireObject(await readJsonBody(req));

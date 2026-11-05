@@ -8,7 +8,7 @@
 | `graphs.mjs` | 내장 그래프: Krea 2 Turbo, H3 I2V/FL2V/S2V, H3 R2V(참조 그림 9장, 영상, 오디오), RTX 2패스 확대. 이 PC에서 확인된 값 그대로 |
 | `workflow-patch.mjs` | 사용자 워크플로(API 형식)에 프롬프트·크기·시드·파일·모델·LoRA를 채우는 규칙, 없는 노드/모델 찾기 |
 | `services.mjs` | 꺼져 있는 SongYUE2, ComfyUI(8190), Rev0 ComfyUI(8188, 참조 영상과 RTX 확대)를 켜고 응답할 때까지 기다림 (경로는 설정의 연결 항목) |
-| `tools.mjs` | 도구 7개: `comfyui_krea_image`, `h3_local_video`, `h3_reference_video`, `comfyui_workflow`, `qwen3_tts`, `songyue_music`, `songyue_sfx`. 입력 검사, 허용 폴더 밖 경로 거부, 취소 지원 |
+| `tools.mjs` | 도구 8개: `comfyui_krea_image`, `comfyui_image_edit`(Qwen Image 2.1 이미지 편집: 빈 캔버스 + 참조 이미지로 새 그림, 또는 기존 그림 편집), `h3_local_video`, `h3_reference_video`, `comfyui_workflow`, `qwen3_tts`, `songyue_music`, `songyue_sfx`. 입력 검사, 허용 폴더 밖 경로 거부, 취소 지원 |
 
 ## 작업 흐름
 `POST /api/jobs` → `server/engine.mjs`(`applyEngine`: 설정의 워크플로·모델·LoRA를 호출에 반영) → `jobs.mjs`(한 번에 하나, 배치, 이어하기) → `tools.mjs`(`runTool`) → ComfyUI/SongYUE2.
@@ -22,6 +22,13 @@
 
 ## 실측 (RTX 5070 12GB, 736×416)
 Krea 이미지 12초, FL2V 3초 37초, R2V(그림 3장) 43초, S2V 45초, FL2V + RTX 확대(1920×1088) 90초, 효과음 7초, 한국어 음성 5초.
+
+## 이어붙이기 방식 (설정 `video.continueMode`)
+- `frame`(기본): 앞 클립의 마지막 그림 한 장을 다음 클립의 첫 그림으로 쓴다.
+- `motion`(올인원 Chain 방식): 클립마다 끝의 latent를 `<클립>.latent`로 함께 저장하고, 이어지는 클립은 앞 클립의 마지막 39프레임과 그 latent를 `MiniMaxH3MotionContext`로 고정한 채 만든다. 고정한 39프레임은 디코딩 뒤 잘라 내므로(`MiniMaxH3MotionContextTrim`) 요청한 길이보다 그만큼 길게 생성한다(길이는 17프레임 격자로 올림).
+- 적용 범위: 참조 영상(`h3_reference_video`, R2V)과 이미지→영상(`h3_local_video`, 첫 그림 하나 또는 앞 클립에서 이어지는 I2V)과 소리(S2V) 클립. S2V는 노래 조각을 첫 39프레임 뒤에 두고 앞 클립의 그림만 고정한다(latent 없이도 됨). 첫·끝 이미지(FL2V)는 항상 `frame`(8190): 모션 맥락과 끝 그림을 함께 쓰면 이어지는 클립이 앞 클립과 상관없는 장면(끝 그림 쪽)으로 시작해 버렸다(시험 4가지 변형, 이음새 변화량 약 65). 원인은 못 찾았다. `motion`이면 R2V, I2V, S2V는 Rev0(8188)에서 돈다.
+- 앞 클립에 `.latent`가 없으면(예전에 만든 클립, 다른 방식으로 만든 클립) 그 클립만 `frame`으로 만들고 결과의 `data.continue_mode`에 이유를 남긴다.
+- 실측(공식 모델, 736×416, 20스텝): 첫 클립 149초, 이어지는 클립 314초(175프레임을 만들고 39프레임을 잘라 5.67초). `.latent` 하나는 4~6MB. 이음새 프레임 변화량은 frame 방식 15.3, motion 방식 6.1~9.7(평소 약 2).
 
 ## OpenMontage에 남은 것
 `E:\Claude\OpenMontage`는 더 이상 실행에도 데이터에도 쓰이지 않는다. 그 안의 `skills/`는 줄거리·시나리오 프롬프트를 만들 때 참고한 자료이고, `projects/`는 비어 있다(프로젝트는 VideoStudioOM의 `projects/`로 옮김). OpenMontage의 Backlot 보드로 새 위치를 보려면 `OPENMONTAGE_PROJECTS_DIR=E:\Claude\VideoStudioOM\projects`를 지정해 실행한다. 로컬 브랜치 `videostudio-local`과 `docs/openmontage-changes.md`는 기록으로 남긴다.

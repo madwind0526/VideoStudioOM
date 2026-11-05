@@ -20,8 +20,8 @@ export interface SceneLora {
 export interface SceneOpt {
   /** LoRAs that only this scene uses (a fight move, a look). */
   loras?: SceneLora[];
-  /** How the clip is made: from a first and a last picture ("fl2v", the default) or from reference pictures of the people ("r2v"). */
-  mode?: "fl2v" | "r2v";
+  /** How the clip is made: from a first and a last picture ("fl2v", the default), a first picture ("i2v"), a face and the song ("s2v") or reference pictures of the people ("r2v"). */
+  mode?: "fl2v" | "i2v" | "s2v" | "r2v";
   /** Connected to the clip before: the clip before ends on the picture this one starts with (fl2v), or this one starts from its last picture (r2v). On unless switched off. */
   continuePrevious?: boolean;
   /** The song of the project guides the mouth in this scene. Unset: on when the scene shows people. */
@@ -53,6 +53,8 @@ export interface Recipe {
   audio?: string;
   /** Reference pictures of an R2V clip (character sheets, a scene picture), at most nine. */
   refs?: string[];
+  /** Reference clip of an R2V clip: the new clip follows its motion and camera. */
+  refVideo?: string;
   duration?: number;
   /** Scene or script section this file belongs to. */
   source?: string;
@@ -60,6 +62,8 @@ export interface Recipe {
   audioRange?: [number, number];
   /** The clip before this one: its last picture is the first picture here. */
   continuedFrom?: string;
+  /** A picture made as a new picture of the people in these reference pictures (Qwen image edit on an empty canvas) instead of from the text alone. */
+  editRefs?: string[];
 }
 
 export interface MakeItem {
@@ -81,12 +85,20 @@ export function recipeOf(record: Record<string, unknown> | null | undefined): Re
   return ["image", "sheet", "voice", "sfx", "instrumental", "vocal", "i2v", "fl2v", "s2v", "r2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
 }
 
+/** The prompt of a picture made from reference pictures: <image1> is the empty canvas, the references follow. */
+export const editPrompt = (text: string, count: number) =>
+  `Fill <image1> with a completely new picture. The ${count > 1 ? "people" : "person"} shown in ${Array.from({ length: count }, (_, i) => `<image${i + 2}>`).join(", ")} must keep exactly the same face, hair and clothes. ${text}`;
+
 /** The job for one recipe, built from the current settings. The result goes to `output` (a project-relative path). */
 export function makeItem(settings: Settings, recipe: Recipe, output: string): MakeItem | string {
   const size = resolveSize(settings);
   const text = recipe.prompt.trim();
   if (!text) return recipe.kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
   const sceneLoras = recipe.loras && recipe.loras.length > 0 ? { extra_loras: recipe.loras } : {};
+  if (recipe.kind === "image" && recipe.editRefs && recipe.editRefs.length > 0) {
+    const refs = recipe.editRefs.slice(0, 9);
+    return { tool: "comfyui_image_edit", label: text, record: recipe, inputs: { prompt: editPrompt(text, refs.length), blank_canvas: true, reference_image_paths: refs, width: size.image[0], height: size.image[1], output_path: output } };
+  }
   if (recipe.kind === "image") {
     return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, output_path: output } };
   }
@@ -125,9 +137,12 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   };
   if (recipe.kind === "r2v") {
     const refs = recipe.refs ?? [];
-    if (refs.length === 0) return "참조할 그림(인물 시트나 장면 이미지)을 하나 이상 고르세요.";
+    if (refs.length === 0 && !recipe.refVideo) return "참조할 그림(인물 시트나 장면 이미지)이나 참조 영상을 하나 이상 고르세요.";
     if (refs.length > 9) return "참조 그림은 9장까지입니다.";
     inputs.reference_image_paths = refs;
+    // Motion continuation (settings): the clip saves its latent and, after another clip, pins that clip's last frames.
+    if (settings.video.continueMode === "motion") inputs.continue_mode = "motion";
+    if (recipe.refVideo) inputs.reference_video_path = recipe.refVideo;
     if (recipe.audio) {
       // The song (or a piece of it, see audioRange) moves the mouth of the people in the clip.
       inputs.audio_path = recipe.audio;
@@ -136,8 +151,13 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     if (recipe.continuedFrom) inputs.first_frame_video_path = recipe.continuedFrom;
     return { tool: "h3_reference_video", label: text, record: recipe, inputs };
   }
-  if (!recipe.first) return "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
-  inputs.reference_image_path = recipe.first;
+  // A clip that continues the one before starts from its last frame instead of a picture of its own (not fl2v: that one shares a picture).
+  const motion = settings.video.continueMode === "motion" && recipe.kind !== "fl2v";
+  if (!recipe.first && !(recipe.continuedFrom && recipe.kind !== "fl2v")) return "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
+  if (recipe.first) inputs.reference_image_path = recipe.first;
+  else inputs.first_frame_video_path = recipe.continuedFrom;
+  // Motion continuation (settings): the clip saves its latent and, after another clip, pins that clip's last frames.
+  if (motion) inputs.continue_mode = "motion";
   if (recipe.kind === "fl2v") {
     if (!recipe.last || recipe.last === recipe.first) return "서로 다른 첫 이미지와 마지막 이미지를 고르세요.";
     inputs.last_frame_path = recipe.last;
@@ -158,7 +178,7 @@ export async function startItems(projectId: string, items: MakeItem[]): Promise<
 }
 
 /** Asks the LLM to write a model-ready prompt (Krea 2 for images, MiniMax H3 for video, English for sound effects). */
-export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx" | "sheet"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string; refs?: string[] }): Promise<string> {
+export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx" | "sheet"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string; refs?: string[]; refPaths?: string[]; refVideo?: string }): Promise<string> {
   const { prompt } = await api<{ prompt: string }>("POST", "/api/prompt", { project: projectId, ...body });
   return prompt;
 }
@@ -168,6 +188,9 @@ export const importImage = (projectId: string, from: string) => api<{ path: stri
 /** Puts a picture from the file browser at a fixed name of the project (clip number-1 / -2), cut to `size` without stretching. */
 export const importPicture = (projectId: string, from: string, as: string, size: [number, number]) =>
   api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, as, fit: size }).then((data) => data.path);
+/** Moves the first/last picture files to where the changed scene list wants them (see pictureMoves in shared/scenes.mjs). */
+export const arrangePictures = (projectId: string, body: { moves: { from: string | null; to: string | null }[]; clips: { clip: string; first: string; last: string | null }[] }) =>
+  api<{ copied: number; aside: number }>("POST", `/api/projects/${encodeURIComponent(projectId)}/arrange`, body);
 export const importAudio = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, kind: "audio" }).then((data) => data.path);
 
 export const deleteMedia = (projectId: string, rel: string) => api("DELETE", `/api/projects/${encodeURIComponent(projectId)}/media?path=${encodeURIComponent(rel)}`);
@@ -205,7 +228,7 @@ export async function refineItem(projectId: string, settings: Settings, item: Ma
   const recipe = item.record;
   const target = recipe.kind === "image" ? "image" : recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" || recipe.kind === "r2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
   if (!target) return item;
-  const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first, last: recipe.last, refs: recipe.refs && describeRef ? recipe.refs.map(describeRef) : undefined });
+  const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first ?? recipe.continuedFrom, last: recipe.last, refs: recipe.refs && describeRef ? recipe.refs.map(describeRef) : undefined, refPaths: recipe.refs, refVideo: recipe.refVideo });
   const next = makeItem(settings, { ...recipe, prompt, idea: recipe.prompt }, String(item.inputs.output_path));
   return typeof next === "string" ? item : next;
 }

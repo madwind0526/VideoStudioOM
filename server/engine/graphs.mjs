@@ -72,11 +72,75 @@ export function kreaGraph({ prompt, width = 1536, height = 864, steps = 8, seed,
   };
 }
 
+/** The vision model that describes pictures (ComfyUI-QwenVL on the Rev0 server). */
+export const QWENVL = { model: "Qwen3-VL-4B-Instruct", quantization: "4-bit (VRAM-friendly)", preset: "🖼️ Ultra Detailed Description", maxTokens: 1000 };
+
+/** One picture in, its long English description out. The text is the "easy showAnything" node "6". */
+export function qwenVlGraph({ image, seed, maxTokens = QWENVL.maxTokens }) {
+  return {
+    5: { class_type: "LoadImage", inputs: { image } },
+    7: { class_type: "AILab_QwenVL", inputs: { model_name: QWENVL.model, quantization: QWENVL.quantization, attention_mode: "auto", preset_prompt: QWENVL.preset, custom_prompt: "", max_tokens: maxTokens, keep_model_loaded: false, seed, image: ["5", 0] } },
+    6: { class_type: "easy showAnything", inputs: { anything: ["7", 0] } },
+  };
+}
+
+/** A clip in, its summary out: two pictures per second (at most 32) go to QwenVL's video input. The text is node "6". */
+export function qwenVlVideoGraph({ video, seed, maxTokens = QWENVL.maxTokens }) {
+  return {
+    5: { class_type: "VHS_LoadVideo", inputs: { video, force_rate: 2, custom_width: 0, custom_height: 0, frame_load_cap: 32, skip_first_frames: 0, select_every_nth: 1, format: "AnimateDiff" } },
+    7: { class_type: "AILab_QwenVL", inputs: { model_name: QWENVL.model, quantization: QWENVL.quantization, attention_mode: "auto", preset_prompt: "📹 Video Summary", custom_prompt: "", max_tokens: maxTokens, keep_model_loaded: false, seed, video: ["5", 0] } },
+    6: { class_type: "easy showAnything", inputs: { anything: ["7", 0] } },
+  };
+}
+
+const QWEN_EDIT_PATTERNS = {
+  unet: [/qwen_image_2\.1_int8/i, /qwen_image_2\.1(?!_turbo)/i],
+  clip: [/qwen3vl_8b_int8/i, /qwen3vl_8b/i],
+  vae: [/qwen_image_2\.1_vae/i],
+};
+
+/** The best installed file for each Qwen Image 2.1 model, or null when one is missing. */
+export function pickQwenEditModels({ unets, clips, vaes }) {
+  const pick = (names, patterns) => {
+    for (const pattern of patterns) {
+      const found = names.find((name) => pattern.test(name));
+      if (found) return found;
+    }
+    return null;
+  };
+  const picked = { unet: pick(unets, QWEN_EDIT_PATTERNS.unet), clip: pick(clips, QWEN_EDIT_PATTERNS.clip), vae: pick(vaes, QWEN_EDIT_PATTERNS.vae) };
+  return picked.unet && picked.clip && picked.vae ? picked : null;
+}
+
+/**
+ * Qwen Image 2.1 image edit (ComfyUI's template "image_qwen_image_2_1_image_edit" without the prompt enhancer):
+ * `images` are uploaded file names, the first is the picture to edit (the result has its shape), the others are references;
+ * the prompt names them <image1>, <image2>, ... The result is the PreviewImage node "10".
+ */
+export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25, cfg = 1, resolution = 1024, models }) {
+  const wf = {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "qwen_image", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
+  };
+  const encode = { clip: ["2", 0], vae: ["3", 0], prompt, negative_prompt: negative, resolution };
+  images.forEach((image, index) => {
+    wf[20 + index] = { class_type: "LoadImage", inputs: { image } };
+    encode[`images.image_${index + 1}`] = [String(20 + index), 0];
+  });
+  wf[5] = { class_type: "TextEncodeQwenImage21", inputs: encode };
+  wf[6] = { class_type: "KSampler", inputs: { model: ["4", 0], seed, steps, cfg, sampler_name: "euler", scheduler: "simple", positive: ["5", 0], negative: ["5", 1], latent_image: ["5", 2], denoise: 1.0 } };
+  wf[7] = { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["3", 0] } };
+  wf[10] = { class_type: "PreviewImage", inputs: { images: ["7", 0] } };
+  return wf;
+}
+
 /**
  * H3 image to video. `image` is the first frame, `last` an optional last frame (FL2V) and `audio` an optional sound pinned
  * at frame 0 so the mouth follows it (S2V, MiniMaxH3AddGuide). The result is the SaveVideo node "15".
  */
-export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps = 4, seed, image, last, audio }) {
+export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps = 4, seed, image, last, audio, motion, saveLatent }) {
   const cond = { clip: ["2", 0], vae: ["3", 0], prompt: h3Prompt(prompt), width, height, length: h3Frames(seconds) };
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: H3.unet, weight_dtype: "default" } },
@@ -96,9 +160,10 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
   let positive = ["6", 0];
   if (audio) {
     wf[18] = { class_type: "LoadAudio", inputs: { audio } };
-    wf[19] = { class_type: "MiniMaxH3AddGuide", inputs: { positive: ["6", 0], latent: ["6", 1], frame_idx: 0, audio_vae: ["4", 0], audio: ["18", 0] } };
+    wf[19] = { class_type: "MiniMaxH3AddGuide", inputs: { positive: ["6", 0], latent: ["6", 1], frame_idx: motion ? (motion.length ?? 39) : 0, audio_vae: ["4", 0], audio: ["18", 0] } };
     positive = ["19", 0];
   }
+  if (motion) positive = addMotion(wf, motion, positive, width, height);
   Object.assign(wf, {
     6: { class_type: "MiniMaxH3ImageToVideo", inputs: cond },
     7: { class_type: "KSamplerSelect", inputs: { sampler_name: "res_multistep" } },
@@ -111,7 +176,40 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
     14: { class_type: "CreateVideo", inputs: { images: ["12", 0], audio: ["13", 0], fps: 24 } },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: "video/vsom_h3", format: "mp4", codec: "h264" } },
   });
+  finishMotion(wf, { motion, saveLatent, latent: ["11", 0] });
   return wf;
+}
+
+/**
+ * Motion continuation (the all-in-one Chain): pin the last frames and the saved latent of the clip before. `motion` =
+ * { video: its uploaded file, total: its frame count, latent: path of its saved latent, length: frames to pin }.
+ * Adds nodes 70-75 to `wf` and returns the conditioning to sample with. The pinned frames lead the new clip and are cut off
+ * after decoding (see cutMotion), so the clip starts where the other one ended.
+ */
+function addMotion(wf, motion, positive, width, height) {
+  const length = motion.length ?? 39;
+  wf[70] = { class_type: "LoadVideo", inputs: { file: motion.video } };
+  wf[71] = { class_type: "GetVideoComponents", inputs: { video: ["70", 0] } };
+  wf[72] = { class_type: "ImageScale", inputs: { image: ["71", 0], upscale_method: "lanczos", width, height, crop: "center" } };
+  wf[73] = { class_type: "ImageFromBatch", inputs: { image: ["72", 0], batch_index: Math.max(0, motion.total - length), length } };
+  const inputs = { conditioning: positive, vae: ["3", 0], latent: ["6", 1], context_frames: ["73", 0], context_length: length, encode_mode: "video", anchor_mode: "head", crop: "center", audio_context_length: length, audio_mode: "timeline", target_start: 0 };
+  // Without a saved latent only the pictures are pinned (a clip that has its own sound, see h3Graph's audio guide).
+  if (motion.latent) {
+    wf[74] = { class_type: "MiniMaxH3MotionContextLoadLatent", inputs: { latent_path: motion.latent, clip_index: 0 } };
+    inputs.context_latent = ["74", 0];
+  }
+  wf[75] = { class_type: "MiniMaxH3MotionContext", inputs };
+  return ["75", 0];
+}
+
+/** Cuts the pinned frames off the decoded clip (node 76 feeds CreateVideo "14") and saves the final latent (node 80) for the next clip. */
+function finishMotion(wf, { motion, saveLatent, latent }) {
+  if (motion) {
+    wf[76] = { class_type: "MiniMaxH3MotionContextTrim", inputs: { images: ["12", 0], trim_frames: ["75", 1], audio: ["13", 0], fps: 24, match_tail: true } };
+    wf[14].inputs = { images: ["76", 0], audio: ["76", 1], fps: 24 };
+  }
+  // Slot 1 of its own file name: the tool knows where to find it.
+  if (saveLatent) wf[80] = { class_type: "MiniMaxH3MotionContextSaveLatent", inputs: { latent, filename_prefix: saveLatent, clip_index: 1 } };
 }
 
 const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20], deno: ["euler", 8] };
@@ -120,7 +218,7 @@ const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20], den
  * H3 reference to video: up to 9 reference pictures, a reference video (edit or restyle a clip) and reference audio.
  * Reference nodes use ids from 40 up so they never collide with the fixed ids below. The result is node "15".
  */
-export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false, first, last, guideAudio }) {
+export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false, first, last, guideAudio, motion, saveLatent }) {
   const frames = h3Frames(seconds);
   const [sampler, defaultSteps] = REF_SAMPLERS[model];
   const cond = { clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0], prompt: h3Prompt(prompt), width, height, length: frames, ref_image_size: "match" };
@@ -174,6 +272,7 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     wf[64] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: -1, vae: ["3", 0], image: ["63", 0] } };
     positive = ["64", 0];
   }
+  if (motion) positive = addMotion(wf, motion, positive, width, height);
   // Deno two-stage: sample all but the last step small, enlarge the video latent 2x, then finish the last step at full size.
   let final = ["11", 0];
   if (twoStage) {
@@ -198,6 +297,7 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     14: { class_type: "CreateVideo", inputs: { images: ["12", 0], audio: ["13", 0], fps: 24 } },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: "video/vsom_h3_ref", format: "mp4", codec: "h264" } },
   });
+  finishMotion(wf, { motion, saveLatent, latent: final });
   return wf;
 }
 

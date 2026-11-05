@@ -27,7 +27,7 @@ interface Props {
   projectId: string;
   kinds: Kind[];
   view: ProjectSettingsView | null;
-  media: { images: MediaFile[]; audio: MediaFile[] };
+  media: { images: MediaFile[]; audio: MediaFile[]; videos: MediaFile[] };
   bible?: Bible | null;
   running: boolean;
   notify: (text: string) => void;
@@ -42,6 +42,8 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
   const [last, setLast] = useState("");
   const [audio, setAudio] = useState("");
   const [refs, setRefs] = useState<string[]>([]);
+  // A clip whose motion and camera the new clip follows (R2V); a vision model describes it for the prompt.
+  const [refVideo, setRefVideo] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [duration, setDuration] = useState("5");
   const [drafting, setDrafting] = useState(false);
@@ -55,6 +57,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
     setLast((value) => (media.images.some((file) => file.path === value) ? value : fallback(media.images, (list) => list.at(-1)?.path)));
     setAudio((value) => (media.audio.some((file) => file.path === value) ? value : fallback(media.audio, (list) => list[0]?.path)));
     setRefs((list) => list.filter((path) => media.images.some((file) => file.path === path)));
+    setRefVideo((value) => (media.videos.some((file) => file.path === value) ? value : ""));
   }, [media, kind]);
 
   const settings = view?.effective;
@@ -62,7 +65,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
 
   /** The mode that is really used: "auto" decides from what is picked. */
   const resolved: MakeKind | null =
-    kind !== "auto" ? kind : audio && first ? "s2v" : refs.length > 0 ? "r2v" : first && last && first !== last ? "fl2v" : first ? "i2v" : null;
+    kind !== "auto" ? kind : audio && first ? "s2v" : refs.length > 0 || refVideo ? "r2v" : first && last && first !== last ? "fl2v" : first ? "i2v" : null;
   const isVideo = kind === "auto" || kind === "i2v" || kind === "fl2v" || kind === "s2v" || kind === "r2v";
   /** R2V references: the picked ones, plus the first image when one is picked as well (the scene picture). */
   const refList = resolved === "r2v" ? [...new Set([...refs, ...(first ? [first] : [])])].slice(0, 9) : [];
@@ -77,7 +80,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
     const output = resolved === "image" ? `assets/images/gen-${id}.png` : audioPrefix[resolved] ? `assets/audio/${audioPrefix[resolved]}-${id}.wav` : `assets/video/clip-${id}.mp4`;
     return makeItem(
       settings,
-      { kind: resolved, prompt, lyrics: resolved === "vocal" ? lyrics : undefined, first: first || undefined, last: resolved === "fl2v" ? last || undefined : undefined, audio: resolved === "s2v" ? audio || undefined : undefined, refs: resolved === "r2v" ? refList : undefined, duration: Number(duration) },
+      { kind: resolved, prompt, lyrics: resolved === "vocal" ? lyrics : undefined, first: first || undefined, last: resolved === "fl2v" ? last || undefined : undefined, audio: resolved === "s2v" ? audio || undefined : undefined, refs: resolved === "r2v" ? refList : undefined, refVideo: resolved === "r2v" ? refVideo || undefined : undefined, duration: Number(duration) },
       output,
     );
   }
@@ -117,6 +120,8 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
           first: resolved === "i2v" || resolved === "fl2v" || resolved === "s2v" ? first || undefined : undefined,
           last: resolved === "fl2v" ? last || undefined : undefined,
           refs: resolved === "r2v" ? refList.map(describeRef) : undefined,
+          refPaths: resolved === "r2v" ? refList : undefined,
+          refVideo: resolved === "r2v" ? refVideo || undefined : undefined,
         }),
       );
     } catch (e) {
@@ -224,6 +229,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
             </div>
           </div>
         )}
+        {showRefs && picker("참조 영상 (선택: 움직임과 카메라를 따라 합니다)", refVideo, setRefVideo, media.videos, "영상이 없습니다", true)}
         {(isVideo || kind === "sfx") && (
           <div className="field">
             <label htmlFor="gen-duration">길이(초)</label>
