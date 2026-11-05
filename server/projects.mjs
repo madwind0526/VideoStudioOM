@@ -281,7 +281,8 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
       const items = [];
       // Dirent.isDirectory() is false for junctions and symlinks, so linked folders are never listed.
       for (const entry of entries) {
-        if (entry.isDirectory() && isValidProjectId(entry.name)) items.push(await summarize(path.join(root, entry.name), entry.name));
+        // A name starting with "_" is a hidden project (the image library): it is a project for every tool but never listed.
+        if (entry.isDirectory() && isValidProjectId(entry.name) && !entry.name.startsWith("_")) items.push(await summarize(path.join(root, entry.name), entry.name));
       }
       return items.sort((a, b) => b.updatedAt - a.updatedAt);
     },
@@ -303,6 +304,21 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
         files: [...(await listFiles(dir, "studio")), ...(await listFiles(dir, "artifacts"))],
         media: await mediaOf(dir),
       };
+    },
+
+    /** A hidden project (id starting with "_", see list) made on first use; an existing one is returned as it is. */
+    async ensureHidden(id, title) {
+      if (!/^_[a-z0-9-]{1,40}$/.test(id)) throw new HttpError(400, "숨은 프로젝트 이름이 올바르지 않습니다.");
+      return mutex("create", async () => {
+        const root = await getRoot();
+        const dir = path.join(root, id);
+        if (!(await stat(dir).catch(() => null))?.isDirectory()) {
+          for (const sub of ["studio", "artifacts", "assets/images", "assets/video", "assets/audio", "assets/music", "renders"]) await mkdir(path.join(dir, sub), { recursive: true });
+          const marker = { version: "1.0", created_at: new Date().toISOString(), project_id: id, title };
+          await writeFileAtomic(path.join(dir, "project.json"), `${JSON.stringify(marker, null, 2)}\n`);
+        }
+        return summarize(dir, id);
+      });
     },
 
     async create(title) {

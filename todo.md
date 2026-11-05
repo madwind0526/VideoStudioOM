@@ -31,18 +31,18 @@
 - 만든 그림마다 기록(종류, 프롬프트, 시드, 뽑은 조합, 원본 그림)을 옆에 남겨 "다시 만들기"가 되게 한다 (지금의 Recipe/versions 방식 그대로).
 
 ### 먼저 확인할 것 (스파이크, 1~2시간)
-- [ ] 보관함을 **숨은 프로젝트**(예: id `_images`)로 두는 게 가장 싸다: jobs, versions, 미디어 목록, 기록(record), `describePictures` 캐시를 전부 그대로 쓴다. 프로젝트 목록과 라이브러리에서 걸러 내는 곳이 몇 군데인지 센다 (`server/projects.mjs` 목록, `LibraryPage`, 최근 프로젝트).
+- [x] (2026-11-06 확인: 됨) 보관함을 **숨은 프로젝트**(예: id `_images`)로 두는 게 가장 싸다: jobs, versions, 미디어 목록, 기록(record), `describePictures` 캐시를 전부 그대로 쓴다. 프로젝트 목록과 라이브러리에서 걸러 내는 곳이 몇 군데인지 센다 (`server/projects.mjs` 목록, `LibraryPage`, 최근 프로젝트).
   - 안 되면: `storage.outputDir/images/` 폴더를 따로 읽는 작은 저장소를 만든다.
 - [ ] Krea 한 장이 이 GPU에서 몇 초인지 재 둔다 (N장 배치의 시간 기준). 같은 방식으로 Qwen 편집(25스텝)도.
 
 ### 단계
 
 **1단계: 메뉴 + 보관함 + T2I N장**
-- [ ] 사이드바에 "이미지" 메뉴, 주소 `#/images`, `src/pages/ImagesPage.tsx` (탭: 만들기 / 참조로 만들기 / 분석해서 변주 / 랜덤 조합)
-- [ ] `server/images/` (저장소, 목록, 기록) + 라우트 `/api/images/*`
-- [ ] 만들기 탭: 프롬프트(+ "프롬프트 만들기", `krea-image.md` 재사용), 크기, **장수 N**, 시드(고정/무작위), 화풍·LoRA(설정의 `engine.image`). N장은 큐에 N개 작업으로 넣는다 (한 번에 GPU 하나).
-- [ ] 결과 격자: 즐겨찾기, 삭제, 크게 보기(`Lightbox` 재사용), 프롬프트 보기
-- [ ] 시험: 저장소, 라우트, N장 배치 (가짜 ComfyUI)
+- [x] 사이드바에 "이미지" 메뉴, 주소 `#/images`, `src/pages/ImagesPage.tsx` (탭은 아직 없음: 만들기 한 화면. 탭은 2단계부터)
+- [x] 저장소는 숨은 프로젝트 `_images`(`projects.ensureHidden`, 목록에서 제외) + `POST /api/images/ensure`. 별도 `server/images/`는 2단계부터 필요하면 만든다.
+- [x] 만들기: 프롬프트(+ "프롬프트 만들기", `krea-image.md` 재사용), 크기, **장수 N**, 시드(고정/무작위), 화풍·LoRA(설정의 `engine.image`). N장은 큐에 N개 작업으로 넣는다 (한 번에 GPU 하나).
+- [~] 결과 격자: 삭제, 크게 보기, 프롬프트/버전 보기는 됨. 즐겨찾기는 아직.
+- [x] 시험: 숨은 프로젝트(`test/projects.test.mjs`, `test/api.test.mjs`). 실제로 2장 만들어 확인(2026-11-06).
 
 **2단계: 분석해서 변주**
 - [ ] `POST /api/images/analyze`: 그림 → `describe_image`(QwenVL 4B) → LLM이 Krea 프롬프트로 정리 (`server/prompts/image-vary.md`, 영어, 글자가 그림에 그려지지 않게)

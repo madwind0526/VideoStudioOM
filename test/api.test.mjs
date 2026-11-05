@@ -92,6 +92,18 @@ test("project flow: create, save with conflict check, settings overrides", () =>
     assert.equal((await call("GET", "/api/projects/no-such-project")).status, 404);
   }));
 
+test("the image library is a hidden project: made on first use, never listed, its settings and detail are readable", () =>
+  withServer(async (call) => {
+    assert.equal((await call("POST", "/api/images/ensure", {}, { auth: false })).status, 403);
+    const made = await call("POST", "/api/images/ensure", {});
+    assert.equal(made.status, 200);
+    assert.equal(made.body.project.id, "_images");
+    assert.equal((await call("POST", "/api/images/ensure", {})).status, 200);
+    assert.deepEqual((await call("GET", "/api/projects")).body.projects, []);
+    assert.equal((await call("GET", "/api/projects/_images")).body.project.media.images.length, 0);
+    assert.equal((await call("GET", "/api/projects/_images/settings")).status, 200);
+  }));
+
 test("the file browser lists a folder and adds the open project as a shortcut", () =>
   withServer(async (call) => {
     const { body } = await call("POST", "/api/projects", { title: "browse" });

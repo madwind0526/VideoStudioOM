@@ -1,4 +1,4 @@
-import { ChevronRight, Film, FolderOpen, Heart, Library, Moon, Plus, Settings as SettingsIcon, Sparkles, Sun, type LucideIcon } from "lucide-react";
+import { ChevronRight, Film, FolderOpen, Heart, Image as ImageIcon, Library, Moon, Plus, Settings as SettingsIcon, Sparkles, Sun, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary } from "./api";
 import { BRAND } from "./brand";
@@ -8,6 +8,7 @@ import ProjectModal from "./components/ProjectModal";
 import VideoPlayer from "./components/VideoPlayer";
 import ResourceBar from "./components/ResourceBar";
 import { setIn } from "./fields";
+import ImagesPage from "./pages/ImagesPage";
 import { LibraryPage, LikesPage } from "./pages/LibraryPage";
 import ProjectsScreen, { SECTIONS } from "./pages/ProjectWorkspace";
 import SettingsPage from "./pages/SettingsPage";
@@ -15,8 +16,8 @@ import StartPage from "./pages/StartPage";
 import type { SectionId } from "./sections/types";
 import { useEvents } from "./useEvents";
 
-// #/create  #/projects  #/projects/<id>/<section>  #/library  #/likes  #/settings
-type Route = { page: "create" } | { page: "projects" } | { page: "project"; id: string; section: SectionId } | { page: "library" } | { page: "likes" } | { page: "settings" };
+// #/create  #/projects  #/projects/<id>/<section>  #/images  #/library  #/likes  #/settings
+type Route = { page: "create" } | { page: "projects" } | { page: "project"; id: string; section: SectionId } | { page: "images" } | { page: "library" } | { page: "likes" } | { page: "settings" };
 
 const SECTION_IDS = SECTIONS.map((section) => section.id);
 
@@ -29,7 +30,7 @@ function parseRoute(): Route {
   }
   const [head, id, section] = parts;
   if (head === "projects") return id ? { page: "project", id, section: SECTION_IDS.includes(section as SectionId) ? (section as SectionId) : "title" } : { page: "projects" };
-  if (head === "library" || head === "likes" || head === "settings") return { page: head };
+  if (head === "images" || head === "library" || head === "likes" || head === "settings") return { page: head };
   return { page: "create" };
 }
 
@@ -38,15 +39,16 @@ function hashOf(route: Route): string {
   return `#/${route.page}`;
 }
 
-type NavKey = "create" | "projects" | "library" | "likes";
+type NavKey = "create" | "projects" | "images" | "library" | "likes";
 const NAV: { key: NavKey; label: string; icon: LucideIcon }[] = [
   { key: "create", label: "만들기", icon: Sparkles },
   { key: "projects", label: "프로젝트", icon: FolderOpen },
+  { key: "images", label: "이미지", icon: ImageIcon },
   { key: "library", label: "라이브러리", icon: Library },
   { key: "likes", label: "좋아요", icon: Heart },
 ];
 
-const PAGE_LABELS: Record<Route["page"], string> = { create: "만들기", projects: "프로젝트", project: "프로젝트", library: "라이브러리", likes: "좋아요", settings: "설정" };
+const PAGE_LABELS: Record<Route["page"], string> = { create: "만들기", projects: "프로젝트", project: "프로젝트", images: "이미지", library: "라이브러리", likes: "좋아요", settings: "설정" };
 const RECENT_LIMIT = 6;
 
 // localStorage can throw (private window, blocked site data); the app must work without it.
@@ -312,6 +314,7 @@ export default function App() {
             notify={setMessage}
           />
         )}
+        {route.page === "images" && <ImagesPage jobTick={jobTick} notify={setMessage} />}
         {route.page === "library" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} onNew={() => go({ page: "create" })} />}
         {route.page === "likes" && <LikesPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} />}
         {route.page === "settings" && <SettingsPage notify={setMessage} onSaved={reload} />}

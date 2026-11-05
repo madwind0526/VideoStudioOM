@@ -36,7 +36,7 @@ interface Part {
 /**
  * The prompt/versions pop-up of images and videos. `open(path)` shows it for one file; render `dialog` once in the section.
  */
-function useVersionDialog(props: SectionProps, kind: "image" | "video", files: MediaFile[]) {
+export function useVersionDialog(props: SectionProps, kind: "image" | "video", files: MediaFile[]) {
   const [shown, setShown] = useState<{ path: string; tab: "prompt" | "versions" } | null>(null);
   const file = shown ? files.find((item) => item.path === shown.path) : undefined;
   const dialog =
@@ -57,7 +57,7 @@ function useVersionDialog(props: SectionProps, kind: "image" | "video", files: M
 }
 
 /** Re-make and delete icons for one generated file (top right of its tile or row). With `onPrompt` (images, videos) the prompt icon opens the prompt/versions pop-up instead. */
-function ItemTools({ props, file, kind, onPrompt }: { props: SectionProps; file: MediaFile; kind: MakeKind | null; onPrompt?: (tab: "prompt" | "versions") => void }) {
+export function ItemTools({ props, file, kind, onPrompt }: { props: SectionProps; file: MediaFile; kind: MakeKind | null; onPrompt?: (tab: "prompt" | "versions") => void }) {
   const { project, view, jobs, onJobsChanged, notify } = props;
   const recipe = recipeOf(file.record);
   const [mode, setMode] = useState<"edit" | "delete" | "sent" | null>(null);

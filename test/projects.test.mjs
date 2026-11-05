@@ -37,6 +37,22 @@ test("lists old and new style projects, skips invalid names, finds poster and fi
   }
 });
 
+test("a hidden project (the image library) is made once, works like a project and is never listed", async () => {
+  const { store, cleanup } = await setup();
+  try {
+    const first = await store.ensureHidden("_images", "이미지 보관함");
+    assert.equal(first.id, "_images");
+    await store.ensureHidden("_images", "other title");
+    assert.equal((await store.get("_images")).media.images.length, 0);
+    await store.create("Visible one");
+    assert.deepEqual((await store.list()).map((p) => p.id), ["visible-one"]);
+    await assert.rejects(store.ensureHidden("images", "x"), /올바르지 않습니다/);
+    await assert.rejects(store.ensureHidden("_../x", "x"), /올바르지 않습니다/);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("stages follow the files in the project folder", async () => {
   const { root, store, cleanup } = await setup();
   try {

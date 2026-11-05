@@ -362,6 +362,12 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     sendJson(res, 200, { prompt });
     return true;
   }
+  if (pathname === "/api/images/ensure") {
+    // The image library is a hidden project (see projects.ensureHidden): jobs, versions, records and descriptions work on it as on any project.
+    if (method !== "POST") methodNotAllowed();
+    sendJson(res, 200, { project: await projects.ensureHidden("_images", "이미지 보관함") });
+    return true;
+  }
   if (pathname === "/api/prompts/default") {
     if (method !== "GET") methodNotAllowed();
     sendJson(res, 200, { sheet: await defaultSheetPrompt() });
