@@ -2,11 +2,9 @@
 
 ## Current Focus
 
-- Flagship Scene UI Native Full 2026-10-19 is installed in ComfyUI Rev0, with `ComfyUI-Flagship-Face-Adapters` added from GitHub commit `b66fb8a` by explicit request; full CPU quick-test passes. Optional Spectrum is not installed.
-- Before using VideoStudioOM automatic Rev0 launch, fix the escaped Windows default path in `shared/settings.mjs` and add a settings regression test.
-- Best small integration candidate: expose existing R2V reference video/audio backend inputs in the generation UI.
-- Preserve successful media revisions and mark downstream continuity-dependent clips stale when regeneration is added.
-- Keep Flagship plan JSON separate from ComfyUI API workflows and VideoStudioOM `scene_plan.json`.
-- Defer Flagship UI/source copying because current features overlap and the upstream code is AGPL-3.0-only.
-- Existing engine migration, structured R2V prompts, H3 frame-grid handling, node/model validation, and VRAM release remain in place.
-- Known validation gap: no GPU inference, camera-quality, lip-sync, upscaler-quality, or FRUC runtime test has been run.
+- **이미지 메뉴 (새 기능)** — VideoStudioOM 안에 "이미지" 메뉴: T2I N장, 그림 분석 후 변주, 랜덤 조합(인물/의상/화풍/배경/동작), I2I/R2I, 프로젝트로 보내기. 계획과 단계는 `todo.md` 1번.
+- 보관함은 프로젝트에 묶이지 않는 "이미지 보관함" (숨은 프로젝트 `_images`로 둘 수 있는지 스파이크로 먼저 확인).
+- 이어붙이기 방식 설정(`video.continueMode`)은 R2V/I2V/S2V에 적용. **FL2V 모션 이어받기는 미해결** (끝 그림을 고정하면 이어지는 클립이 다른 장면으로 시작). 미룸.
+- 화면에서 이어붙이기 방식을 바꿔 직접 확인하는 것, S2V 입 모양 확인은 아직 하지 않았다.
+- `start.bat`/`stop.bat`이 자동화 셸에서 4314 서버를 못 찾는다 (한글 netstat 추정, 미확인).
+- 알려진 검증 공백: 입 모양, 카메라 품질, 모션 이어받기가 눈으로 확실히 더 좋은지(수치만).

@@ -2,7 +2,7 @@
 
 ## Current Wave
 
-- **Wave:** 5
+- **Wave:** 6
 - **Status:** Ready
 - **Cache Status:** CLEAN
 - **Last Checkpoint:** (없음)
@@ -17,6 +17,7 @@
 | 3 | P2 설정과 도구 브릿지, 미디어 화면(전체 만들기/이어 붙이기/다시 만들기/지우기), 외부 워크플로 설정 | Done |
 | 4 | Installed Flagship Scene UI Native Full 2026-10-19 in ComfyUI Rev0; audited docs and VideoStudioOM integration candidates | Done |
 | 5 | Added ComfyUI-Flagship-Face-Adapters from GitHub commit b66fb8a and verified full ComfyUI CPU quick-test | Done |
+| 6 | 장면 중심 흐름 정리, 그림 설명(QwenVL 4B)을 영상 프롬프트에 사용, 참조 영상 선택, 이어붙이기 방식 설정(모션 이어받기: R2V/I2V/S2V), CACHE flush | Done |
 
 ## Session Notes
 
