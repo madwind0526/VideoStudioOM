@@ -4,21 +4,16 @@ import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary 
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import PromptLog from "../components/PromptLog";
+import { IMAGE_SIZES, type ImageSizeId } from "../imageSizes";
 import { ItemTools, useVersionDialog } from "../sections/MediaSections";
 import { makePrompt, startItems, stamp, type MakeItem } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 import { useJobs, useProjectDetail } from "../useProject";
+import ImageVary from "./ImageVary";
 
 /** The id of the image library: a hidden project (see server/projects.mjs ensureHidden), so jobs, versions and records work as in any project. */
 const LIBRARY = "_images";
 
-const SIZES = [
-  { id: "wide", label: "가로 16:9 (1536×864)", size: [1536, 864] },
-  { id: "tall", label: "세로 9:16 (864×1536)", size: [864, 1536] },
-  { id: "square", label: "정사각 1:1 (1024×1024)", size: [1024, 1024] },
-  { id: "photo", label: "가로 4:3 (1152×864)", size: [1152, 864] },
-  { id: "portrait", label: "세로 3:4 (864×1152)", size: [864, 1152] },
-] as const;
 
 interface Props {
   jobTick: number;
@@ -56,6 +51,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
   const { detail, reload } = useProjectDetail(project.id, jobTick);
   const jobs = useJobs(jobTick);
   const [open, setOpen] = useState<string | null>(null);
+  const [tab, setTab] = useState<"make" | "vary">("make");
   const images = detail?.media.images ?? [];
 
   const props: SectionProps = {
@@ -79,7 +75,15 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
         이미지 보관함 <span className="count">{images.length}</span>
       </h2>
       <span className="hint">프로젝트와 상관없이 만든 그림입니다. 마음에 드는 그림은 나중에 프로젝트의 장면 그림으로 보낼 수 있습니다.</span>
-      <Maker props={props} />
+      <div className="tabs" role="tablist" aria-label="이미지 만들기 방식" style={{ margin: "14px 0" }}>
+        <button className="tab" role="tab" aria-selected={tab === "make"} onClick={() => setTab("make")}>
+          만들기
+        </button>
+        <button className="tab" role="tab" aria-selected={tab === "vary"} onClick={() => setTab("vary")}>
+          분석해서 변주
+        </button>
+      </div>
+      {tab === "make" ? <Maker props={props} /> : <ImageVary props={props} images={images} />}
       <JobList projectId={project.id} jobs={jobs.history} outputs={["assets/images/"]} pending={jobs.pending} paused={jobs.paused} onChanged={props.onJobsChanged} />
       {images.length === 0 ? (
         <p className="muted">아직 그림이 없습니다. 위에서 설명을 적고 만들어 보세요.</p>
@@ -106,7 +110,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
 function Maker({ props }: { props: SectionProps }) {
   const { project, view, jobs, notify, onJobsChanged } = props;
   const [prompt, setPrompt] = useState("");
-  const [sizeId, setSizeId] = useState<(typeof SIZES)[number]["id"]>("wide");
+  const [sizeId, setSizeId] = useState<ImageSizeId>("wide");
   const [count, setCount] = useState("4");
   const [drafting, setDrafting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -132,7 +136,7 @@ function Maker({ props }: { props: SectionProps }) {
     if (!text) return setError("그림 설명을 적어 주세요.");
     if (!view) return setError("설정을 불러오는 중입니다.");
     if (!Number.isInteger(number) || number < 1 || number > 24) return setError("장수는 1~24 사이로 입력하세요.");
-    const [width, height] = SIZES.find((item) => item.id === sizeId)!.size;
+    const [width, height] = IMAGE_SIZES.find((item) => item.id === sizeId)!.size;
     const id = stamp();
     const items: MakeItem[] = Array.from({ length: number }, (_, index) => ({
       tool: "comfyui_krea_image",
@@ -170,8 +174,8 @@ function Maker({ props }: { props: SectionProps }) {
         </div>
         <div className="field">
           <label htmlFor="img-size">크기</label>
-          <select id="img-size" value={sizeId} onChange={(event) => setSizeId(event.target.value as typeof sizeId)}>
-            {SIZES.map((item) => (
+          <select id="img-size" value={sizeId} onChange={(event) => setSizeId(event.target.value as ImageSizeId)}>
+            {IMAGE_SIZES.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}
               </option>

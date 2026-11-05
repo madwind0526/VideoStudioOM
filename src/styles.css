@@ -930,6 +930,12 @@ p {
   background: var(--muted);
 }
 
+/* The picture chosen as the source in the image menu. */
+.thumbs > button[aria-pressed="true"] {
+  border-color: var(--primary, #2f9e7e);
+  box-shadow: 0 0 0 3px var(--primary, #2f9e7e);
+}
+
 .thumbs img {
   display: block;
   width: 100%;

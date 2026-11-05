@@ -12,6 +12,7 @@ import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
 import { describePictures } from "./describe.mjs";
+import { makeVariations } from "./images.mjs";
 import { runTool } from "./engine/tools.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
@@ -49,6 +50,9 @@ async function withPromptLog(projects, id, stage, ask, run) {
     }
   }
 }
+
+/** The hidden project that holds the pictures of the image menu (see projects.ensureHidden). */
+const IMAGE_LIBRARY = "_images";
 
 function decodeId(raw) {
   try {
@@ -365,7 +369,33 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   if (pathname === "/api/images/ensure") {
     // The image library is a hidden project (see projects.ensureHidden): jobs, versions, records and descriptions work on it as on any project.
     if (method !== "POST") methodNotAllowed();
-    sendJson(res, 200, { project: await projects.ensureHidden("_images", "이미지 보관함") });
+    sendJson(res, 200, { project: await projects.ensureHidden(IMAGE_LIBRARY, "이미지 보관함") });
+    return true;
+  }
+  if (pathname === "/api/images/analyze" || pathname === "/api/images/vary") {
+    if (method !== "POST") methodNotAllowed();
+    const body = requireObject(await readJsonBody(req));
+    const config = await settings.get();
+    const ask = askWith(config.llm);
+    if (pathname === "/api/images/vary") {
+      const prompts = await withPromptLog(projects, IMAGE_LIBRARY, "image-vary", ask, (logged) => makeVariations({ prompt: body.prompt, axis: body.axis, count: body.count }, logged));
+      sendJson(res, 200, { prompts });
+      return true;
+    }
+    // A picture of the library: what it shows (QwenVL, kept per picture), then that as a Krea prompt the user can edit.
+    if (typeof body.path !== "string") throw new HttpError(400, "분석할 그림을 고르세요.");
+    if ((await jobs.list()).current) throw new HttpError(409, "다른 작업이 끝난 뒤에 분석할 수 있습니다 (같은 GPU를 씁니다).");
+    let failure = "";
+    const looked = await describePictures({
+      projects,
+      id: IMAGE_LIBRARY,
+      rels: [body.path],
+      run: (file) => runTool({ tool: "describe_image", inputs: { image_path: file }, connections: config.connections, ffmpegPath: config.connections.ffmpegPath }).then((result) => (result.ok ? result.data.text : Promise.reject(new Error((failure = result.error))))),
+    });
+    const description = looked[body.path];
+    if (!description) throw new HttpError(502, `그림을 분석하지 못했습니다${failure ? `: ${failure}` : ""}`);
+    const prompt = await withPromptLog(projects, IMAGE_LIBRARY, "image-analyze", ask, (logged) => makePrompt({ target: "image", text: description.slice(0, 3500) }, logged));
+    sendJson(res, 200, { description, prompt });
     return true;
   }
   if (pathname === "/api/prompts/default") {

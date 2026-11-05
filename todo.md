@@ -45,12 +45,12 @@
 - [x] 시험: 숨은 프로젝트(`test/projects.test.mjs`, `test/api.test.mjs`). 실제로 2장 만들어 확인(2026-11-06).
 
 **2단계: 분석해서 변주**
-- [ ] `POST /api/images/analyze`: 그림 → `describe_image`(QwenVL 4B) → LLM이 Krea 프롬프트로 정리 (`server/prompts/image-vary.md`, 영어, 글자가 그림에 그려지지 않게)
-- [ ] 화면: 분석 결과 프롬프트를 **직접 고칠 수 있게** 보여 준 뒤 변주를 N장 만든다
+- [x] (2026-11-06) `POST /api/images/analyze`: 그림 → `describe_image`(QwenVL 4B) → LLM이 Krea 프롬프트로 정리 (`server/prompts/image-vary.md`, 영어, 글자가 그림에 그려지지 않게)
+- [x] 화면(`src/pages/ImageVary.tsx`): 분석 결과 프롬프트를 **직접 고칠 수 있게** 보여 준 뒤 변주를 N장 만든다
   - 시드만 바꾸기
   - 한 축만 바꾸기 (의상 / 배경 / 시간대 / 포즈): LLM이 문장을 다시 쓰거나, 3단계 풀에서 뽑는다
   - 화풍은 두고 주제만 바꾸기
-- [ ] 모델 교체를 줄인다: 분석(Rev0) → 프롬프트(LLM) → 생성(8190) 순서로 **한 번만 갈아타게** 묶어 처리
+- [~] 모델 교체를 줄인다 (분석은 한 번, 변주는 LLM 한 번 호출로 N개를 받음; 생성은 큐에서 이어서). 화풍은 두고 주제만 바꾸기는 아직 없음: 분석(Rev0) → 프롬프트(LLM) → 생성(8190) 순서로 **한 번만 갈아타게** 묶어 처리
 - [ ] 4B의 설명에는 작은 추측이 섞인다 → 프롬프트를 고칠 수 있게 두는 것이 전제
 
 **3단계: 랜덤 조합 (MusicAutomation 방식)**
