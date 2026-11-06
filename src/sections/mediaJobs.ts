@@ -171,6 +171,15 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   return { tool: "h3_local_video", label: text, record: recipe, inputs };
 }
 
+/** The job that enlarges a picture (RTX): the result becomes another version of the picture, so the original is kept. */
+export function upscaleItem(file: string, record: Recipe, scale: number): MakeItem {
+  const name = file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
+  return { tool: "image_upscale", label: `확대 ×${scale}`, record, final: true, candidateOf: file, inputs: { image_path: file, scale, output_path: `assets/versions/${name}-up-${stamp()}.png` } };
+}
+
+/** The items followed by one enlarge job per picture (all pictures first, so the GPU swaps models once); scale 0 adds nothing. */
+export const withUpscale = (items: MakeItem[], scale: number): MakeItem[] => (scale ? [...items, ...items.map((item) => upscaleItem(String(item.inputs.output_path), item.record, scale))] : items);
+
 /** Starts one job, or a run of jobs that go one after another (a failure stops the rest). */
 export async function startItems(projectId: string, items: MakeItem[]): Promise<void> {
   const body = items.map((item) => ({ tool: item.tool, label: item.label, inputs: item.inputs, record: item.record, candidateOf: item.candidateOf }));

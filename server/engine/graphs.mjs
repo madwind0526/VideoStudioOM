@@ -301,6 +301,16 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
   return wf;
 }
 
+/** The same two RTX passes on one picture: a picture in, the enlarged picture out (node "3"). */
+export function rtxImageGraph({ image, scale, prefix }) {
+  const { images: _video, ...passes } = rtxGraph({ video: "", scale, prefix })[2].inputs;
+  return {
+    1: { class_type: "LoadImage", inputs: { image } },
+    2: { class_type: "DenoRTXVFXVideoFinisher", inputs: { images: ["1", 0], ...passes } },
+    3: { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: prefix } },
+  };
+}
+
 /** The user's "RTX 2pass upscale workflow" (Deblur Ultra, then High Bitrate High): a clip in, the enlarged clip out (node "3"). */
 export function rtxGraph({ video, scale, prefix }) {
   return {

@@ -1,12 +1,13 @@
-import { Sparkles, Wand2 } from "lucide-react";
+import { Maximize2, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary } from "../api";
+import { api, ApiError, mediaUrl, type MediaFile, type ProjectSettingsView, type ProjectSummary } from "../api";
 import JobList from "../components/JobList";
 import Lightbox from "../components/Lightbox";
 import PromptLog from "../components/PromptLog";
 import { IMAGE_SIZES, type ImageSizeId } from "../imageSizes";
 import { ItemTools, useVersionDialog } from "../sections/MediaSections";
-import { makePrompt, startItems, stamp, type MakeItem } from "../sections/mediaJobs";
+import LoraPicker, { loraFields } from "../components/LoraPicker";
+import { makePrompt, startItems, stamp, withUpscale, type MakeItem, recipeOf, upscaleItem, type SceneLora } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 import { useJobs, useProjectDetail } from "../useProject";
 import ImageRandom from "./ImageRandom";
@@ -48,11 +49,16 @@ export default function ImagesPage({ jobTick, notify }: Props) {
   return <Library project={project} view={view} jobTick={jobTick} notify={notify} />;
 }
 
+/** Enlargement factors offered for the RTX upscale. */
+const UPSCALE_SCALES = [1.5, 2, 3];
+
 function Library({ project, view, jobTick, notify }: { project: ProjectSummary; view: ProjectSettingsView | null; jobTick: number; notify: (text: string) => void }) {
   const { detail, reload } = useProjectDetail(project.id, jobTick);
   const jobs = useJobs(jobTick);
   const [open, setOpen] = useState<string | null>(null);
   const [tab, setTab] = useState<"make" | "vary" | "random">("make");
+  const [loras, setLoras] = useState<SceneLora[]>([]);
+  const [upscale, setUpscale] = useState(0);
   const images = detail?.media.images ?? [];
 
   const props: SectionProps = {
@@ -68,6 +74,16 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
     notify,
   };
   const versionDialog = useVersionDialog(props, "image", images);
+
+  async function enlarge(file: MediaFile) {
+    try {
+      await startItems(project.id, [upscaleItem(file.path, recipeOf(file.record) ?? { kind: "image", prompt: "" }, upscale || 2)]);
+      notify("확대를 시작했습니다. 결과는 이 그림의 새 버전으로 들어갑니다.");
+      props.onJobsChanged();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "확대를 시작하지 못했습니다.");
+    }
+  }
 
   return (
     <div className="page">
@@ -87,7 +103,21 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
           랜덤 조합
         </button>
       </div>
-      {tab === "make" ? <Maker props={props} /> : tab === "vary" ? <ImageVary props={props} images={images} /> : <ImageRandom props={props} />}
+      <section className="gen-card" style={{ marginBottom: 14 }}>
+        <LoraPicker value={loras} onChange={setLoras} />
+        <div className="field">
+          <label htmlFor="img-upscale">업스케일 (만든 뒤 RTX로 확대)</label>
+          <select id="img-upscale" value={upscale} onChange={(event) => setUpscale(Number(event.target.value))}>
+            <option value={0}>하지 않음</option>
+            {UPSCALE_SCALES.map((scale) => (
+              <option key={scale} value={scale}>
+                ×{scale}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+      {tab === "make" ? <Maker props={props} loras={loras} upscale={upscale} /> : tab === "vary" ? <ImageVary props={props} images={images} loras={loras} upscale={upscale} /> : <ImageRandom props={props} loras={loras} upscale={upscale} />}
       <JobList projectId={project.id} jobs={jobs.history} outputs={["assets/images/"]} pending={jobs.pending} paused={jobs.paused} onChanged={props.onJobsChanged} />
       {images.length === 0 ? (
         <p className="muted">아직 그림이 없습니다. 위에서 설명을 적고 만들어 보세요.</p>
@@ -99,6 +129,9 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
                 <img src={mediaUrl(project.id, file.path, file.mtimeMs)} alt={file.path} loading="lazy" />
               </button>
               <ItemTools props={props} file={file} kind="image" onPrompt={(tab) => versionDialog.open(file.path, tab)} />
+              <button className="chip-btn" type="button" disabled={jobs.current !== null} title={`RTX로 ×${upscale || 2} 확대 (위의 업스케일 값, 없으면 ×2)`} onClick={() => void enlarge(file)}>
+                <Maximize2 size={13} /> 확대
+              </button>
             </div>
           ))}
         </div>
@@ -111,7 +144,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
 }
 
 /** Description, size and count: starts that many jobs (each picks its own seed). */
-function Maker({ props }: { props: SectionProps }) {
+function Maker({ props, loras, upscale }: { props: SectionProps; loras: SceneLora[]; upscale: number }) {
   const { project, view, jobs, notify, onJobsChanged } = props;
   const [prompt, setPrompt] = useState("");
   const [sizeId, setSizeId] = useState<ImageSizeId>("wide");
@@ -142,15 +175,16 @@ function Maker({ props }: { props: SectionProps }) {
     if (!Number.isInteger(number) || number < 1 || number > 24) return setError("장수는 1~24 사이로 입력하세요.");
     const [width, height] = IMAGE_SIZES.find((item) => item.id === sizeId)!.size;
     const id = stamp();
+    const extra = loraFields(loras);
     const items: MakeItem[] = Array.from({ length: number }, (_, index) => ({
       tool: "comfyui_krea_image",
       label: text,
-      record: { kind: "image", prompt: text },
-      inputs: { prompt: text, width, height, output_path: `assets/images/img-${id}-${String(index + 1).padStart(2, "0")}.png` },
+      record: { kind: "image", prompt: text, ...extra.recipe },
+      inputs: { prompt: text, width, height, ...extra.inputs, output_path: `assets/images/img-${id}-${String(index + 1).padStart(2, "0")}.png` },
     }));
     setBusy(true);
     try {
-      await startItems(project.id, items);
+      await startItems(project.id, withUpscale(items, upscale));
       notify(`${number}장을 차례로 만듭니다.`);
       onJobsChanged();
     } catch (e) {

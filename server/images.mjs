@@ -43,10 +43,10 @@ export async function makeVariations({ prompt, axis, count }, ask) {
 const PART_NAMES = { person: "person", outfit: "outfit", style: "style", place: "place", action: "action", prop: "prop" };
 
 /** One Krea prompt per combination from the pool (one LLM call for all, so they differ from each other). */
-export async function composePrompts({ combinations }, ask) {
+export async function composePrompts({ combinations, labels = {} }, ask) {
   if (!Array.isArray(combinations) || combinations.length < 1 || combinations.length > 24) throw new HttpError(400, "조합은 1~24개여야 합니다.");
   const lines = combinations.map((combination, index) => {
-    const parts = Object.entries(PART_NAMES).filter(([id]) => typeof combination?.[id] === "string" && combination[id].trim()).map(([id, name]) => `${name}: ${combination[id].trim().slice(0, 200)}`);
+    const parts = Object.entries(combination ?? {}).filter(([, phrase]) => typeof phrase === "string" && phrase.trim()).map(([id, phrase]) => `${PART_NAMES[id] ?? labels[id] ?? id}: ${phrase.trim().slice(0, 200)}`);
     if (parts.length === 0) throw new HttpError(400, `${index + 1}번 조합이 비어 있습니다.`);
     return `${index + 1}. ${parts.join(" | ")}`;
   });

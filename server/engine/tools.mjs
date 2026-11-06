@@ -6,7 +6,7 @@ import { concatMedia, ffmpegFor } from "../concat.mjs";
 import { ffprobeFor } from "../probe.mjs";
 import { runCapture } from "../post.mjs";
 import { createComfy } from "./comfy.mjs";
-import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, pickQwenEditModels, qwenEditGraph, QWENVL, qwenVlGraph, qwenVlVideoGraph, rtxGraph } from "./graphs.mjs";
+import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, pickQwenEditModels, qwenEditGraph, QWENVL, qwenVlGraph, qwenVlVideoGraph, rtxGraph, rtxImageGraph } from "./graphs.mjs";
 import { composeSheet, extractFrame, SHEET_SECONDS, SHEET_SHOTS, sheetPrompt, sheetReferencePrompt } from "./sheet.mjs";
 import { ensureService } from "./services.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "./workflow-patch.mjs";
@@ -26,6 +26,7 @@ const REQUIRED = {
   h3_reference_video: ["prompt", "output_path"],
   comfyui_workflow: ["workflow_path", "output_path"],
   character_sheet: ["prompt", "output_path"],
+  image_upscale: ["image_path", "output_path"],
   describe_image: ["image_path"],
   describe_video: ["video_path"],
   qwen3_tts: ["text", "output_path"],
@@ -220,6 +221,18 @@ const HANDLERS = {
   async describe_video(inputs, context) {
     if (!(await exists(inputs.video_path))) throw new ToolError(`영상 파일이 없습니다: ${inputs.video_path}`, "bad_input");
     return describePicture(inputs.video_path, inputs, context, qwenVlVideoGraph);
+  },
+
+  /** Enlarges a picture with the RTX passes on the Rev0 ComfyUI (scale 1-4, 2 by default) and saves it as `output_path`. */
+  async image_upscale(inputs, context) {
+    if (!(await exists(inputs.image_path))) throw new ToolError(`그림 파일이 없습니다: ${inputs.image_path}`, "bad_input");
+    const scale = Math.min(4, Math.max(1, Number(inputs.scale ?? 2) || 2));
+    const output = await prepareOutput(inputs);
+    await context.ensure("ref");
+    const rtx = context.comfy(context.connections.refUrl);
+    const name = await rtx.upload(inputs.image_path, path.basename(inputs.image_path));
+    await rtx.generate(rtxImageGraph({ image: name, scale, prefix: `RTXvsom_${path.basename(inputs.image_path, path.extname(inputs.image_path))}` }), "3", output, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+    return { artifacts: [output], model: "rtx-2pass", data: { provider: "comfyui-rtx", output, scale } };
   },
 
   async comfyui_krea_image(inputs, context) {

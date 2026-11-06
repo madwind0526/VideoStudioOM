@@ -13,7 +13,7 @@ import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
 import { describePictures } from "./describe.mjs";
 import { composePrompts, makeVariations } from "./images.mjs";
-import { DEFAULT_POOL, pickCombinations, pickOne, POOL_CATEGORIES, readPool, writePool } from "./image-pool.mjs";
+import { defaultPool, pickCombinations, pickOne, readPool, writePool } from "./image-pool.mjs";
 import { runTool } from "./engine/tools.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
 import { ALLOWED_TOOLS, prepareInputs } from "./job-inputs.mjs";
@@ -377,7 +377,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     // The mixing pool of the image menu (data/image-pools.json, or the built-in one until it is saved).
     const poolFile = path.join(dataDir, "image-pools.json");
     if (pathname === "/api/images/pool") {
-      if (method === "GET") sendJson(res, 200, { pool: await readPool(poolFile), categories: POOL_CATEGORIES, defaults: DEFAULT_POOL });
+      if (method === "GET") sendJson(res, 200, { pool: await readPool(poolFile), defaults: defaultPool() });
       else if (method === "PUT") sendJson(res, 200, { pool: await writePool(poolFile, requireObject(await readJsonBody(req)).pool) });
       else methodNotAllowed();
       return true;
@@ -386,13 +386,13 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const body = requireObject(await readJsonBody(req));
     if (pathname === "/api/images/random") {
       const pool = await readPool(poolFile);
-      const locked = body.locked && typeof body.locked === "object" && !Array.isArray(body.locked) ? Object.fromEntries(Object.entries(body.locked).filter(([key, value]) => POOL_CATEGORIES.some((category) => category.id === key) && typeof value === "string" && value.trim()).map(([key, value]) => [key, value.trim().slice(0, 200)])) : {};
+      const locked = body.locked && typeof body.locked === "object" && !Array.isArray(body.locked) ? Object.fromEntries(Object.entries(body.locked).filter(([key, value]) => pool.categories.some((category) => category.id === key) && typeof value === "string" && value.trim()).map(([key, value]) => [key, value.trim().slice(0, 200)])) : {};
       // `redo` = { category, avoid }: one category of one combination again (the dice button of the screen).
       if (body.redo && typeof body.redo.category === "string") sendJson(res, 200, { phrase: pickOne(pool, body.redo.category, { avoid: typeof body.redo.avoid === "string" ? body.redo.avoid : "" }) });
       else sendJson(res, 200, { combinations: pickCombinations(pool, { count: body.count, locked }) });
       return true;
     }
-    const prompts = await withPromptLog(projects, IMAGE_LIBRARY, "image-compose", askWith((await settings.get()).llm), (logged) => composePrompts({ combinations: body.combinations }, logged));
+    const prompts = await withPromptLog(projects, IMAGE_LIBRARY, "image-compose", askWith((await settings.get()).llm), (logged) => readPool(poolFile).then((pool) => composePrompts({ combinations: body.combinations, labels: Object.fromEntries(pool.categories.map(({ id, label }) => [id, label])) }, logged)));
     sendJson(res, 200, { prompts });
     return true;
   }

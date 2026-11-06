@@ -4,7 +4,8 @@ import { api, ApiError, mediaUrl, type MediaFile } from "../api";
 import FileNavigator from "../components/FileNavigator";
 import PromptLog from "../components/PromptLog";
 import { IMAGE_SIZES, type ImageSizeId } from "../imageSizes";
-import { importImage, startItems, stamp, type MakeItem } from "../sections/mediaJobs";
+import { loraFields } from "../components/LoraPicker";
+import { importImage, startItems, stamp, withUpscale, type MakeItem, type SceneLora } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 
 /** What changes between the pictures ("seed" keeps the prompt and only the seed differs). */
@@ -19,7 +20,7 @@ const AXES = [
 ] as const;
 
 /** Take a picture, let a vision model say what it shows, edit that as a prompt and make several variations of it. */
-export default function ImageVary({ props, images }: { props: SectionProps; images: MediaFile[] }) {
+export default function ImageVary({ props, images, loras, upscale }: { props: SectionProps; images: MediaFile[]; loras: SceneLora[]; upscale: number }) {
   const { project, jobs, notify, onJobsChanged } = props;
   const [source, setSource] = useState("");
   const [picking, setPicking] = useState(false);
@@ -73,15 +74,16 @@ export default function ImageVary({ props, images }: { props: SectionProps; imag
     if (list.length === 0) return setError("만들 프롬프트가 없습니다.");
     const [width, height] = IMAGE_SIZES.find((item) => item.id === sizeId)!.size;
     const id = stamp();
+    const extra = loraFields(loras);
     const items: MakeItem[] = list.map((text, index) => ({
       tool: "comfyui_krea_image",
       label: text,
-      record: { kind: "image", prompt: text },
-      inputs: { prompt: text, width, height, output_path: `assets/images/var-${id}-${String(index + 1).padStart(2, "0")}.png` },
+      record: { kind: "image", prompt: text, ...extra.recipe },
+      inputs: { prompt: text, width, height, ...extra.inputs, output_path: `assets/images/var-${id}-${String(index + 1).padStart(2, "0")}.png` },
     }));
     setWorking("make");
     try {
-      await startItems(project.id, items);
+      await startItems(project.id, withUpscale(items, upscale));
       notify(`${items.length}장을 차례로 만듭니다.`);
       onJobsChanged();
     } catch (e) {

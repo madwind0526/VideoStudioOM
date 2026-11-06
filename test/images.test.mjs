@@ -30,17 +30,24 @@ test("pool: built in until a file is saved, checked on the way in, saved whole",
   const { mkdtemp, rm } = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
-  const { checkPool, DEFAULT_POOL, readPool, writePool } = await import("../server/image-pool.mjs");
+  const { checkPool, defaultPool, readPool, writePool } = await import("../server/image-pool.mjs");
   const dir = await mkdtemp(path.join(os.tmpdir(), "vsom-pool-"));
   try {
     const file = path.join(dir, "image-pools.json");
-    assert.deepEqual(await readPool(file), checkPool(DEFAULT_POOL));
-    const saved = await writePool(file, { person: [" a ", "a", "b"], place: ["x"] });
-    assert.deepEqual(saved.person, ["a", "b"]);
-    assert.deepEqual((await readPool(file)).place, ["x"]);
-    assert.deepEqual((await readPool(file)).outfit, []);
+    assert.deepEqual(await readPool(file), defaultPool());
+    assert.deepEqual(defaultPool().categories.map((item) => item.id), ["person", "outfit", "style", "place", "action", "prop"]);
+    const saved = await writePool(file, { categories: [{ id: "person", label: "인물", phrases: [" a ", "a", "b"] }, { label: "날씨", phrases: [{ text: "x", weight: 3 }] }, { label: "빈 항목" }] });
+    assert.deepEqual(saved.categories[0].phrases, [{ text: "a", weight: 1 }, { text: "b", weight: 1 }]);
+    assert.deepEqual(saved.categories.map((item) => item.id), ["person", "c2", "c3"]);
+    assert.deepEqual(await readPool(file), saved);
+    // The old shape (one list per known category) is still read.
+    assert.deepEqual(checkPool({ person: ["p"], place: ["l"] }).categories.map((item) => item.label), ["인물", "배경"]);
+    assert.equal(saved.categories[1].phrases[0].weight, 3);
+    assert.throws(() => checkPool({ categories: [{ label: "a", phrases: [{ text: "x", weight: -1 }] }] }), /가중치/);
     assert.throws(() => checkPool({ weather: ["x"] }), /알 수 없는 항목/);
-    assert.throws(() => checkPool({ person: [] }), /하나 이상/);
+    assert.throws(() => checkPool({ categories: [{ label: "a" }] }), /하나 이상/);
+    assert.throws(() => checkPool({ categories: [{ id: "a", label: "a", phrases: ["x"] }, { id: "a", label: "b", phrases: ["y"] }] }), /겹칩니다/);
+    assert.throws(() => checkPool({ categories: [{ label: "", phrases: ["x"] }] }), /이름/);
     assert.throws(() => checkPool([]), /목록/);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -48,10 +55,10 @@ test("pool: built in until a file is saved, checked on the way in, saved whole",
 });
 
 test("pool: combinations take one phrase per category, differ while the pool allows it, keep what is locked and skip empty categories", async () => {
-  const { pickCombinations, pickOne } = await import("../server/image-pool.mjs");
+  const { checkPool, pickCombinations, pickOne } = await import("../server/image-pool.mjs");
   let seed = 7;
   const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  const pool = { person: ["p1", "p2", "p3"], outfit: ["o1", "o2"], style: ["s1"], place: ["l1", "l2", "l3"], action: [], prop: [] };
+  const pool = checkPool({ person: ["p1", "p2", "p3"], outfit: ["o1", "o2"], style: ["s1"], place: ["l1", "l2", "l3"], action: [], prop: [], });
   const combos = pickCombinations(pool, { count: 3, locked: { style: "S!" }, random });
   assert.equal(combos.length, 3);
   assert.deepEqual(new Set(combos.map((item) => item.person)).size, 3);
@@ -60,6 +67,11 @@ test("pool: combinations take one phrase per category, differ while the pool all
   assert.notEqual(pickOne(pool, "person", { avoid: "p1", random }), "p1");
   assert.equal(pickOne(pool, "style", { avoid: "s1", random }), "s1");
   assert.throws(() => pickOne(pool, "action"), /문구가 없습니다/);
+  // Weights: a phrase of weight 0 is never drawn, a heavy one is drawn far more often.
+  const weighted = checkPool({ categories: [{ id: "w", label: "w", phrases: [{ text: "never", weight: 0 }, { text: "rare", weight: 1 }, { text: "often", weight: 9 }] }] });
+  const drawn = Array.from({ length: 400 }, () => pickOne(weighted, "w", { random }));
+  assert.ok(!drawn.includes("never"));
+  assert.ok(drawn.filter((text) => text === "often").length > drawn.filter((text) => text === "rare").length * 3);
 });
 
 test("compose: one prompt per combination from one call, an empty combination is refused", async () => {
@@ -69,6 +81,11 @@ test("compose: one prompt per combination from one call, an empty combination is
     seen.push(user);
     return '{"prompts": ["one", "two"]}';
   });
+  await composePrompts({ combinations: [{ weather: "비" }], labels: { weather: "날씨" } }, async (system, user) => {
+    seen.push(user);
+    return '{"prompts": ["x"]}';
+  });
+  assert.match(seen[1], /1\. 날씨: 비/);
   assert.deepEqual(prompts, ["one", "two"]);
   assert.match(seen[0], /1\. person: 여성 \| place: 골목\n2\. person: 남성 \| prop: 우산/);
   await assert.rejects(composePrompts({ combinations: [{}] }, async () => ""), /비어 있습니다/);

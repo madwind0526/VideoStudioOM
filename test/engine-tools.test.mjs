@@ -145,6 +145,27 @@ test("describe_image: the picture is uploaded to Rev0 and the text of the QwenVL
   }
 });
 
+test("image_upscale: the picture goes through the RTX passes on Rev0 and is saved as the output", async () => {
+  const comfy = await fakeComfy({ outputs: { 3: { images: [{ filename: "up.png", type: "temp" }] } }, files: { "up.png": Buffer.from("BIG") } });
+  const dir = await tmp();
+  try {
+    const image = path.join(dir, "a.png");
+    const out = path.join(dir, "assets", "versions", "a-up.png");
+    await writeFile(image, "IMG");
+    const result = await run("image_upscale", { image_path: image, output_path: out, scale: 9 }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(await readFile(out, "utf8"), "BIG");
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[1].inputs.image, "up_a.png");
+    assert.equal(graph[2].inputs.scale, 4);
+    assert.deepEqual(graph[3].inputs.images, ["2", 0]);
+    assert.equal((await run("image_upscale", { image_path: path.join(dir, "none.png"), output_path: out }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("describe_video: the clip goes to the video input of QwenVL and the summary comes back", async () => {
   const comfy = await fakeComfy({ nodes: { AILab_QwenVL: loader("model_name", [QWENVL.model]) }, outputs: { 6: { text: ["A bee flies left."] } } });
   const dir = await tmp();
