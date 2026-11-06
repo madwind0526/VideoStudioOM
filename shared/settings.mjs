@@ -52,8 +52,8 @@ export const DEFAULTS = {
   },
   connections: {
     songyueUrl: "http://127.0.0.1:4311",
-    comfyUrl: "http://127.0.0.1:8190",
-    // Where SongYUE2 lives (its backend, its ComfyUI with Krea and H3, its speech engine).
+    comfyUrl: "http://127.0.0.1:8188",
+    // Where SongYUE2 lives (its backend and its speech engine). comfyUrl and refUrl may be the same server (one ComfyUI for everything).
     songyueDir: "C:\\Claude\\SongYUE2",
     // The second ComfyUI (Rev0 portable): the two-stage reference video (H3 latent upscaler, Deno nodes) and the RTX 2-pass upscale
     // run here. Its results are read from <refDir>/ComfyUI/output.

@@ -28,7 +28,7 @@ const AUDIO_PATHS = ["defaults.audioSource", "audio.musicFormat", "audio.voice.t
 // Settings of the local engines, grouped by the program they belong to (two ComfyUI servers: see docs/engine.md).
 const LOCAL_GROUPS = [
   { title: "SongYUE2 (음악·효과음·음성)", paths: ["connections.songyueUrl", "connections.songyueDir"] },
-  { title: "ComfyUI ① 이미지·영상 생성 (SongYUE2에 들어 있음)", paths: ["connections.comfyUrl"] },
+  { title: "ComfyUI ① 이미지·영상 생성 (②와 같은 주소면 한 서버를 함께 씁니다)", paths: ["connections.comfyUrl"] },
   { title: "ComfyUI ② Rev0 (참조 영상 · RTX 확대)", paths: ["connections.refUrl", "connections.refDir"] },
   { title: "도구와 폴더", paths: ["connections.ffmpegPath", "storage.projectsDir", "storage.inputDir", "storage.outputDir"] },
 ];
