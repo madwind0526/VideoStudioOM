@@ -5,6 +5,8 @@
 // Video size = the size the video model renders (`generate`): a pixel budget x an aspect ratio, each side a multiple of 32.
 // Nothing is enlarged afterwards for now (the finished size is the generated size). "custom" in place of a ratio uses
 // `customSize.generate` as typed.
+// 1M is 1024 x 1024 pixels (like 1K = 1024), so 1M at 1:1 is 1024x1024.
+export const MEGAPIXEL = 1024 * 1024;
 export const SIZE_MEGAPIXELS = [0.3, 0.5, 0.7, 1, 1.5];
 export const ASPECTS = [
   { id: "16x9", label: "16:9", w: 16, h: 9 },
@@ -283,7 +285,7 @@ export function sizeFor(pixels, aspect, orientation = "landscape") {
 export function resolveSize(settings) {
   const { sizeMegapixels, aspect, orientation, customSize } = settings.defaults;
   const ratio = ASPECTS.find((item) => item.id === aspect);
-  const generate = ratio ? sizeFor(sizeMegapixels * 1_000_000, ratio, orientation) : customSize.generate;
+  const generate = ratio ? sizeFor(sizeMegapixels * MEGAPIXEL, ratio, orientation) : customSize.generate;
   return {
     id: ratio ? `${sizeMegapixels}m-${ratio.id}-${orientation}` : CUSTOM_SIZE_ID,
     label: ratio ? `${sizeMegapixels}M ${ratio.label} ${orientation === "portrait" ? "세로" : "가로"}` : "직접 입력",

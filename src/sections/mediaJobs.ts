@@ -64,7 +64,21 @@ export interface Recipe {
   continuedFrom?: string;
   /** A picture made as a new picture of the people in these reference pictures (Qwen image edit on an empty canvas) instead of from the text alone. */
   editRefs?: string[];
+  /** A picture edited with other pictures (Qwen edit): the first is the one that changes, the others are named in the prompt as <image2>, <image3>, ... */
+  editFrom?: string[];
+  /** The picture whose pose or depth a Krea 2 + Pose / Krea 2 + Depth picture follows. */
+  controlFrom?: string;
+  /** The model of a text-to-image picture (see shared/imageModels.mjs), Krea 2 Turbo when missing. */
+  imageModel?: string;
+  /** The sampling values that differ from the model's defaults (steps, cfg, sampler_name, scheduler), kept so that making it again uses them. */
+  sampling?: Record<string, number | string>;
+  /** With editRefs: keep the people of the references ("person", default) or only take their style, colours and mood ("style"). */
+  refMode?: RefMode;
+  /** A picture whose pose the new picture follows (used with editRefs). */
+  pose?: string;
 }
+
+export type RefMode = "person" | "style";
 
 export interface MakeItem {
   tool: string;
@@ -86,8 +100,15 @@ export function recipeOf(record: Record<string, unknown> | null | undefined): Re
 }
 
 /** The prompt of a picture made from reference pictures: <image1> is the empty canvas, the references follow. */
-export const editPrompt = (text: string, count: number) =>
-  `Fill <image1> with a completely new picture. The ${count > 1 ? "people" : "person"} shown in ${Array.from({ length: count }, (_, i) => `<image${i + 2}>`).join(", ")} must keep exactly the same face, hair and clothes. ${text}`;
+export const editPrompt = (text: string, count: number, mode: RefMode = "person", pose = false) => {
+  const names = Array.from({ length: count }, (_, i) => `<image${i + 2}>`).join(", ");
+  const keep =
+    mode === "style"
+      ? `Use ${names} only as a reference for the art style, colour palette, light and mood; the subject and the composition are new.`
+      : `The ${count > 1 ? "people" : "person"} shown in ${names} must keep exactly the same face, hair and clothes.`;
+  const posing = pose ? ` The figure takes exactly the pose of the figure in <image${count + 2}>; copy only that pose, not its look, clothes or background.` : "";
+  return `Fill <image1> with a completely new picture. ${keep}${posing} ${text}`;
+};
 
 /** The job for one recipe, built from the current settings. The result goes to `output` (a project-relative path). */
 export function makeItem(settings: Settings, recipe: Recipe, output: string): MakeItem | string {
@@ -95,12 +116,31 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
   const text = recipe.prompt.trim();
   if (!text) return recipe.kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
   const sceneLoras = recipe.loras && recipe.loras.length > 0 ? { extra_loras: recipe.loras } : {};
+  if (recipe.kind === "image" && recipe.editFrom && recipe.editFrom.length > 0 && (recipe.imageModel === "krea2-identity" || recipe.imageModel === "flux2-klein-edit")) {
+    return { tool: "comfyui_edit_model", label: text, record: recipe, inputs: { model: recipe.imageModel === "krea2-identity" ? "krea2-identity" : "flux2-klein", prompt: text, reference_image_path: recipe.editFrom[0], reference_image_paths: recipe.editFrom.slice(1, 4), ...(recipe.sampling ?? {}), output_path: output } };
+  }
+  if (recipe.kind === "image" && recipe.editFrom && recipe.editFrom.length > 0) {
+    // The result has the shape of the first picture, so no size is given.
+    return { tool: "comfyui_image_edit", label: text, record: recipe, inputs: { prompt: text, reference_image_path: recipe.editFrom[0], reference_image_paths: recipe.editFrom.slice(1, 10), ...(recipe.sampling ?? {}), output_path: output } };
+  }
   if (recipe.kind === "image" && recipe.editRefs && recipe.editRefs.length > 0) {
-    const refs = recipe.editRefs.slice(0, 9);
-    return { tool: "comfyui_image_edit", label: text, record: recipe, inputs: { prompt: editPrompt(text, refs.length), blank_canvas: true, reference_image_paths: refs, width: size.image[0], height: size.image[1], output_path: output } };
+    const refs = recipe.editRefs.slice(0, recipe.pose ? 8 : 9);
+    return {
+      tool: "comfyui_image_edit",
+      label: text,
+      record: recipe,
+      // The pose picture goes last, after the references.
+      inputs: { prompt: editPrompt(text, refs.length, recipe.refMode, Boolean(recipe.pose)), blank_canvas: true, reference_image_paths: recipe.pose ? [...refs, recipe.pose] : refs, width: size.image[0], height: size.image[1], ...(recipe.sampling ?? {}), output_path: output },
+    };
+  }
+  if (recipe.kind === "image" && recipe.controlFrom && (recipe.imageModel === "krea2-pose" || recipe.imageModel === "krea2-depth")) {
+    return { tool: "comfyui_krea_control", label: text, record: recipe, inputs: { control: recipe.imageModel === "krea2-pose" ? "pose" : "depth", prompt: text, control_image_path: recipe.controlFrom, ...(recipe.sampling ?? {}), output_path: output } };
+  }
+  if (recipe.kind === "image" && recipe.imageModel && recipe.imageModel !== "krea2-turbo") {
+    return { tool: "comfyui_t2i", label: text, record: recipe, inputs: { model: recipe.imageModel, prompt: text, width: size.image[0], height: size.image[1], ...(recipe.sampling ?? {}), output_path: output } };
   }
   if (recipe.kind === "image") {
-    return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, output_path: output } };
+    return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, ...(recipe.sampling ?? {}), output_path: output } };
   }
   if (recipe.kind === "sheet") {
     // Same image tool, models and LoRAs; `slot` only picks the character-sheet workflow when one is set.
@@ -172,13 +212,21 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
 }
 
 /** The job that enlarges a picture (RTX): the result becomes another version of the picture, so the original is kept. */
-export function upscaleItem(file: string, record: Recipe, scale: number): MakeItem {
+export function upscaleItem(file: string, record: Recipe, scale: number, how: { workflow?: string; model?: string } = {}): MakeItem {
   const name = file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
-  return { tool: "image_upscale", label: `확대 ×${scale}`, record, final: true, candidateOf: file, inputs: { image_path: file, scale, output_path: `assets/versions/${name}-up-${stamp()}.png` } };
+  const inputs = { image_path: file, scale, ...(how.workflow && how.workflow !== "rtx" ? { workflow: how.workflow, model: how.model } : {}), output_path: `assets/versions/${name}-up-${stamp()}.png` };
+  return { tool: "image_upscale", label: `확대 ×${scale}`, record, final: true, candidateOf: file, inputs };
 }
 
-/** The items followed by one enlarge job per picture (all pictures first, so the GPU swaps models once); scale 0 adds nothing. */
-export const withUpscale = (items: MakeItem[], scale: number): MakeItem[] => (scale ? [...items, ...items.map((item) => upscaleItem(String(item.inputs.output_path), item.record, scale))] : items);
+/** How a picture is enlarged: the scale, and the workflow with its model (RTX when none). */
+export interface UpscaleHow {
+  scale: number;
+  workflow?: string;
+  model?: string;
+}
+
+/** The items followed by one enlarge job per picture (all pictures first, so the GPU swaps models once); no choice adds nothing. */
+export const withUpscale = (items: MakeItem[], how: UpscaleHow | null): MakeItem[] => (how ? [...items, ...items.map((item) => upscaleItem(String(item.inputs.output_path), item.record, how.scale, how))] : items);
 
 /** Starts one job, or a run of jobs that go one after another (a failure stops the rest). */
 export async function startItems(projectId: string, items: MakeItem[]): Promise<void> {

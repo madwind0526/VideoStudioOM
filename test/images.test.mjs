@@ -1,29 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AXES, makeVariations } from "../server/images.mjs";
+import { editInstruction, reviseImagePrompt } from "../server/images.mjs";
 
-test("variations: one call, exactly the asked number, an invalid or short answer is asked again once", async () => {
+test("revise: the free-text change goes to the model with the base prompt, an unusable answer is asked again once", async () => {
   const seen = [];
-  const answers = ['not json at all', '{"prompts": ["a", "b", "c"]}'];
+  const answers = ["not json at all", '{"prompt": " A bee on a daisy at dusk. "}'];
   const ask = async (system, user) => {
     seen.push({ system, user });
     return answers.shift();
   };
-  const prompts = await makeVariations({ prompt: "A bee on a daisy.", axis: "time", count: 3 }, ask);
-  assert.deepEqual(prompts, ["a", "b", "c"]);
+  const revised = await reviseImagePrompt({ prompt: "A bee on a daisy.", request: "해 질 녘으로, 머리는 짧게" }, ask);
+  assert.equal(revised, "A bee on a daisy at dusk.");
   assert.equal(seen.length, 2);
-  assert.match(seen[0].user, /BASE PROMPT:\nA bee on a daisy\./);
-  assert.ok(seen[0].user.includes(`AXIS: ${AXES.time}`));
+  assert.equal(seen[0].user, "BASE PROMPT:\nA bee on a daisy.\n\nCHANGE:\n해 질 녘으로, 머리는 짧게");
   assert.match(seen[1].user, /rejected/);
-  // More than asked is cut to the number asked.
-  assert.deepEqual(await makeVariations({ prompt: "x", axis: "pose", count: 2 }, async () => '{"prompts": ["1", "2", "3"]}'), ["1", "2"]);
 });
 
-test("variations: bad input and a model that keeps failing are refused", async () => {
-  await assert.rejects(makeVariations({ prompt: " ", axis: "time", count: 2 }, async () => ""), /프롬프트/);
-  await assert.rejects(makeVariations({ prompt: "x", axis: "weather", count: 2 }, async () => ""), /바꿀 항목/);
-  await assert.rejects(makeVariations({ prompt: "x", axis: "mood", count: 3 }, async () => '{"prompts": ["only one"]}'), /LLM의 답을 쓸 수 없습니다/);
+test("revise: bad input and a model that keeps failing are refused", async () => {
+  await assert.rejects(reviseImagePrompt({ prompt: " ", request: "x" }, async () => ""), /프롬프트/);
+  await assert.rejects(reviseImagePrompt({ prompt: "x", request: " " }, async () => ""), /바꿀 내용/);
+  await assert.rejects(reviseImagePrompt({ prompt: "x", request: "y" }, async () => '{"prompt": ""}'), /LLM의 답을 쓸 수 없습니다/);
 });
 
 test("pool: built in until a file is saved, checked on the way in, saved whole", async () => {
@@ -35,7 +32,7 @@ test("pool: built in until a file is saved, checked on the way in, saved whole",
   try {
     const file = path.join(dir, "image-pools.json");
     assert.deepEqual(await readPool(file), defaultPool());
-    assert.deepEqual(defaultPool().categories.map((item) => item.id), ["person", "outfit", "style", "place", "action", "prop"]);
+    assert.deepEqual(defaultPool().categories.map((item) => item.id), ["person", "outfit", "expression", "action", "place", "time", "camera", "lighting", "palette", "style", "prop"]);
     const saved = await writePool(file, { categories: [{ id: "person", label: "인물", phrases: [" a ", "a", "b"] }, { label: "날씨", phrases: [{ text: "x", weight: 3 }] }, { label: "빈 항목" }] });
     assert.deepEqual(saved.categories[0].phrases, [{ text: "a", weight: 1 }, { text: "b", weight: 1 }]);
     assert.deepEqual(saved.categories.map((item) => item.id), ["person", "c2", "c3"]);
@@ -89,4 +86,29 @@ test("compose: one prompt per combination from one call, an empty combination is
   assert.deepEqual(prompts, ["one", "two"]);
   assert.match(seen[0], /1\. person: 여성 \| place: 골목\n2\. person: 남성 \| prop: 우산/);
   await assert.rejects(composePrompts({ combinations: [{}] }, async () => ""), /비어 있습니다/);
+});
+
+test("edit instruction: the English instruction keeps the picture names, a picture outside the chosen ones is refused", async () => {
+  const seen = [];
+  const ask = async (system, user) => {
+    seen.push(user);
+    return '{"prompt": "The person in <image1> wears the outfit of <image2>."}';
+  };
+  assert.equal(await editInstruction({ text: "그림1의 사람이 그림2의 옷을 입고 있다", count: 2 }, ask), "The person in <image1> wears the outfit of <image2>.");
+  assert.equal(seen[0], "PICTURES: 2\nREQUEST:\n그림1의 사람이 그림2의 옷을 입고 있다");
+  await assert.rejects(editInstruction({ text: "그림3의 포즈로", count: 2 }, ask), /고른 그림/);
+  await assert.rejects(editInstruction({ text: "x", count: 0 }, ask), /1~10/);
+  // An answer without any <imageN> is asked again once, then refused.
+  await assert.rejects(editInstruction({ text: "그림1을 바꿔", count: 1 }, async () => '{"prompt": "make it nicer"}'), /LLM의 답을 쓸 수 없습니다/);
+});
+
+test("edit instruction, plain naming: no <imageN> is needed and the plain variant of the instructions is used", async () => {
+  const seen = [];
+  const ask = async (system, user) => {
+    seen.push(system);
+    return '{"prompt": "The person in the first picture wears the outfit of the second picture."}';
+  };
+  assert.equal(await editInstruction({ text: "그림1의 사람이 그림2의 옷을 입는다", count: 2, naming: "plain" }, ask), "The person in the first picture wears the outfit of the second picture.");
+  assert.match(seen[0], /the first picture/);
+  await assert.rejects(editInstruction({ text: "그림1을 바꿔", count: 1 }, ask), /LLM의 답을 쓸 수 없습니다/);
 });

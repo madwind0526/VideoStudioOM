@@ -4,7 +4,7 @@
 
 - **Wave:** 6
 - **Status:** Ready
-- **Cache Status:** CLEAN
+- **Cache Status:** DIRTY
 - **Last Checkpoint:** (없음)
 
 ## Wave History

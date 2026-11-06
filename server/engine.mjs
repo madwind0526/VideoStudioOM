@@ -2,6 +2,7 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { UPSCALE_WORKFLOWS } from "../shared/upscale.mjs";
 import { createComfy } from "./engine/comfy.mjs";
 import { loadApiWorkflow, missingModels, missingNodes, WorkflowError } from "./engine/workflow-patch.mjs";
 import { HttpError } from "./http.mjs";
@@ -118,6 +119,10 @@ export async function comfyModels(comfyUrl) {
     vae: await comfy.options("VAELoader", "vae_name"),
     loras: await comfy.options("LoraLoaderModelOnly", "lora_name"),
     upscale: await comfy.options("UpscaleModelLoader", "model_name"),
+    samplers: await comfy.options("KSampler", "sampler_name"),
+    schedulers: await comfy.options("KSampler", "scheduler"),
+    // The choices of every enlarge workflow (see shared/upscale.mjs), by workflow id.
+    upscaleChoices: Object.fromEntries(await Promise.all(UPSCALE_WORKFLOWS.filter((item) => item.node).map(async (item) => [item.id, await comfy.options(item.node, item.field)]))),
   };
 }
 

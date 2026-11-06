@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ASPECTS, CUSTOM_SIZE_ID, resolveSize, SIZE_MEGAPIXELS } from "../../shared/settings.mjs";
 import { FIELDS } from "../fields";
 import SettingField from "./SettingField";
@@ -12,13 +13,17 @@ interface Props {
   onOrientation: (value: string) => void;
   onCustom: (value: unknown) => void;
   errors?: Record<string, string | undefined>;
+  /** Label of the pixel budget list ("영상 크기" by default). */
+  label?: string;
+  /** Extra fields on the same row (the image menu puts the number of pictures here). */
+  children?: ReactNode;
 }
 
 /**
  * Video size (the size the model renders): a pixel budget (0.5M ... 4M), one aspect ratio and wide or tall; the width and height follow from them.
  * "직접 입력" in the ratio list lets the size be typed instead. Controlled; the parent decides when typed values are saved.
  */
-export default function SizePicker({ megapixels, aspect, orientation, custom, onMegapixels, onAspect, onOrientation, onCustom, errors = {} }: Props) {
+export default function SizePicker({ megapixels, aspect, orientation, custom, onMegapixels, onAspect, onOrientation, onCustom, errors = {}, label = "영상 크기", children }: Props) {
   const isCustom = aspect === CUSTOM_SIZE_ID;
   const isSquare = aspect === "1x1";
   // resolveSize only needs these keys, so a minimal settings-shaped object is enough here.
@@ -29,9 +34,9 @@ export default function SizePicker({ megapixels, aspect, orientation, custom, on
 
   return (
     <div className="field">
-      <div className="size-row">
+      <div className="size-row" style={children ? { gridTemplateColumns: "repeat(4, minmax(0, 1fr))" } : undefined}>
         <div className="field">
-          <label htmlFor="size-mp">영상 크기</label>
+          <label htmlFor="size-mp">{label}</label>
           <select id="size-mp" value={megapixels} disabled={isCustom} onChange={(event) => onMegapixels(Number(event.target.value))}>
             {SIZE_MEGAPIXELS.map((mp) => {
               const [width, height] = sizeOf(mp).generate;
@@ -61,6 +66,7 @@ export default function SizePicker({ megapixels, aspect, orientation, custom, on
             <option value="portrait">세로</option>
           </select>
         </div>
+        {children}
       </div>
 
       {isCustom && (

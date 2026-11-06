@@ -12,7 +12,7 @@ import { applyEngine, checkWorkflow, comfyModels, listDir } from "./engine.mjs";
 import { bibleContext, readBible } from "./bible.mjs";
 import { askWith, defaultSheetPrompt, makePrompt } from "./prompt-maker.mjs";
 import { describePictures } from "./describe.mjs";
-import { composePrompts, makeVariations } from "./images.mjs";
+import { composePrompts, editInstruction, reviseImagePrompt } from "./images.mjs";
 import { defaultPool, pickCombinations, pickOne, readPool, writePool } from "./image-pool.mjs";
 import { runTool } from "./engine/tools.mjs";
 import { generateBible, generateScenario, generateScript, generateSynopses } from "./story.mjs";
@@ -51,6 +51,8 @@ async function withPromptLog(projects, id, stage, ask, run) {
     }
   }
 }
+
+const PICTURE_MIMES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
 /** The hidden project that holds the pictures of the image menu (see projects.ensureHidden). */
 const IMAGE_LIBRARY = "_images";
@@ -301,6 +303,14 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     return true;
   }
 
+  const forget = /^\/api\/jobs\/([a-z0-9-]+)$/.exec(pathname);
+  if (forget) {
+    if (method !== "DELETE") methodNotAllowed();
+    await jobs.forget(forget[1]);
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   const cancel = /^\/api\/jobs\/([a-z0-9-]+)\/cancel$/.exec(pathname);
   if (cancel) {
     if (method !== "POST") methodNotAllowed();
@@ -396,14 +406,21 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     sendJson(res, 200, { prompts });
     return true;
   }
+  if (pathname === "/api/images/edit-prompt") {
+    if (method !== "POST") methodNotAllowed();
+    const body = requireObject(await readJsonBody(req));
+    const prompt = await withPromptLog(projects, IMAGE_LIBRARY, "image-edit", askWith((await settings.get()).llm), (logged) => editInstruction({ text: body.text, count: body.count, naming: body.naming === "plain" ? "plain" : "tokens" }, logged));
+    sendJson(res, 200, { prompt });
+    return true;
+  }
   if (pathname === "/api/images/analyze" || pathname === "/api/images/vary") {
     if (method !== "POST") methodNotAllowed();
     const body = requireObject(await readJsonBody(req));
     const config = await settings.get();
     const ask = askWith(config.llm);
     if (pathname === "/api/images/vary") {
-      const prompts = await withPromptLog(projects, IMAGE_LIBRARY, "image-vary", ask, (logged) => makeVariations({ prompt: body.prompt, axis: body.axis, count: body.count }, logged));
-      sendJson(res, 200, { prompts });
+      const prompt = await withPromptLog(projects, IMAGE_LIBRARY, "image-vary", ask, (logged) => reviseImagePrompt({ prompt: body.prompt, request: body.request }, logged));
+      sendJson(res, 200, { prompt });
       return true;
     }
     // A picture of the library: what it shows (QwenVL, kept per picture), then that as a Krea prompt the user can edit.
@@ -441,6 +458,17 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     if (method !== "GET") methodNotAllowed();
     const usable = await availableCodecs((await settings.get()).connections.ffmpegPath);
     sendJson(res, 200, { codecs: usable.map((id) => ({ id, label: codecLabels()[id] })) });
+    return true;
+  }
+  if (pathname === "/api/fs/image") {
+    // A picture from any folder, for the thumbnails of the file browser (pictures only; the listing already shows every folder).
+    if (method !== "GET") methodNotAllowed();
+    const target = url.searchParams.get("path") ?? "";
+    const mime = PICTURE_MIMES[path.extname(target).toLowerCase()];
+    if (!mime || target.includes("\0") || !path.isAbsolute(target)) throw new HttpError(400, "그림 파일이 아닙니다.");
+    const info = await stat(target).catch(() => null);
+    if (!info?.isFile() || info.size > 100 * 1024 * 1024) throw new HttpError(404, "그림 파일을 찾을 수 없습니다.");
+    await streamMedia(req, res, { target, size: info.size, mime });
     return true;
   }
   if (pathname === "/api/fs") {

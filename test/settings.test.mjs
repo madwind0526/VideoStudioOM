@@ -87,7 +87,7 @@ test("sizes: every budget at every ratio is on the 32 grid, about the asked pixe
         const { generate, final, id } = resolveSize({ defaults: { sizeMegapixels, aspect: aspect.id, orientation, customSize: {} } });
         for (const n of generate) assert.equal(n % 32, 0, id);
         // About the asked pixel count and the asked shape (rounding to 32 moves each a little).
-        assert.ok(Math.abs((generate[0] * generate[1]) / (sizeMegapixels * 1_000_000) - 1) < 0.12, id);
+        assert.ok(Math.abs((generate[0] * generate[1]) / (sizeMegapixels * 1024 * 1024) - 1) < 0.12, id);
         assert.deepEqual(final, generate, id);
         // Tall is wide turned around.
         const wide = resolveSize({ defaults: { sizeMegapixels, aspect: aspect.id, orientation: "landscape", customSize: {} } }).generate;
@@ -100,9 +100,9 @@ test("sizes: every budget at every ratio is on the 32 grid, about the asked pixe
 
 test("resolveSize: budget x ratio, custom size, and the still-image size", () => {
   const wide = resolveSize(DEFAULTS);
-  assert.deepEqual([wide.generate, wide.final, wide.image], [[1344, 736], [1344, 736], [1344, 736]]);
+  assert.deepEqual([wide.generate, wide.final, wide.image], [[1376, 768], [1376, 768], [1376, 768]]);
   const tall = resolveSize({ defaults: { sizeMegapixels: 1, aspect: "16x9", orientation: "portrait", customSize: {} } });
-  assert.deepEqual([tall.generate, tall.final], [[736, 1344], [736, 1344]]);
+  assert.deepEqual([tall.generate, tall.final], [[768, 1376], [768, 1376]]);
   const custom = resolveSize({ defaults: { sizeMegapixels: 1, aspect: CUSTOM_SIZE_ID, orientation: "landscape", customSize: { generate: [800, 480] } } });
   assert.equal(custom.id, CUSTOM_SIZE_ID);
   assert.deepEqual(custom.generate, [800, 480]);

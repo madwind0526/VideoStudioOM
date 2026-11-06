@@ -1,8 +1,8 @@
-import { Square } from "lucide-react";
+import { Square, X } from "lucide-react";
 import { api, type Job } from "../api";
 import { formatTime } from "../format";
 
-const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", comfyui_image_edit: "이미지 편집", qwen3_tts: "음성", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악", songyue_sfx: "효과음" };
+const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", comfyui_t2i: "이미지", comfyui_krea_control: "이미지(제어)", comfyui_edit_model: "이미지 편집", comfyui_image_edit: "이미지 편집", image_upscale: "확대",qwen3_tts: "음성", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악", songyue_sfx: "효과음" };
 const STATUS_LABELS: Record<Job["status"], string> = { running: "만드는 중", done: "완료", failed: "실패", cancelled: "취소됨", interrupted: "중단됨" };
 
 interface Props {
@@ -24,6 +24,11 @@ export default function JobList({ projectId, jobs, outputs, pending, paused, onC
 
   async function cancel(id: string) {
     await api("POST", `/api/jobs/${id}/cancel`).catch(() => undefined);
+    onChanged();
+  }
+
+  async function forget(id: string) {
+    await api("DELETE", `/api/jobs/${id}`).catch(() => undefined);
     onChanged();
   }
 
@@ -59,9 +64,13 @@ export default function JobList({ projectId, jobs, outputs, pending, paused, onC
             <span className="job-label" title={job.meta.label}>
               {job.meta.label}
             </span>
-            {job.status === "running" && (
+            {job.status === "running" ? (
               <button className="btn" type="button" onClick={() => void cancel(job.id)}>
                 <Square size={13} /> {pending > 0 ? "모두 취소" : "취소"}
+              </button>
+            ) : (
+              <button className="icon-btn" type="button" aria-label="기록 지우기" title="이 기록 지우기" onClick={() => void forget(job.id)}>
+                <X size={15} />
               </button>
             )}
           </div>

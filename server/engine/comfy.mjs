@@ -92,7 +92,9 @@ export function createComfy(baseUrl, { fetchImpl = fetch, WebSocketImpl = global
     /** The values a combo input offers (model files of a loader), [] when unknown. */
     async options(cls, field) {
       const info = await this.nodeInfo(cls);
-      const list = info?.input?.required?.[field]?.[0];
+      const spec = info?.input?.required?.[field];
+      // Older nodes list the choices first, newer ones (schema v3) write ["COMBO", {options: [...]}].
+      const list = Array.isArray(spec?.[0]) ? spec[0] : spec?.[1]?.options;
       return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
     },
 

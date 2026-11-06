@@ -124,6 +124,25 @@ test("bad requests become failed jobs with a code (the real runner checks them b
   }
 });
 
+test("forget takes a finished job out of the history, a running one cannot be taken out", async () => {
+  const f = await fixture({ run: fakeRun });
+  try {
+    await f.queue.start({ tool: "comfyui_krea_image", inputs: { sleep: 0.05, output_path: path.join(f.project, "assets", "a.png") }, allowRoot: f.project });
+    const done = await f.idle();
+    assert.equal((await f.queue.list()).history.length, 1);
+    await f.queue.start({ tool: "comfyui_krea_image", inputs: { sleep: 5, output_path: path.join(f.project, "assets", "b.png") }, allowRoot: f.project });
+    const running = (await f.queue.list()).current;
+    await assert.rejects(f.queue.forget(running.id), /진행 중/);
+    await f.queue.forget(done.id);
+    assert.equal((await f.queue.list()).history.length, 1);
+    await assert.rejects(f.queue.forget(done.id), /기록이 없습니다/);
+    await f.queue.cancel(running.id);
+    await f.idle();
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("cancel stops the running job at once and the next one can start", async () => {
   const f = await fixture();
   try {
@@ -235,7 +254,7 @@ test("API: a batch runs in order, saves how each file was made, and a file can b
     throw new Error("batch did not finish");
   };
   try {
-    const items = ["a", "b", "c"].map((name) => ({ tool: "comfyui_krea_image", label: name, inputs: { output_path: `assets/images/${name}.png` }, record: { kind: "image", prompt: `picture ${name}` } }));
+    const items = ["a", "b", "c"].map((name) => ({ tool: "comfyui_krea_image", label: name, inputs: { sleep: 0.3, output_path: `assets/images/${name}.png` }, record: { kind: "image", prompt: `picture ${name}` } }));
     const started = await call("POST", "/api/jobs", { project: "demo", items });
     assert.equal(started.status, 202);
     assert.equal(started.body.queued, 2);

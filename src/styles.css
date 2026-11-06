@@ -2913,3 +2913,275 @@ button.scene-slot:hover .slot-thumb {
   max-height: 60vh;
   object-fit: contain;
 }
+
+.gen-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* Image library cards: square, the whole picture inside, the free space (top and bottom of a wide one, sides of a tall one) translucent. */
+.thumbs.square .media-item > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.thumbs.square .media-item img {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: contain;
+}
+
+/* Library strip: one row of cards that scrolls sideways. */
+.thumbs.strip {
+  display: flex;
+  gap: 10px;
+  padding-bottom: 8px;
+  overflow-x: auto;
+}
+
+.thumbs.strip .media-item {
+  flex: 0 0 190px;
+  width: 190px;
+}
+
+/* Star of a library card (top left) and the mark of a chosen card. */
+.fav-star {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  display: inline-flex;
+  padding: 4px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.fav-star.on {
+  color: #facc15;
+}
+
+.pick-mark {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 3;
+  display: inline-flex;
+  padding: 3px;
+  color: #fff;
+  background: var(--primary, #2f9e7e);
+  border-radius: 50%;
+}
+
+.thumbs .media-item > button.picked {
+  box-shadow: 0 0 0 3px var(--primary, #2f9e7e);
+}
+
+.pick-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* The star is a button inside the card: undo the picture-button rules of the grids for it. */
+.thumbs .media-item > button.fav-star {
+  display: inline-flex;
+  width: auto;
+  aspect-ratio: auto;
+  padding: 4px;
+  overflow: visible;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  border-radius: 6px;
+}
+
+.icon-btn:disabled {
+  cursor: not-allowed;
+}
+
+/* Random pop-up: every category is one unit of the same size: a name cell of fixed width and its select box beside it. */
+.mix-field {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+}
+
+.mix-field > label {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: var(--muted);
+  color: var(--muted-fg);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.mix-field > select {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0 8px 8px 0;
+}
+
+/* Picked combinations: a number, then the chips; wrapped chips start under the first one. */
+.combo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.combo-row > strong {
+  flex: none;
+  width: 1.8em;
+  line-height: 34px;
+}
+
+.combo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.combo-chips .chip-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.combo-chips .chip-btn:hover {
+  background: var(--muted);
+}
+
+/* File browser, thumbnail view. */
+.file-navigator-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+  min-height: 220px;
+  max-height: 320px;
+  margin-bottom: 12px;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.file-navigator-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  text-align: center;
+}
+
+.file-navigator-tile:hover:not(.disabled) {
+  background: var(--muted);
+}
+
+.file-navigator-tile.active {
+  border-color: var(--primary, #2f9e7e);
+  background: var(--muted);
+}
+
+.file-navigator-tile.disabled {
+  opacity: 0.35;
+}
+
+.file-navigator-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.file-navigator-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.file-navigator-name {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chosen pictures of an image slot: small picture, name and size beside it, X at the right. */
+.slot-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+
+.slot-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.slot-thumb {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.18);
+  cursor: zoom-in;
+}
+
+.slot-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.slot-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.slot-info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

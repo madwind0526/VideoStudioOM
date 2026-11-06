@@ -1,10 +1,10 @@
-import { Dices, Download, Plus, Save, Shuffle, Sparkles, Trash2, Upload } from "lucide-react";
+import { Dices, Download, Plus, Save, Shuffle, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import PromptLog from "../components/PromptLog";
-import { IMAGE_SIZES, type ImageSizeId } from "../imageSizes";
 import { loraFields } from "../components/LoraPicker";
-import { startItems, stamp, withUpscale, type MakeItem, type SceneLora } from "../sections/mediaJobs";
+import { samplingInputs, type ModelChoice } from "../components/ModelPicker";
+import { startItems, stamp, withUpscale, type MakeItem, type SceneLora, type UpscaleHow } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 
 interface Phrase {
@@ -23,16 +23,17 @@ type Combination = Record<string, string>;
 const RANDOM = "";
 const SKIP = "__skip__";
 
-/** Pictures from random mixes of person, outfit, style, place, action and prop (the pool is a file the user edits). */
-export default function ImageRandom({ props, loras, upscale }: { props: SectionProps; loras: SceneLora[]; upscale: number }) {
+/**
+ * Pop-up of the make screen: pictures from random mixes of person, outfit, style, place, action and prop (the pool is a
+ * file the user edits). The number and the size of the pictures are the ones of the make screen.
+ */
+export default function ImageRandom({ props, loras, upscale, size, count, model, onClose }: { props: SectionProps; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; model: ModelChoice; onClose: () => void }) {
   const { project, jobs, notify, onJobsChanged } = props;
   const [categories, setCategories] = useState<Category[]>([]);
   const [defaults, setDefaults] = useState<Category[]>([]);
   const [draft, setDraft] = useState<Category[]>([]);
   const [joinOnly, setJoinOnly] = useState(false);
   const [choice, setChoice] = useState<Record<string, string>>({});
-  const [count, setCount] = useState("4");
-  const [sizeId, setSizeId] = useState<ImageSizeId>("wide");
   const [combinations, setCombinations] = useState<Combination[]>([]);
   const [prompts, setPrompts] = useState<string[]>([]);
   const [working, setWorking] = useState<"" | "roll" | "compose" | "make" | "pool">("");
@@ -100,20 +101,22 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
     setError("");
     const list = prompts.map((text) => text.trim()).filter(Boolean);
     if (list.length === 0) return setError("만들 프롬프트가 없습니다.");
-    const [width, height] = IMAGE_SIZES.find((item) => item.id === sizeId)!.size;
+    if (loras.some((lora) => lora.name.trim()) && model.id !== "krea2-turbo") return setError("이 모델은 LoRA를 적용하지 않습니다. LoRA를 끄거나 Krea 2 Turbo를 고르세요.");
+    const [width, height] = size;
     const id = stamp();
     const extra = loraFields(loras);
     const items: MakeItem[] = list.map((text, index) => ({
-      tool: "comfyui_krea_image",
+      tool: model.tool,
       label: text,
-      record: { kind: "image", prompt: text, ...extra.recipe },
-      inputs: { prompt: text, width, height, ...extra.inputs, output_path: `assets/images/mix-${id}-${String(index + 1).padStart(2, "0")}.png` },
+      record: { kind: "image", prompt: text, ...extra.recipe, imageModel: model.id, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
+      inputs: { prompt: text, width, height, ...extra.inputs, ...samplingInputs(model, index), output_path: `assets/images/mix-${id}-${String(index + 1).padStart(2, "0")}.png` },
     }));
     setWorking("make");
     try {
       await startItems(project.id, withUpscale(items, upscale));
       notify(`${items.length}장을 차례로 만듭니다.`);
       onJobsChanged();
+      onClose();
     } catch (e) {
       fail(e, "작업을 시작하지 못했습니다.");
     } finally {
@@ -162,13 +165,20 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
 
   const label = (id: string) => categories.find((category) => category.id === id)?.label ?? id;
   return (
-    <section className="gen-card">
-      <h3>랜덤 조합</h3>
-      <span className="hint">인물, 의상, 화풍, 배경, 동작, 소품을 무작위로 섞어 그림을 만듭니다. 항목마다 "무작위", "쓰지 않음", 또는 늘 같은 문구로 정할 수 있습니다.</span>
+    <div className="backdrop" style={{ zIndex: 60 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="modal" style={{ width: "min(900px, 100%)" }} role="dialog" aria-modal="true" aria-label="랜덤으로 만들기">
+    <div className="modal-head">
+      <h2>랜덤으로 만들기 ({count}장 · {size[0]}×{size[1]})</h2>
+      <button className="icon-btn" type="button" title="닫기" aria-label="닫기" onClick={onClose}>
+        <X size={18} />
+      </button>
+    </div>
+    <div className="modal-body">
+      <span className="hint">인물, 의상, 표정, 동작, 배경, 구도, 조명 같은 항목을 무작위로 섞어 그림을 만듭니다. 항목마다 "무작위", "쓰지 않음", 또는 늘 같은 문구로 정할 수 있습니다. 장수와 크기는 만들기 화면의 값을 씁니다.</span>
 
       <div className="fields" style={{ marginTop: 14 }}>
         {categories.map(({ id, label: name, phrases }) => (
-          <div className="field" key={id}>
+          <div className="field mix-field" key={id}>
             <label htmlFor={`mix-${id}`}>{name}</label>
             <select id={`mix-${id}`} value={choice[id] ?? RANDOM} onChange={(event) => setChoice((current) => ({ ...current, [id]: event.target.value }))}>
               <option value={RANDOM}>무작위</option>
@@ -181,20 +191,6 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
             </select>
           </div>
         ))}
-        <div className="field">
-          <label htmlFor="mix-count">장수</label>
-          <input id="mix-count" type="number" min={1} max={24} step={1} value={count} onChange={(event) => setCount(event.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="mix-size">크기</label>
-          <select id="mix-size" value={sizeId} onChange={(event) => setSizeId(event.target.value as ImageSizeId)}>
-            {IMAGE_SIZES.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
       <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
         <button className="btn" type="button" disabled={working !== ""} onClick={() => void roll()}>
@@ -212,13 +208,15 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
         <div className="field wide" style={{ marginTop: 14 }}>
           <label>뽑은 조합 (문구를 누르면 그 항목만 다시 뽑습니다)</label>
           {combinations.map((combination, row) => (
-            <div key={row} className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <div key={row} className="combo-row">
               <strong>{row + 1}.</strong>
-              {Object.entries(clip(combination)).map(([id, phrase]) => (
-                <button key={id} type="button" className="chip-btn" title={`${label(id)}만 다시 뽑기`} onClick={() => void redo(row, id)}>
-                  {label(id)}: {phrase}
-                </button>
-              ))}
+              <div className="combo-chips">
+                {Object.entries(clip(combination)).map(([id, phrase]) => (
+                  <button key={id} type="button" className="chip-btn" title={`${label(id)}만 다시 뽑기`} onClick={() => void redo(row, id)}>
+                    {label(id)}: {phrase}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
           <PromptLog projectId={project.id} stages={["image-compose"]} refreshKey={working === "compose" ? 1 : 0} />
@@ -233,7 +231,7 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
           ))}
           <div>
             <button className="btn primary" type="button" disabled={working !== "" || running} onClick={() => void make()} title={running ? "다른 작업이 끝난 뒤에 시작할 수 있습니다." : undefined}>
-              <Sparkles size={16} /> {running ? "다른 작업 진행 중" : `${prompts.length}장 만들기`}
+              <Sparkles size={16} /> {running ? "다른 작업 진행 중" : "만들기"}
             </button>
           </div>
         </div>
@@ -286,6 +284,13 @@ export default function ImageRandom({ props, loras, upscale }: { props: SectionP
           </label>
         </div>
       </details>
-    </section>
+    </div>
+    <div className="modal-foot">
+      <button className="btn" type="button" onClick={onClose}>
+        닫기
+      </button>
+    </div>
+    </div>
+    </div>
   );
 }

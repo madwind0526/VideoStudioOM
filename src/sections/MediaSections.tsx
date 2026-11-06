@@ -1,4 +1,4 @@
-import { ClipboardCheck, Combine, FileText, Layers, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ClipboardCheck, Combine, FileText, Layers, Maximize2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { clipPathOf, defaultMode, withProjectMode } from "../../shared/scenes.mjs";
 import { ApiError, mediaUrl, type MediaFile } from "../api";
@@ -57,7 +57,7 @@ export function useVersionDialog(props: SectionProps, kind: "image" | "video", f
 }
 
 /** Re-make and delete icons for one generated file (top right of its tile or row). With `onPrompt` (images, videos) the prompt icon opens the prompt/versions pop-up instead. */
-export function ItemTools({ props, file, kind, onPrompt }: { props: SectionProps; file: MediaFile; kind: MakeKind | null; onPrompt?: (tab: "prompt" | "versions") => void }) {
+export function ItemTools({ props, file, kind, onPrompt, onEnlarge }: { props: SectionProps; file: MediaFile; kind: MakeKind | null; onPrompt?: (tab: "prompt" | "versions") => void; onEnlarge?: () => void }) {
   const { project, view, jobs, onJobsChanged, notify } = props;
   const recipe = recipeOf(file.record);
   const [mode, setMode] = useState<"edit" | "delete" | "sent" | null>(null);
@@ -102,6 +102,11 @@ export function ItemTools({ props, file, kind, onPrompt }: { props: SectionProps
       {onPrompt && (
         <button className="icon-btn" type="button" aria-label="프롬프트" title="프롬프트 보기·고치기, 다시 만들기" onClick={() => onPrompt("prompt")}>
           <FileText size={15} />
+        </button>
+      )}
+      {onEnlarge && (
+        <button className="icon-btn" type="button" aria-label="확대" title="그림 확대 (워크플로, 모델, 배율 고르기)" onClick={onEnlarge}>
+          <Maximize2 size={15} />
         </button>
       )}
       {!onPrompt && (

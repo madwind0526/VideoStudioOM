@@ -5,8 +5,9 @@ import path from "node:path";
 import { concatMedia, ffmpegFor } from "../concat.mjs";
 import { ffprobeFor } from "../probe.mjs";
 import { runCapture } from "../post.mjs";
+import { UPSCALE_IDS, UPSCALE_WORKFLOWS, defaultUpscaleModel } from "../../shared/upscale.mjs";
 import { createComfy } from "./comfy.mjs";
-import { h3Graph, h3RefGraph, H3, kreaGraph, pickKreaModels, pickQwenEditModels, qwenEditGraph, QWENVL, qwenVlGraph, qwenVlVideoGraph, rtxGraph, rtxImageGraph } from "./graphs.mjs";
+import { h3Graph, h3RefGraph, H3, kreaGraph, modelUpscaleGraph, flux2EditGraph, flux2Graph, kreaDepthGraph, kreaIdentityGraph, kreaPoseGraph, pickFlux2Models, pickKreaModels, pickQwenEditModels, pickQwenImageModels, pickZimageModels, qwenImageGraph, zimageGraph, qwenEditGraph, QWENVL, qwenVlGraph, qwenVlVideoGraph, rtxGraph, rtxImageGraph, seedvr2Graph, srfpGraph, upscaleFactor, zimageUpscaleGraph } from "./graphs.mjs";
 import { composeSheet, extractFrame, SHEET_SECONDS, SHEET_SHOTS, sheetPrompt, sheetReferencePrompt } from "./sheet.mjs";
 import { ensureService } from "./services.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "./workflow-patch.mjs";
@@ -21,6 +22,9 @@ class ToolError extends Error {
 
 const REQUIRED = {
   comfyui_krea_image: ["prompt", "output_path"],
+  comfyui_t2i: ["prompt", "output_path"],
+  comfyui_krea_control: ["prompt", "control_image_path", "output_path"],
+  comfyui_edit_model: ["prompt", "reference_image_path", "output_path"],
   comfyui_image_edit: ["prompt", "output_path"],
   h3_local_video: ["prompt", "output_path"],
   h3_reference_video: ["prompt", "output_path"],
@@ -36,6 +40,31 @@ const REQUIRED = {
 export const TOOL_NAMES = Object.keys(REQUIRED);
 
 const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
+
+/**
+ * The sampling choices of a picture tool (steps, cfg, sampler_name, scheduler) as graph parameters, checked: a number out of
+ * range or a sampler ComfyUI does not know is refused instead of being sent to the model. What is not given stays out (the graph's default).
+ */
+async function samplingOf(inputs, comfy) {
+  const out = {};
+  if (inputs.steps !== undefined) {
+    const steps = Number(inputs.steps);
+    if (!Number.isInteger(steps) || steps < 1 || steps > 150) throw new ToolError("스텝 수는 1~150 사이의 정수여야 합니다.", "bad_input");
+    out.steps = steps;
+  }
+  if (inputs.cfg !== undefined) {
+    const cfg = Number(inputs.cfg);
+    if (!Number.isFinite(cfg) || cfg < 0 || cfg > 30) throw new ToolError("CFG는 0~30 사이여야 합니다.", "bad_input");
+    out.cfg = cfg;
+  }
+  for (const [input, key, field] of [["sampler_name", "sampler", "sampler_name"], ["scheduler", "scheduler", "scheduler"]]) {
+    if (inputs[input] === undefined) continue;
+    const names = await comfy.options("KSampler", field);
+    if (!names.includes(inputs[input])) throw new ToolError(`알 수 없는 ${input === "scheduler" ? "스케줄러" : "샘플러"}입니다: ${inputs[input]}`, "bad_input");
+    out[key] = inputs[input];
+  }
+  return out;
+}
 const exists = (file) => stat(file).then((info) => info.isFile(), () => false);
 
 /** Every *_path / *_paths / *_dir input must be inside one of the allowed folders. Returns the first offending key or null. */
@@ -223,16 +252,49 @@ const HANDLERS = {
     return describePicture(inputs.video_path, inputs, context, qwenVlVideoGraph);
   },
 
-  /** Enlarges a picture with the RTX passes on the Rev0 ComfyUI (scale 1-4, 2 by default) and saves it as `output_path`. */
+  /**
+   * Enlarges a picture (scale 1-4, 2 by default) and saves it as `output_path`. `workflow` is one of shared/upscale.mjs
+   * ("rtx" by default) and `model` the choice of that workflow (its default when empty).
+   */
   async image_upscale(inputs, context) {
     if (!(await exists(inputs.image_path))) throw new ToolError(`그림 파일이 없습니다: ${inputs.image_path}`, "bad_input");
+    const workflow = inputs.workflow ?? "rtx";
+    if (!UPSCALE_IDS.includes(workflow)) throw new ToolError(`알 수 없는 확대 워크플로입니다: ${workflow}`, "bad_input");
     const scale = Math.min(4, Math.max(1, Number(inputs.scale ?? 2) || 2));
     const output = await prepareOutput(inputs);
-    await context.ensure("ref");
-    const rtx = context.comfy(context.connections.refUrl);
-    const name = await rtx.upload(inputs.image_path, path.basename(inputs.image_path));
-    await rtx.generate(rtxImageGraph({ image: name, scale, prefix: `RTXvsom_${path.basename(inputs.image_path, path.extname(inputs.image_path))}` }), "3", output, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
-    return { artifacts: [output], model: "rtx-2pass", data: { provider: "comfyui-rtx", output, scale } };
+    const stem = path.basename(inputs.image_path, path.extname(inputs.image_path));
+    const options = { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress };
+    if (workflow === "rtx") {
+      await context.ensure("ref");
+      const rtx = context.comfy(context.connections.refUrl);
+      const name = await rtx.upload(inputs.image_path, path.basename(inputs.image_path));
+      await rtx.generate(rtxImageGraph({ image: name, scale, prefix: `RTXvsom_${stem}` }), "3", output, options);
+      return { artifacts: [output], model: "rtx-2pass", data: { provider: "comfyui-rtx", output, scale } };
+    }
+    await context.ensure("comfy");
+    const comfy = context.comfy(context.connections.comfyUrl);
+    const entry = UPSCALE_WORKFLOWS.find((item) => item.id === workflow);
+    const names = await comfy.options(entry.node, entry.field);
+    if (names.length === 0) throw new ToolError(`${entry.label}에 필요한 노드나 모델이 ComfyUI에 보이지 않습니다.`, "unavailable");
+    const model = inputs.model || defaultUpscaleModel(workflow, names);
+    if (!names.includes(model)) throw new ToolError(`${entry.modelLabel}을(를) 찾을 수 없습니다: ${model}`, "bad_input");
+    const image = await comfy.upload(inputs.image_path, path.basename(inputs.image_path));
+    const seed = inputs.seed ?? randomSeed();
+    let graph;
+    let save;
+    if (workflow === "srfp") [graph, save] = [srfpGraph({ image, mode: model, scale, prefix: `SRFPvsom_${stem}` }), "3"];
+    else if (workflow === "model") [graph, save] = [modelUpscaleGraph({ image, model, scale, prefix: `UPvsom_${stem}` }), "5"];
+    else if (workflow === "seedvr2") {
+      // SeedVR2 takes the short edge of the result, not a factor.
+      const { width, height } = await videoSize(context, inputs.image_path);
+      [graph, save] = [seedvr2Graph({ image, dit: model, resolution: Math.round(Math.min(width, height) * scale), seed, prefix: `SeedVR2vsom_${stem}` }), "5"];
+    } else {
+      const models = pickZimageModels({ unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name") });
+      if (!models) throw new ToolError("Z-Image Turbo 모델 파일(z_image_turbo, qwen_3_4b, ae)이 ComfyUI에 보이지 않습니다.", "unavailable");
+      [graph, save] = [zimageUpscaleGraph({ image, upscaler: model, factor: upscaleFactor(model), scale, seed, prefix: `ZIvsom_${stem}`, models }), "9"];
+    }
+    await comfy.generate(graph, save, output, options);
+    return { artifacts: [output], model, data: { provider: `comfyui-${workflow}`, output, scale, model } };
   },
 
   async comfyui_krea_image(inputs, context) {
@@ -241,10 +303,101 @@ const HANDLERS = {
     const models = pickKreaModels({ unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name") });
     if (!models) throw new ToolError("Krea 2 Turbo 모델 파일(unet, qwen3vl_4b, qwen_image_vae)이 ComfyUI에 보이지 않습니다.", "unavailable");
     const seed = inputs.seed ?? randomSeed();
-    const graph = applyOverrides(kreaGraph({ prompt: inputs.prompt, width: inputs.width ?? 1536, height: inputs.height ?? 864, steps: inputs.steps ?? 8, seed, models }), inputs.overrides);
+    const graph = applyOverrides(kreaGraph({ prompt: inputs.prompt, width: inputs.width ?? 1536, height: inputs.height ?? 864, ...(await samplingOf(inputs, comfy)), seed, models }), inputs.overrides);
     const dest = await prepareOutput(inputs);
     await comfy.generate(graph, "10", dest, { timeoutMs: 600_000, signal: context.signal, onProgress: context.onProgress });
     return { artifacts: [dest], seed, model: models.unet, data: { provider: "comfyui-krea", output: dest, seed, model: models.unet } };
+  },
+
+  /**
+   * Picture edit with a model other than Qwen: `model` is "krea2-identity" (Krea 2 + Identity Edit LoRA, 1-2 pictures) or
+   * "flux2-klein" (up to 4 pictures). `reference_image_path` is the first picture (the one that is edited), `reference_image_paths`
+   * the others; the result has the shape of the first picture unless `width` and `height` are given.
+   */
+  async comfyui_edit_model(inputs, context) {
+    const kinds = {
+      "krea2-identity": { label: "Krea 2 + Identity Edit", max: 2, nodes: ["Krea2EditModelPatch", "Krea2EditGroundedEncode"] },
+      "flux2-klein": { label: "Flux.2 klein", max: 4, nodes: ["ReferenceLatent", "Flux2Scheduler"] },
+    };
+    const kind = kinds[inputs.model];
+    if (!kind) throw new ToolError(`알 수 없는 모델입니다: ${inputs.model}`, "bad_input");
+    const files = [inputs.reference_image_path, ...(inputs.reference_image_paths ?? [])].filter(Boolean);
+    if (files.length === 0) throw new ToolError("편집할 그림이 필요합니다.", "bad_input");
+    if (files.length > kind.max) throw new ToolError(`${kind.label}은(는) 그림을 ${kind.max}장까지 받습니다.`, "bad_input");
+    for (const file of files) if (!(await exists(file))) throw new ToolError(`그림 파일이 없습니다: ${file}`, "bad_input");
+    await context.ensure("comfy");
+    const comfy = context.comfy(context.connections.comfyUrl);
+    for (const node of kind.nodes) if (!(await comfy.nodeInfo(node))) throw new ToolError(`${kind.label}에 필요한 노드(${node})가 ComfyUI에 없습니다.`, "unavailable");
+    const lists = { unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name") };
+    const seed = inputs.seed ?? randomSeed();
+    const sampling = await samplingOf(inputs, comfy);
+    const names = [];
+    for (const file of files) names.push(await comfy.upload(file, path.basename(file)));
+    const size = inputs.width && inputs.height ? { width: Number(inputs.width), height: Number(inputs.height) } : {};
+    let graph;
+    if (inputs.model === "krea2-identity") {
+      const models = pickKreaModels(lists);
+      const lora = (await comfy.options("LoraLoaderModelOnly", "lora_name")).find((name) => /krea2_identity_edit_v1_2\.safetensors$/i.test(name));
+      if (!models || !lora) throw new ToolError("Krea 2 Turbo 모델 또는 Identity Edit LoRA 파일이 ComfyUI에 보이지 않습니다.", "unavailable");
+      graph = kreaIdentityGraph({ images: names, prompt: inputs.prompt, ...size, ...sampling, seed, models, lora });
+    } else {
+      const models = pickFlux2Models(lists);
+      if (!models) throw new ToolError("Flux.2 klein 모델 파일이 ComfyUI에 보이지 않습니다.", "unavailable");
+      graph = flux2EditGraph({ images: names, prompt: inputs.prompt, ...size, ...sampling, seed, models });
+    }
+    const dest = await prepareOutput(inputs);
+    await comfy.generate(graph, "30", dest, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+    return { artifacts: [dest], seed, model: inputs.model, data: { provider: `comfyui-${inputs.model}`, output: dest, seed, pictures: files.length } };
+  },
+
+  /**
+   * Krea 2 Turbo drawn along a picture: `control` "pose" (the DWPose skeleton of the picture) or "depth" (its Depth Anything map),
+   * `control_image_path` the picture. The pose and depth ControlNet-LoRAs and their ComfyUI nodes must be installed.
+   */
+  async comfyui_krea_control(inputs, context) {
+    const kinds = {
+      pose: { label: "Krea 2 + Pose", lora: /krea2_turbo_openpose_controlnet/i, nodes: ["TextEncodeKrea2OstrisEdit", "Krea2OstrisEditModelPatch", "DWPreprocessor"], graph: kreaPoseGraph },
+      depth: { label: "Krea 2 + Depth", lora: /krea2_depth_control_lora/i, nodes: ["Krea2ControlLoRALoader", "Krea2ControlApply", "Krea2ControlImageEncode", "DepthAnythingV2Preprocessor"], graph: kreaDepthGraph },
+    };
+    const kind = kinds[inputs.control];
+    if (!kind) throw new ToolError(`알 수 없는 제어 방식입니다: ${inputs.control}`, "bad_input");
+    if (!(await exists(inputs.control_image_path))) throw new ToolError(`제어 그림 파일이 없습니다: ${inputs.control_image_path}`, "bad_input");
+    await context.ensure("comfy");
+    const comfy = context.comfy(context.connections.comfyUrl);
+    for (const node of kind.nodes) if (!(await comfy.nodeInfo(node))) throw new ToolError(`${kind.label}에 필요한 노드(${node})가 ComfyUI에 없습니다. 노드 모음을 설치하고 ComfyUI를 다시 시작하세요.`, "unavailable");
+    const models = pickKreaModels({ unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name") });
+    if (!models) throw new ToolError("Krea 2 Turbo 모델 파일(unet, qwen3vl_4b, qwen_image_vae)이 ComfyUI에 보이지 않습니다.", "unavailable");
+    const lora = (await comfy.options("LoraLoaderModelOnly", "lora_name")).find((name) => kind.lora.test(name));
+    if (!lora) throw new ToolError(`${kind.label} LoRA 파일이 ComfyUI에 보이지 않습니다.`, "unavailable");
+    const seed = inputs.seed ?? randomSeed();
+    const image = await comfy.upload(inputs.control_image_path, path.basename(inputs.control_image_path));
+    const graph = kind.graph({ image, prompt: inputs.prompt, ...(await samplingOf(inputs, comfy)), seed, models, lora });
+    const dest = await prepareOutput(inputs);
+    await comfy.generate(graph, "30", dest, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+    return { artifacts: [dest], seed, model: lora, data: { provider: `comfyui-krea-${inputs.control}`, output: dest, seed, model: models.unet, lora } };
+  },
+
+  /**
+   * Text to image with another model than Krea: `model` is "zimage-turbo", "qwen-image-2512" (Lightning 4 steps) or "flux2-klein".
+   * Steps, cfg, sampler_name and scheduler are the user's choices (each model has its own defaults); the result is PreviewImage "10".
+   */
+  async comfyui_t2i(inputs, context) {
+    const kinds = {
+      "zimage-turbo": { label: "Z-Image Turbo", pick: pickZimageModels, graph: zimageGraph, size: [1024, 1024] },
+      "qwen-image-2512": { label: "Qwen Image 2512", pick: pickQwenImageModels, graph: qwenImageGraph, size: [1328, 1328] },
+      "flux2-klein": { label: "Flux.2 klein", pick: pickFlux2Models, graph: flux2Graph, size: [1024, 1024] },
+    };
+    const kind = kinds[inputs.model];
+    if (!kind) throw new ToolError(`알 수 없는 모델입니다: ${inputs.model}`, "bad_input");
+    await context.ensure("comfy");
+    const comfy = context.comfy(context.connections.comfyUrl);
+    const models = kind.pick({ unets: await comfy.options("UNETLoader", "unet_name"), clips: await comfy.options("CLIPLoader", "clip_name"), vaes: await comfy.options("VAELoader", "vae_name"), loras: await comfy.options("LoraLoaderModelOnly", "lora_name") });
+    if (!models) throw new ToolError(`${kind.label} 모델 파일이 ComfyUI에 보이지 않습니다.`, "unavailable");
+    const seed = inputs.seed ?? randomSeed();
+    const graph = kind.graph({ prompt: inputs.prompt, width: inputs.width ?? kind.size[0], height: inputs.height ?? kind.size[1], ...(await samplingOf(inputs, comfy)), seed, models });
+    const dest = await prepareOutput(inputs);
+    await comfy.generate(graph, "10", dest, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
+    return { artifacts: [dest], seed, model: models.unet, data: { provider: `comfyui-${inputs.model}`, output: dest, seed, model: models.unet } };
   },
 
   /**
@@ -274,7 +427,7 @@ const HANDLERS = {
       const files = blank ? [temps[1], ...refs] : size ? [await fitImage(context, refs[0], size[0], size[1], temps[1]), ...refs.slice(1)] : refs;
       const names = [];
       for (const file of files) names.push(await comfy.upload(file, path.basename(file)));
-      const graph = applyOverrides(qwenEditGraph({ prompt: inputs.prompt, negative: inputs.negative_prompt ?? "", images: names, seed, steps: inputs.steps ?? 25, models }), inputs.overrides);
+      const graph = applyOverrides(qwenEditGraph({ prompt: inputs.prompt, negative: inputs.negative_prompt ?? "", images: names, seed, ...(await samplingOf(inputs, comfy)), models }), inputs.overrides);
       await comfy.generate(graph, "10", size ? temps[0] : output, { timeoutMs: 900_000, signal: context.signal, onProgress: context.onProgress });
       if (size) await fitImage(context, temps[0], size[0], size[1], output);
     } finally {

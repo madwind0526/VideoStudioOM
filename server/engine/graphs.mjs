@@ -58,7 +58,7 @@ export function pickKreaModels({ unets, clips, vaes }) {
 }
 
 /** Krea 2 Turbo text to image. The result is the PreviewImage node "10". */
-export function kreaGraph({ prompt, width = 1536, height = 864, steps = 8, seed, models }) {
+export function kreaGraph({ prompt, width = 1536, height = 864, steps = 8, cfg = 1, sampler = "euler", scheduler = "simple", seed, models }) {
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "krea2", device: "default" } },
@@ -66,9 +66,217 @@ export function kreaGraph({ prompt, width = 1536, height = 864, steps = 8, seed,
     4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
     7: { class_type: "EmptyLatentImage", inputs: { width, height, batch_size: 1 } },
-    8: { class_type: "KSampler", inputs: { model: ["1", 0], seed, steps, cfg: 1.0, sampler_name: "euler", scheduler: "simple", positive: ["4", 0], negative: ["5", 0], latent_image: ["7", 0], denoise: 1.0 } },
+    8: { class_type: "KSampler", inputs: { model: ["1", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["4", 0], negative: ["5", 0], latent_image: ["7", 0], denoise: 1.0 } },
     9: { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
     10: { class_type: "PreviewImage", inputs: { images: ["9", 0] } },
+  };
+}
+
+/** The best installed file for each Qwen Image 2512 model (with its 4-step Lightning LoRA), or null when one is missing. */
+export function pickQwenImageModels({ unets, clips, vaes, loras }) {
+  const pick = (names, patterns) => patterns.map((pattern) => names.find((name) => pattern.test(name))).find(Boolean) ?? null;
+  const picked = {
+    unet: pick(unets, [/qwen_image_2512_fp8_e4m3fn/i, /qwen_image_2512/i]),
+    clip: pick(clips, [/qwen_2\.5_vl_7b_fp8_scaled/i]),
+    vae: pick(vaes, [/(^|[\\/])qwen_image_vae\.safetensors$/i]),
+    lora: pick(loras, [/Qwen-Image-2512-Lightning-4steps-V1\.0-bf16/i]),
+  };
+  return picked.unet && picked.clip && picked.vae && picked.lora ? picked : null;
+}
+
+/** The best installed file for each Flux.2 klein model, or null when one is missing. */
+export function pickFlux2Models({ unets, clips, vaes }) {
+  const pick = (names, patterns) => patterns.map((pattern) => names.find((name) => pattern.test(name))).find(Boolean) ?? null;
+  const picked = { unet: pick(unets, [/flux-2-klein-9b\.safetensors$/i, /flux-2-klein-4b\.safetensors$/i]), clip: pick(clips, [/qwen_3_8b_fp8mixed/i]), vae: pick(vaes, [/flux2-vae/i]) };
+  return picked.unet && picked.clip && picked.vae ? picked : null;
+}
+
+/** Z-Image Turbo text to image (the user's Z-Image-Turbo-T2I workflow). The result is the PreviewImage node "10". */
+export function zimageGraph({ prompt, width = 1024, height = 1024, steps = 8, cfg = 1, sampler = "res_multistep", scheduler = "simple", seed, models }) {
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "lumina2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    6: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3 } },
+    7: { class_type: "EmptySD3LatentImage", inputs: { width, height, batch_size: 1 } },
+    8: { class_type: "KSampler", inputs: { model: ["6", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["4", 0], negative: ["5", 0], latent_image: ["7", 0], denoise: 1.0 } },
+    9: { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    10: { class_type: "PreviewImage", inputs: { images: ["9", 0] } },
+  };
+}
+
+/** Qwen Image 2512 text to image with the 4-step Lightning LoRA (the user's Qwen-Image-T2I workflow). The result is PreviewImage "10". */
+export function qwenImageGraph({ prompt, width = 1328, height = 1328, steps = 4, cfg = 1, sampler = "euler", scheduler = "simple", seed, models }) {
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "qwen_image", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    6: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: models.lora, strength_model: 1 } },
+    7: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["6", 0], shift: 3.1 } },
+    8: { class_type: "EmptySD3LatentImage", inputs: { width, height, batch_size: 1 } },
+    9: { class_type: "KSampler", inputs: { model: ["7", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["4", 0], negative: ["5", 0], latent_image: ["8", 0], denoise: 1.0 } },
+    11: { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["3", 0] } },
+    10: { class_type: "PreviewImage", inputs: { images: ["11", 0] } },
+  };
+}
+
+/** Flux.2 klein text to image (the user's Flux2_klein_T2I workflow: custom sampler, CFG guider, Flux2 scheduler). The result is PreviewImage "10". */
+export function flux2Graph({ prompt, width = 1024, height = 1024, steps = 20, cfg = 5, sampler = "euler", seed, models }) {
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "flux2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+    5: { class_type: "CLIPTextEncode", inputs: { text: "", clip: ["2", 0] } },
+    6: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3 } },
+    7: { class_type: "EmptyFlux2LatentImage", inputs: { width, height, batch_size: 1 } },
+    8: { class_type: "Flux2Scheduler", inputs: { steps, width, height } },
+    9: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
+    11: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
+    12: { class_type: "CFGGuider", inputs: { model: ["6", 0], positive: ["4", 0], negative: ["5", 0], cfg } },
+    13: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["11", 0], guider: ["12", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["7", 0] } },
+    14: { class_type: "VAEDecode", inputs: { samples: ["13", 0], vae: ["3", 0] } },
+    10: { class_type: "PreviewImage", inputs: { images: ["14", 0] } },
+  };
+}
+
+/**
+ * Krea 2 Turbo drawn along a pose: the OpenPose/DWPose skeleton of `image` is the control picture of the pose ControlNet-LoRA (the
+ * workflow of the LoRA: ostris edit nodes, the skeleton is "image 1" of the text encoder). The result has the shape of the
+ * control picture (scaled to the Kontext sizes). The result is PreviewImage "30".
+ */
+export function kreaPoseGraph({ image, prompt, steps = 10, cfg = 1, sampler = "euler", scheduler = "simple", seed, models, lora }) {
+  const encode = (text) => ({ class_type: "TextEncodeKrea2OstrisEdit", inputs: { clip: ["2", 0], prompt: text, vae: ["3", 0], image1: ["6", 0] } });
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "krea2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "LoadImage", inputs: { image } },
+    5: { class_type: "DWPreprocessor", inputs: { image: ["4", 0], detect_hand: "enable", detect_body: "enable", detect_face: "enable", resolution: 512, bbox_detector: "yolox_l.onnx", pose_estimator: "dw-ll_ucoco_384.onnx", scale_stick_for_xinsr_cn: "disable" } },
+    6: { class_type: "FluxKontextImageScale", inputs: { image: ["5", 0] } },
+    7: { class_type: "Krea2OstrisEditModelPatch", inputs: { model: ["1", 0], kv_cache: true } },
+    8: { class_type: "LoraLoaderModelOnly", inputs: { model: ["7", 0], lora_name: lora, strength_model: 1 } },
+    9: encode(prompt),
+    10: encode(""),
+    11: { class_type: "FluxKontextMultiReferenceLatentMethod", inputs: { conditioning: ["9", 0], reference_latents_method: "index_timestep_zero" } },
+    12: { class_type: "FluxKontextMultiReferenceLatentMethod", inputs: { conditioning: ["10", 0], reference_latents_method: "index_timestep_zero" } },
+    13: { class_type: "GetImageSize", inputs: { image: ["6", 0] } },
+    14: { class_type: "EmptyLatentImage", inputs: { width: ["13", 0], height: ["13", 1], batch_size: 1 } },
+    15: { class_type: "KSampler", inputs: { model: ["8", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["11", 0], negative: ["12", 0], latent_image: ["14", 0], denoise: 1.0 } },
+    16: { class_type: "VAEDecode", inputs: { samples: ["15", 0], vae: ["3", 0] } },
+    30: { class_type: "PreviewImage", inputs: { images: ["16", 0] } },
+  };
+}
+
+/**
+ * Krea 2 Turbo drawn along the depth of a picture (Depth Anything V2 map, the Krea2 Control LoRA nodes of facok): `image` is
+ * scaled to about 1 megapixel, its depth map controls the layout and the prompt makes the picture. The result is PreviewImage "30".
+ */
+export function kreaDepthGraph({ image, prompt, steps = 8, cfg = 1, sampler = "euler", scheduler = "simple", seed, models, lora, depthModel = "depth_anything_v2_vitl.pth" }) {
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "krea2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "LoadImage", inputs: { image } },
+    5: { class_type: "ImageScaleToTotalPixels", inputs: { image: ["4", 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 16 } },
+    6: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: ["5", 0], ckpt_name: depthModel, resolution: 512 } },
+    7: { class_type: "GetImageSize", inputs: { image: ["5", 0] } },
+    8: { class_type: "EmptyLatentImage", inputs: { width: ["7", 0], height: ["7", 1], batch_size: 1 } },
+    9: { class_type: "Krea2ControlImageEncode", inputs: { control_image: ["6", 0], vae: ["3", 0], resize: "match_latent_size", upscale_method: "lanczos", crop: "center", channel_mode: "grayscale", normalize: "per_image_minmax", invert: false, batch_mode: "independent_images", latent: ["8", 0] } },
+    10: { class_type: "Krea2ControlLoRALoader", inputs: { model: ["1", 0], lora_name: lora, strength: 1 } },
+    11: { class_type: "Krea2ControlApply", inputs: { model: ["10", 0], control_latent: ["9", 0] } },
+    12: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+    13: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["12", 0] } },
+    14: { class_type: "KSampler", inputs: { model: ["11", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["12", 0], negative: ["13", 0], latent_image: ["8", 0], denoise: 1.0 } },
+    15: { class_type: "VAEDecode", inputs: { samples: ["14", 0], vae: ["3", 0] } },
+    30: { class_type: "PreviewImage", inputs: { images: ["15", 0] } },
+  };
+}
+
+/**
+ * Flux.2 klein picture edit (the user's Flux2_klein_I2I workflow): every picture is scaled to 1 megapixel, VAE-encoded and attached
+ * to the prompt as a reference latent, one after the other. The result has the shape of the first picture (or `width` x `height`
+ * when given). The result is PreviewImage "30".
+ */
+export function flux2EditGraph({ images, prompt, width, height, steps = 4, cfg = 1.3, sampler = "euler", seed, models }) {
+  const wf = {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "flux2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
+    6: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3 } },
+  };
+  let conditioning = ["4", 0];
+  images.forEach((image, index) => {
+    wf[20 + index * 3] = { class_type: "LoadImage", inputs: { image } };
+    wf[21 + index * 3] = { class_type: "ImageScaleToTotalPixels", inputs: { image: [String(20 + index * 3), 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 1 } };
+    wf[22 + index * 3] = { class_type: "VAEEncode", inputs: { pixels: [String(21 + index * 3), 0], vae: ["3", 0] } };
+    wf[60 + index] = { class_type: "ReferenceLatent", inputs: { conditioning, latent: [String(22 + index * 3), 0] } };
+    conditioning = [String(60 + index), 0];
+  });
+  let size = [width, height];
+  if (!(width && height)) {
+    wf[7] = { class_type: "GetImageSize", inputs: { image: ["21", 0] } };
+    size = [["7", 0], ["7", 1]];
+  }
+  return {
+    ...wf,
+    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    8: { class_type: "Flux2Scheduler", inputs: { steps, width: size[0], height: size[1] } },
+    9: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
+    11: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
+    12: { class_type: "CFGGuider", inputs: { model: ["6", 0], positive: conditioning, negative: ["5", 0], cfg } },
+    15: { class_type: "EmptyFlux2LatentImage", inputs: { width: size[0], height: size[1], batch_size: 1 } },
+    13: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["11", 0], guider: ["12", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["15", 0] } },
+    14: { class_type: "VAEDecode", inputs: { samples: ["13", 0], vae: ["3", 0] } },
+    30: { class_type: "PreviewImage", inputs: { images: ["14", 0] } },
+  };
+}
+
+/**
+ * Krea 2 Identity Edit (the Krea 2 Edit nodes and the Identity Edit LoRA): the first picture is edited, an optional second one is
+ * the subject to put into it (two-input edit). The pictures go in through the pixel path (`fit`), the instruction is read by the
+ * text encoder together with the pictures. The result has the shape of the first picture (about 1 megapixel) or `width` x `height`
+ * when given. The result is PreviewImage "30".
+ */
+export function kreaIdentityGraph({ images, prompt, width, height, steps = 8, cfg = 1, sampler = "euler", scheduler = "simple", seed, models, lora }) {
+  const [first, second] = images;
+  const wf = {
+    1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "krea2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    4: { class_type: "LoadImage", inputs: { image: first } },
+    5: { class_type: "ImageScaleToTotalPixels", inputs: { image: ["4", 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 16 } },
+    8: { class_type: "VAEEncode", inputs: { pixels: ["5", 0], vae: ["3", 0] } },
+    10: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: lora, strength_model: 1 } },
+  };
+  if (width && height) {
+    wf[9] = { class_type: "EmptyLatentImage", inputs: { width, height, batch_size: 1 } };
+  } else {
+    wf[7] = { class_type: "GetImageSize", inputs: { image: ["5", 0] } };
+    wf[9] = { class_type: "EmptyLatentImage", inputs: { width: ["7", 0], height: ["7", 1], batch_size: 1 } };
+  }
+  const patch = { model: ["10", 0], source_latent: ["8", 0], vae: ["3", 0], source_image: ["5", 0], target_latent: ["9", 0], fit_mode: "fit", ref_boost: 1 };
+  const encode = { clip: ["2", 0], image: ["5", 0], grounding_px: 768 };
+  if (second) {
+    wf[14] = { class_type: "LoadImage", inputs: { image: second } };
+    wf[15] = { class_type: "ImageScaleToTotalPixels", inputs: { image: ["14", 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 16 } };
+    wf[16] = { class_type: "VAEEncode", inputs: { pixels: ["15", 0], vae: ["3", 0] } };
+    Object.assign(patch, { source_latent_b: ["16", 0], source_image_b: ["15", 0], ref_boost_a: 1 });
+    encode.image_b = ["15", 0];
+  }
+  return {
+    ...wf,
+    11: { class_type: "Krea2EditModelPatch", inputs: patch },
+    12: { class_type: "Krea2EditGroundedEncode", inputs: { ...encode, prompt } },
+    13: { class_type: "Krea2EditGroundedEncode", inputs: { ...encode, prompt: "" } },
+    17: { class_type: "KSampler", inputs: { model: ["11", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["12", 0], negative: ["13", 0], latent_image: ["9", 0], denoise: 1.0 } },
+    18: { class_type: "VAEDecode", inputs: { samples: ["17", 0], vae: ["3", 0] } },
+    30: { class_type: "PreviewImage", inputs: { images: ["18", 0] } },
   };
 }
 
@@ -117,7 +325,7 @@ export function pickQwenEditModels({ unets, clips, vaes }) {
  * `images` are uploaded file names, the first is the picture to edit (the result has its shape), the others are references;
  * the prompt names them <image1>, <image2>, ... The result is the PreviewImage node "10".
  */
-export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25, cfg = 1, resolution = 1024, models }) {
+export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25, cfg = 1, sampler = "euler", scheduler = "simple", resolution = 1024, models }) {
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "qwen_image", device: "default" } },
@@ -130,7 +338,7 @@ export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25,
     encode[`images.image_${index + 1}`] = [String(20 + index), 0];
   });
   wf[5] = { class_type: "TextEncodeQwenImage21", inputs: encode };
-  wf[6] = { class_type: "KSampler", inputs: { model: ["4", 0], seed, steps, cfg, sampler_name: "euler", scheduler: "simple", positive: ["5", 0], negative: ["5", 1], latent_image: ["5", 2], denoise: 1.0 } };
+  wf[6] = { class_type: "KSampler", inputs: { model: ["4", 0], seed, steps, cfg, sampler_name: sampler, scheduler, positive: ["5", 0], negative: ["5", 1], latent_image: ["5", 2], denoise: 1.0 } };
   wf[7] = { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["3", 0] } };
   wf[10] = { class_type: "PreviewImage", inputs: { images: ["7", 0] } };
   return wf;
@@ -310,6 +518,76 @@ export function rtxImageGraph({ image, scale, prefix }) {
     3: { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: prefix } },
   };
 }
+
+/**
+ * An upscale-model enlargement of one picture: the model's own factor (4x, 8x, read from its name) and then a resize to
+ * the wanted `scale`. The enlarged picture is the SaveImage node "5".
+ */
+export function modelUpscaleGraph({ image, model, scale, prefix }) {
+  return {
+    1: { class_type: "LoadImage", inputs: { image } },
+    2: { class_type: "UpscaleModelLoader", inputs: { model_name: model } },
+    3: { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["2", 0], image: ["1", 0] } },
+    4: { class_type: "ImageScaleBy", inputs: { image: ["3", 0], upscale_method: "lanczos", scale_by: scale / upscaleFactor(model) } },
+    5: { class_type: "SaveImage", inputs: { images: ["4", 0], filename_prefix: prefix } },
+  };
+}
+
+/** The SRFPTyp image upscaler (RTX restore); `mode` is its restore mode. The result is SaveImage "3". */
+export function srfpGraph({ image, mode, scale, prefix }) {
+  return {
+    1: { class_type: "LoadImage", inputs: { image } },
+    2: { class_type: "SRFPTypImageUpscaler", inputs: { image: ["1", 0], scale, upscale_quality: "Ultra", restore_mode: mode, restore_strength: 0.35, quality_target: "105% Master", color_treatment: "Auto Natural", subject_recovery: "Auto", enabled: true } },
+    3: { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: prefix } },
+  };
+}
+
+/**
+ * SeedVR2 on one picture (the setup of the SeedVR2-Image-Upscale workflow, tiled VAE for 12 GB): `resolution` is the short
+ * edge of the result in pixels. The result is SaveImage "5".
+ */
+export function seedvr2Graph({ image, dit, resolution, seed, prefix }) {
+  return {
+    1: { class_type: "LoadImage", inputs: { image } },
+    2: { class_type: "SeedVR2LoadDiTModel", inputs: { model: dit, device: "cuda:0", blocks_to_swap: 0, swap_io_components: false, offload_device: "cpu", cache_model: false, attention_mode: "sdpa" } },
+    3: { class_type: "SeedVR2LoadVAEModel", inputs: { model: "ema_vae_fp16.safetensors", device: "cuda:0", encode_tiled: true, encode_tile_size: 1024, encode_tile_overlap: 128, decode_tiled: true, decode_tile_size: 1024, decode_tile_overlap: 128, tile_debug: "false", offload_device: "cpu", cache_model: false } },
+    4: { class_type: "SeedVR2VideoUpscaler", inputs: { image: ["1", 0], dit: ["2", 0], vae: ["3", 0], seed, resolution, max_resolution: 0, batch_size: 1, uniform_batch_size: false, color_correction: "lab", temporal_overlap: 0, prepend_frames: 0, input_noise_scale: 0, latent_noise_scale: 0, offload_device: "cpu", enable_debug: false } },
+    5: { class_type: "SaveImage", inputs: { images: ["4", 0], filename_prefix: prefix } },
+  };
+}
+
+/**
+ * ComfyUI's "Image Upscale (Z-image-Turbo)": an upscale model enlarges the picture, then a light Z-Image Turbo pass
+ * (denoise 0.33) redraws the detail. The wanted `scale` is reached by resizing after the model. The result is SaveImage "9".
+ */
+export function zimageUpscaleGraph({ image, upscaler, factor, scale, seed, prefix, models }) {
+  return {
+    1: { class_type: "LoadImage", inputs: { image } },
+    2: { class_type: "UpscaleModelLoader", inputs: { model_name: upscaler } },
+    3: { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["2", 0], image: ["1", 0] } },
+    4: { class_type: "ImageScaleBy", inputs: { image: ["3", 0], upscale_method: "lanczos", scale_by: scale / factor } },
+    5: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
+    6: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "lumina2", device: "default" } },
+    7: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
+    8: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["5", 0], shift: 3 } },
+    10: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: "masterpiece, 8k" } },
+    11: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: "" } },
+    12: { class_type: "VAEEncode", inputs: { pixels: ["4", 0], vae: ["7", 0] } },
+    13: { class_type: "KSampler", inputs: { model: ["8", 0], seed, steps: 5, cfg: 1, sampler_name: "dpmpp_2m_sde", scheduler: "beta", positive: ["10", 0], negative: ["11", 0], latent_image: ["12", 0], denoise: 0.33 } },
+    14: { class_type: "VAEDecode", inputs: { samples: ["13", 0], vae: ["7", 0] } },
+    9: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: prefix } },
+  };
+}
+
+/** The best installed file for each Z-Image Turbo model, or null when one is missing. */
+export function pickZimageModels({ unets, clips, vaes }) {
+  const pick = (names, patterns) => patterns.map((pattern) => names.find((name) => pattern.test(name))).find(Boolean) ?? null;
+  const picked = { unet: pick(unets, [/z_image_turbo_bf16/i, /z_image_turbo/i]), clip: pick(clips, [/qwen_3_4b\.safetensors$/i, /qwen_3_4b/i]), vae: pick(vaes, [/(^|[\/])ae\.safetensors$/i]) };
+  return picked.unet && picked.clip && picked.vae ? picked : null;
+}
+
+/** The factor an upscale model enlarges by, read from its name (4x..., 8x..., x4plus), 4 when the name does not say. */
+export const upscaleFactor = (model) => Number(/(\d+)x|x(\d+)/i.exec(model)?.slice(1).find(Boolean)) || 4;
 
 /** The user's "RTX 2pass upscale workflow" (Deblur Ultra, then High Bitrate High): a clip in, the enlarged clip out (node "3"). */
 export function rtxGraph({ video, scale, prefix }) {

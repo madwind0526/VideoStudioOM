@@ -81,7 +81,7 @@ test("free asks ComfyUI to unload its models and tells whether the server answer
 });
 
 test("upload, node info, model options and busy check", async () => {
-  const comfy = await fakeComfy({ nodes: { UNETLoader: { input: { required: { unet_name: [["a.safetensors", "b.safetensors"]] } } } }, running: true });
+  const comfy = await fakeComfy({ nodes: { UNETLoader: { input: { required: { unet_name: [["a.safetensors", "b.safetensors"]] } } }, UpscaleModelLoader: { input: { required: { model_name: ["COMBO", { options: ["u.pt"] }] } } } }, running: true });
   const dir = await tmp();
   try {
     const client = createComfy(comfy.url);
@@ -90,6 +90,7 @@ test("upload, node info, model options and busy check", async () => {
     assert.equal(await client.upload(file), "up_pic.png");
     assert.deepEqual(comfy.seen.uploads, ["pic.png"]);
     assert.deepEqual(await client.options("UNETLoader", "unet_name"), ["a.safetensors", "b.safetensors"]);
+    assert.deepEqual(await client.options("UpscaleModelLoader", "model_name"), ["u.pt"]);
     assert.deepEqual(await client.options("Nope", "x"), []);
     assert.equal(await client.nodeInfo("Nope"), null);
     assert.equal(await createComfy("http://127.0.0.1:9").nodeInfo("X"), undefined);

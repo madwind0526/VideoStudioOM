@@ -10,7 +10,7 @@ import { outsideRoots, runTool } from "./engine/tools.mjs";
 const HISTORY_LIMIT = 40;
 
 // Tools that use the ComfyUI of SongYUE2: a run of the user's own in that ComfyUI blocks starting another.
-const COMFY_TOOLS = new Set(["comfyui_krea_image", "comfyui_image_edit", "h3_local_video", "h3_reference_video", "character_sheet", "comfyui_workflow"]);
+const COMFY_TOOLS = new Set(["comfyui_krea_image", "comfyui_t2i", "comfyui_krea_control", "comfyui_edit_model", "comfyui_image_edit", "h3_local_video", "h3_reference_video", "character_sheet", "comfyui_workflow"]);
 
 /**
  * One GPU job at a time, run inside this server (no helper process). The queue keeps the current job's metadata and
@@ -234,6 +234,16 @@ export function createJobQueue({ dir, getConfig, events, onFinished, onIdle, run
         await persistQueue();
         throw error;
       }
+    },
+
+    /** Takes one finished job (failed, cancelled, interrupted or done) out of the history. A running job cannot be taken out. */
+    async forget(id) {
+      await ready();
+      if (current?.id === id) throw new HttpError(409, "진행 중인 작업은 지울 수 없습니다. 먼저 취소하세요.");
+      const index = history.findIndex((job) => job.id === id);
+      if (index < 0) throw new HttpError(404, "그 작업 기록이 없습니다.");
+      history.splice(index, 1);
+      await persist();
     },
 
     async discardPaused() {

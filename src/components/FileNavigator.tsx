@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Folder, X } from "lucide-react";
+import { ArrowUp, File as FileIcon, Folder, LayoutGrid, List, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 
@@ -27,6 +27,17 @@ interface Props {
   onClose: () => void;
 }
 
+const PICTURE_ENDINGS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+const isPicture = (name: string) => PICTURE_ENDINGS.some((ending) => name.toLowerCase().endsWith(ending));
+const VIEW_KEY = "fileNavigatorView";
+const savedView = (): "list" | "thumbs" => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "thumbs" ? "thumbs" : "list";
+  } catch {
+    return "list";
+  }
+};
+
 const joinPath = (dir: string, name: string) => `${dir}${/[\\/]$/.test(dir) ? "" : dir.includes("\\") ? "\\" : "/"}${name}`;
 const matches = (name: string, accept?: string[]) => !accept || accept.length === 0 || accept.some((ending) => name.toLowerCase().endsWith(ending.toLowerCase()));
 
@@ -37,6 +48,15 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [view, setView] = useState<"list" | "thumbs">(savedView);
+  const changeView = (next: "list" | "thumbs") => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // The choice is only remembered when the browser lets it.
+    }
+  };
 
   async function load(dir?: string) {
     setLoading(true);
@@ -95,34 +115,77 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
             <button className="btn" type="button" onClick={() => void load(pathInput)}>
               이동
             </button>
+            <button className="icon-btn" type="button" aria-label="목록으로 보기" title="목록으로 보기" aria-pressed={view === "list"} style={view === "list" ? { color: "var(--primary, #2f9e7e)" } : undefined} onClick={() => changeView("list")}>
+              <List size={17} />
+            </button>
+            <button className="icon-btn" type="button" aria-label="썸네일로 보기" title="썸네일로 보기" aria-pressed={view === "thumbs"} style={view === "thumbs" ? { color: "var(--primary, #2f9e7e)" } : undefined} onClick={() => changeView("thumbs")}>
+              <LayoutGrid size={17} />
+            </button>
           </div>
 
-          <div className="file-navigator-list">
-            {loading ? (
-              <div className="file-navigator-empty">불러오는 중...</div>
-            ) : (
-              <>
-                {listing?.parent && (
-                  <button className="file-navigator-row" type="button" onClick={() => void load(listing.parent ?? undefined)}>
-                    <Folder size={15} /> ..
-                  </button>
-                )}
-                {listing && listing.entries.length === 0 && !listing.error ? (
-                  <div className="file-navigator-empty">폴더가 비어 있습니다.</div>
-                ) : (
-                  listing?.entries.map((entry) => {
-                    const disabled = !entry.isDirectory && !matches(entry.name, accept);
-                    const active = !entry.isDirectory && selected === joinPath(listing.path, entry.name);
-                    return (
-                      <button className={`file-navigator-row${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && onPick(joinPath(listing.path, entry.name))}>
-                        {entry.isDirectory ? <Folder size={15} /> : <FileIcon size={15} />} {entry.name}
-                      </button>
-                    );
-                  })
-                )}
-              </>
-            )}
-          </div>
+          {view === "thumbs" ? (
+            <div className="file-navigator-grid">
+              {loading ? (
+                <div className="file-navigator-empty">불러오는 중...</div>
+              ) : (
+                <>
+                  {listing?.parent && (
+                    <button className="file-navigator-tile" type="button" onClick={() => void load(listing.parent ?? undefined)}>
+                      <span className="file-navigator-thumb">
+                        <Folder size={28} />
+                      </span>
+                      <span className="file-navigator-name">..</span>
+                    </button>
+                  )}
+                  {listing && listing.entries.length === 0 && !listing.error ? (
+                    <div className="file-navigator-empty">폴더가 비어 있습니다.</div>
+                  ) : (
+                    listing?.entries.map((entry) => {
+                      const full = joinPath(listing.path, entry.name);
+                      const disabled = !entry.isDirectory && !matches(entry.name, accept);
+                      const active = !entry.isDirectory && selected === full;
+                      return (
+                        <button className={`file-navigator-tile${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" title={entry.name} onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && onPick(full)}>
+                          <span className="file-navigator-thumb">
+                            {entry.isDirectory ? <Folder size={28} /> : isPicture(entry.name) ? <img src={`/api/fs/image?path=${encodeURIComponent(full)}`} alt={entry.name} loading="lazy" /> : <FileIcon size={28} />}
+                          </span>
+                          <span className="file-navigator-name">{entry.name}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
+  <div className="file-navigator-list">
+              {loading ? (
+                <div className="file-navigator-empty">불러오는 중...</div>
+              ) : (
+                <>
+                  {listing?.parent && (
+                    <button className="file-navigator-row" type="button" onClick={() => void load(listing.parent ?? undefined)}>
+                      <Folder size={15} /> ..
+                    </button>
+                  )}
+                  {listing && listing.entries.length === 0 && !listing.error ? (
+                    <div className="file-navigator-empty">폴더가 비어 있습니다.</div>
+                  ) : (
+                    listing?.entries.map((entry) => {
+                      const disabled = !entry.isDirectory && !matches(entry.name, accept);
+                      const active = !entry.isDirectory && selected === joinPath(listing.path, entry.name);
+                      return (
+                        <button className={`file-navigator-row${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && onPick(joinPath(listing.path, entry.name))}>
+                          {entry.isDirectory ? <Folder size={15} /> : <FileIcon size={15} />} {entry.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </>
+              )}
+            </div>
+  
+          )}
 
           <div className="field">
             <label>선택한 파일</label>

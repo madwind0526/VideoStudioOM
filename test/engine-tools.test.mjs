@@ -166,6 +166,48 @@ test("image_upscale: the picture goes through the RTX passes on Rev0 and is save
   }
 });
 
+test("image_upscale with workflow model: an upscale model of ComfyUI, then a resize to the wanted scale", async () => {
+  const comfy = await fakeComfy({ nodes: { UpscaleModelLoader: loader("model_name", ["4xUltrasharp_x.pt", "8xNMKD.pt"]) }, outputs: { 5: { images: [{ filename: "up.png", type: "temp" }] } }, files: { "up.png": Buffer.from("BIG") } });
+  const dir = await tmp();
+  try {
+    const image = path.join(dir, "a.png");
+    const out = path.join(dir, "assets", "versions", "a-up.png");
+    await writeFile(image, "IMG");
+    const result = await run("image_upscale", { image_path: image, output_path: out, scale: 2, workflow: "model", model: "8xNMKD.pt" }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(await readFile(out, "utf8"), "BIG");
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[2].inputs.model_name, "8xNMKD.pt");
+    assert.equal(graph[4].inputs.scale_by, 0.25);
+    assert.equal((await run("image_upscale", { image_path: image, output_path: out, workflow: "model", model: "none.pt" }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("image_upscale: the SRFPTyp upscaler takes its restore mode as the model, a wrong one is refused", async () => {
+  const comfy = await fakeComfy({
+    nodes: { SRFPTypImageUpscaler: loader("restore_mode", ["Deblur Low", "Denoise Low"]) },
+    outputs: { 3: { images: [{ filename: "up.png", type: "temp" }] } },
+    files: { "up.png": Buffer.from("BIG") },
+  });
+  const dir = await tmp();
+  try {
+    const image = path.join(dir, "a.png");
+    const out = path.join(dir, "assets", "versions", "a-up.png");
+    await writeFile(image, "IMG");
+    // No model given: the workflow's own default.
+    assert.equal((await run("image_upscale", { image_path: image, output_path: out, workflow: "srfp" }, comfy)).ok, true);
+    assert.equal(comfy.seen.prompts[0][2].inputs.restore_mode, "Deblur Low");
+    assert.equal((await run("image_upscale", { image_path: image, output_path: out, workflow: "srfp", model: "nope" }, comfy)).code, "bad_input");
+    assert.equal((await run("image_upscale", { image_path: image, output_path: out, workflow: "magic" }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("describe_video: the clip goes to the video input of QwenVL and the summary comes back", async () => {
   const comfy = await fakeComfy({ nodes: { AILab_QwenVL: loader("model_name", [QWENVL.model]) }, outputs: { 6: { text: ["A bee flies left."] } } });
   const dir = await tmp();
@@ -181,6 +223,104 @@ test("describe_video: the clip goes to the video input of QwenVL and the summary
     assert.equal(graph[7].inputs.preset_prompt, "📹 Video Summary");
   } finally {
     comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Krea image: steps, cfg, sampler and scheduler go into the graph, a number out of range or an unknown sampler is refused", async () => {
+  const comfy = await fakeComfy({
+    nodes: {
+      UNETLoader: loader("unet_name", ["Krea\\krea2_turbo_nvfp4.safetensors"]),
+      CLIPLoader: loader("clip_name", ["Qwen\\qwen3vl_4b_fp8_scaled.safetensors"]),
+      VAELoader: loader("vae_name", ["qwen\\qwen_image_vae.safetensors"]),
+      KSampler: { input: { required: { sampler_name: [["euler", "dpmpp_2m"]], scheduler: [["simple", "beta"]] } } },
+    },
+    outputs: { 10: { images: [{ filename: "k.png", type: "temp" }] } },
+    files: { "k.png": Buffer.from("IMG") },
+  });
+  const dir = await tmp();
+  try {
+    const out = path.join(dir, "assets", "images", "k.png");
+    const base = { prompt: "a bee", output_path: out };
+    assert.equal((await run("comfyui_krea_image", { ...base, steps: 12, cfg: 2.5, sampler_name: "dpmpp_2m", scheduler: "beta", seed: 5 }, comfy)).ok, true);
+    const sampler = comfy.seen.prompts[0][8].inputs;
+    assert.deepEqual([sampler.steps, sampler.cfg, sampler.sampler_name, sampler.scheduler, sampler.seed], [12, 2.5, "dpmpp_2m", "beta", 5]);
+    assert.equal((await run("comfyui_krea_image", { ...base, steps: 0 }, comfy)).code, "bad_input");
+    assert.equal((await run("comfyui_krea_image", { ...base, cfg: 99 }, comfy)).code, "bad_input");
+    assert.equal((await run("comfyui_krea_image", { ...base, sampler_name: "nope" }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("picture edit with Krea 2 Identity Edit or Flux.2 klein: the pictures become reference inputs, too many pictures are refused", async () => {
+  const lists = {
+    UNETLoader: loader("unet_name", ["Krea\\krea2_turbo_nvfp4.safetensors", "Flux2\\flux-2-klein-9b.safetensors"]),
+    CLIPLoader: loader("clip_name", ["Qwen\\qwen3vl_4b_fp8_scaled.safetensors", "Qwen\\qwen_3_8b_fp8mixed.safetensors"]),
+    VAELoader: loader("vae_name", ["qwen\\qwen_image_vae.safetensors", "flux2\\flux2-vae.safetensors"]),
+    LoraLoaderModelOnly: loader("lora_name", ["Krea\\krea2_identity_edit_v1_2.safetensors"]),
+    Krea2EditModelPatch: { input: { required: {} } },
+    Krea2EditGroundedEncode: { input: { required: {} } },
+    ReferenceLatent: { input: { required: {} } },
+    Flux2Scheduler: { input: { required: {} } },
+  };
+  const comfy = await fakeComfy({ nodes: lists, outputs: { 30: { images: [{ filename: "e.png", type: "temp" }] } }, files: { "e.png": Buffer.from("EDIT") } });
+  const dir = await tmp();
+  try {
+    const [a, b, c] = ["a.png", "b.png", "c.png"].map((name) => path.join(dir, name));
+    for (const file of [a, b, c]) await writeFile(file, "IMG");
+    const out = path.join(dir, "assets", "images", "e.png");
+    const krea = await run("comfyui_edit_model", { model: "krea2-identity", prompt: "wear a sweater", reference_image_path: a, reference_image_paths: [b], output_path: out, seed: 2 }, comfy);
+    assert.equal(krea.ok, true, JSON.stringify(krea));
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[10].inputs.lora_name, "Krea\\krea2_identity_edit_v1_2.safetensors");
+    assert.equal(graph[12].inputs.prompt, "wear a sweater");
+    assert.ok(graph[11].inputs.source_latent_b, "the second picture is the b input");
+    const flux = await run("comfyui_edit_model", { model: "flux2-klein", prompt: "wear a sweater", reference_image_path: a, reference_image_paths: [b, c], output_path: out, steps: 6 }, comfy);
+    assert.equal(flux.ok, true, JSON.stringify(flux));
+    const fluxGraph = comfy.seen.prompts[1];
+    assert.equal(fluxGraph[8].inputs.steps, 6);
+    assert.deepEqual(fluxGraph[62].inputs.conditioning, ["61", 0], "the reference latents are chained one after the other");
+    assert.equal((await run("comfyui_edit_model", { model: "krea2-identity", prompt: "x", reference_image_path: a, reference_image_paths: [b, c], output_path: out }, comfy)).code, "bad_input");
+    assert.equal((await run("comfyui_edit_model", { model: "nope", prompt: "x", reference_image_path: a, output_path: out }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Krea 2 + Pose: the skeleton picture goes through the pose LoRA nodes, a missing node pack or LoRA is reported", async () => {
+  const krea = {
+    UNETLoader: loader("unet_name", ["Krea\\krea2_turbo_nvfp4.safetensors"]),
+    CLIPLoader: loader("clip_name", ["Qwen\\qwen3vl_4b_fp8_scaled.safetensors"]),
+    VAELoader: loader("vae_name", ["qwen\\qwen_image_vae.safetensors"]),
+  };
+  const packs = { TextEncodeKrea2OstrisEdit: { input: { required: {} } }, Krea2OstrisEditModelPatch: { input: { required: {} } }, DWPreprocessor: { input: { required: {} } } };
+  const comfy = await fakeComfy({
+    nodes: { ...krea, ...packs, LoraLoaderModelOnly: loader("lora_name", ["Krea\\krea2_turbo_openpose_controlnet.safetensors"]) },
+    outputs: { 30: { images: [{ filename: "p.png", type: "temp" }] } },
+    files: { "p.png": Buffer.from("POSE") },
+  });
+  const missing = await fakeComfy({ nodes: { ...krea, LoraLoaderModelOnly: loader("lora_name", []) } });
+  const dir = await tmp();
+  try {
+    const pose = path.join(dir, "pose.png");
+    const out = path.join(dir, "assets", "images", "p.png");
+    await writeFile(pose, "IMG");
+    const result = await run("comfyui_krea_control", { control: "pose", control_image_path: pose, prompt: "a knight", output_path: out, seed: 3 }, comfy);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(await readFile(out, "utf8"), "POSE");
+    const graph = comfy.seen.prompts[0];
+    assert.equal(graph[8].inputs.lora_name, "Krea\\krea2_turbo_openpose_controlnet.safetensors");
+    assert.equal(graph[9].inputs.prompt, "a knight");
+    assert.equal(graph[15].inputs.steps, 10);
+    assert.equal((await run("comfyui_krea_control", { control: "pose", control_image_path: pose, prompt: "x", output_path: out }, missing)).code, "unavailable");
+    assert.equal((await run("comfyui_krea_control", { control: "magic", control_image_path: pose, prompt: "x", output_path: out }, comfy)).code, "bad_input");
+    assert.equal((await run("comfyui_krea_control", { control: "pose", control_image_path: path.join(dir, "none.png"), prompt: "x", output_path: out }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    missing.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
