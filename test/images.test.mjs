@@ -112,3 +112,24 @@ test("edit instruction, plain naming: no <imageN> is needed and the plain varian
   assert.match(seen[0], /the first picture/);
   await assert.rejects(editInstruction({ text: "그림1을 바꿔", count: 1 }, ask), /LLM의 답을 쓸 수 없습니다/);
 });
+
+test("random pool: the gender is drawn first and phrases for the other gender are left out", async () => {
+  const { checkPool, pickCombinations, pickOne } = await import("../server/image-pool.mjs");
+  const pool = checkPool({
+    categories: [
+      { id: "gender", label: "성별", phrases: ["woman", "man"] },
+      { id: "outfit", label: "의상", phrases: [{ text: "a dress", for: "woman" }, { text: "a suit", for: "man" }, { text: "a coat" }] },
+    ],
+  });
+  assert.equal(pool.categories[1].phrases[0].for, "woman");
+  assert.equal(pool.categories[1].phrases[2].for, undefined);
+  const combos = pickCombinations(pool, { count: 24 });
+  for (const combo of combos) assert.ok(combo.outfit !== (combo.gender === "man" ? "a dress" : "a suit"), JSON.stringify(combo));
+  assert.ok(combos.some((combo) => combo.gender === "man") && combos.some((combo) => combo.gender === "woman"));
+  // A locked gender decides, even when the other phrases would be drawn first.
+  assert.ok(pickCombinations(pool, { count: 24, locked: { gender: "man" } }).every((combo) => combo.gender === "man" && combo.outfit !== "a dress"));
+  assert.ok(Array.from({ length: 30 }, () => pickOne(pool, "outfit", { gender: "woman" })).every((text) => text !== "a suit"));
+  // Without a gender category (or a gender) nothing is filtered.
+  const plain = checkPool({ categories: [{ id: "outfit", label: "의상", phrases: [{ text: "a dress", for: "woman" }] }] });
+  assert.deepEqual(pickCombinations(plain, { count: 1 })[0], { outfit: "a dress" });
+});

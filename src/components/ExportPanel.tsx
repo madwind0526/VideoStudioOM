@@ -1,4 +1,5 @@
 import { Upload } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { exportFinal, listCodecs } from "../sections/mediaJobs";
@@ -56,7 +57,7 @@ export default function ExportPanel({ projectId, hasFinal, hasSound, defaultCode
         <label>
           코덱
           <select value={codec} onChange={(event) => setCodec(event.target.value)}>
-            {(codecs.length ? codecs : [{ id: "h264", label: "H.264 (CPU)" }]).map((item) => (
+            {ascending(codecs.length ? codecs : [{ id: "h264", label: "H.264 (CPU)" }], (item) => item.label).map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}
               </option>

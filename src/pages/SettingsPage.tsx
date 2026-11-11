@@ -22,7 +22,7 @@ const FOLDER_KEYS: Record<string, string> = { "storage.projectsDir": "projects",
 
 const LLM_PATHS = ["llm.provider", "llm.model", "llm.ollama.endpoint", "llm.ollama.model", "llm.chain", "llm.timeoutSec", "llm.sheetPrompt"];
 const SIZE_PATHS = ["defaults.sizeMegapixels", "defaults.aspect", "defaults.orientation", "defaults.customSize.generate"];
-const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps", "video.codec", "video.freeVramWhenIdle", "video.seamRampSeconds", "video.continueMode"];
+const VIDEO_PATHS = [...SIZE_PATHS, "defaults.durationSeconds", "defaults.videoMode", "video.model", "video.upscale", "video.finalFps", "video.codec", "video.freeVramWhenIdle", "video.seamRampSeconds", "video.continueMode", "video.tiled"];
 const IMAGE_PATHS = ["defaults.imageModel"];
 const AUDIO_PATHS = ["defaults.audioSource", "audio.musicFormat", "audio.voice.tool", "audio.voice.name", "audio.voice.language"];
 // Settings of the local engines, grouped by the program they belong to (two ComfyUI servers: see docs/engine.md).

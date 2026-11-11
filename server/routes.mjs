@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -21,6 +22,7 @@ import { folderPaths, folderStatus } from "./folders.mjs";
 import { llmStatus } from "./llm-status.mjs";
 import { writeFileAtomic } from "./fs-util.mjs";
 import { resolveInside } from "./paths.mjs";
+import { PROMPT_GROUPS, addItems, deleteItem, importFolder, readLibrary, updateItem } from "./prompt-library.mjs";
 
 const PROMPT_LOG = "studio/llm_prompts.json";
 
@@ -49,6 +51,35 @@ async function withPromptLog(projects, id, stage, ask, run) {
         console.error(`프롬프트 기록을 저장하지 못했습니다 (${id}/${stage}): ${error instanceof Error ? error.message : error}`);
       }
     }
+  }
+}
+
+const TEXT_ENDINGS = new Set([".txt", ".md", ".json"]);
+const VIDEO_ENDINGS = new Set([".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"]);
+// First pictures of videos for the file browser: kept by file (name, date, size) and made three at a time.
+const videoThumbs = new Map();
+let thumbWorkers = 0;
+const thumbWaiting = [];
+async function videoThumb(ffmpegPath, target, info) {
+  const key = `${target}|${info.mtimeMs}|${info.size}`;
+  if (videoThumbs.has(key)) return videoThumbs.get(key);
+  if (thumbWorkers >= 3) await new Promise((resolve) => thumbWaiting.push(resolve));
+  thumbWorkers += 1;
+  try {
+    // A little into the clip (the very first frame is often black); a clip shorter than that gives its first frame.
+    let picture = Buffer.alloc(0);
+    for (const at of ["0.5", "0"]) {
+      const args = ["-v", "error", "-ss", at, "-i", target, "-frames:v", "1", "-vf", "scale=320:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-"];
+      picture = (await runCapture(ffmpegFor(ffmpegPath), args, { timeoutMs: 20_000 })).stdout;
+      if (picture.length > 0) break;
+    }
+    if (picture.length === 0) throw new HttpError(404, "영상에서 장면을 꺼내지 못했습니다.");
+    if (videoThumbs.size >= 300) videoThumbs.delete(videoThumbs.keys().next().value);
+    videoThumbs.set(key, picture);
+    return picture;
+  } finally {
+    thumbWorkers -= 1;
+    thumbWaiting.shift()?.();
   }
 }
 
@@ -372,7 +403,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       seen = { first: looked[wanted[0]], last: looked[wanted[1]], refs: refPaths.map((rel) => looked[rel]), video: clip[refVideo] };
     }
     const prompt = await withPromptLog(projects, body.project, `prompt-${body.target}`, askWith((await settings.get()).llm), (ask) =>
-      makePrompt({ target: body.target, mode: body.mode, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, sheetSystem, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined, seen }, ask),
+      makePrompt({ target: body.target, mode: body.mode, imageModel: typeof body.imageModel === "string" ? body.imageModel.slice(0, 60) : undefined, text: body.text, duration: body.duration, title: detail.title, refs, bible: bibleText, sheetSystem, firstPrompt: typeof body.first === "string" ? recipeOf(body.first) : undefined, lastPrompt: typeof body.last === "string" ? recipeOf(body.last) : undefined, seen }, ask),
     );
     sendJson(res, 200, { prompt });
     return true;
@@ -398,7 +429,7 @@ export async function handleApi(req, res, url, { settings, projects, events, job
       const pool = await readPool(poolFile);
       const locked = body.locked && typeof body.locked === "object" && !Array.isArray(body.locked) ? Object.fromEntries(Object.entries(body.locked).filter(([key, value]) => pool.categories.some((category) => category.id === key) && typeof value === "string" && value.trim()).map(([key, value]) => [key, value.trim().slice(0, 200)])) : {};
       // `redo` = { category, avoid }: one category of one combination again (the dice button of the screen).
-      if (body.redo && typeof body.redo.category === "string") sendJson(res, 200, { phrase: pickOne(pool, body.redo.category, { avoid: typeof body.redo.avoid === "string" ? body.redo.avoid : "" }) });
+      if (body.redo && typeof body.redo.category === "string") sendJson(res, 200, { phrase: pickOne(pool, body.redo.category, { avoid: typeof body.redo.avoid === "string" ? body.redo.avoid : "", gender: typeof body.redo.gender === "string" ? body.redo.gender : "" }) });
       else sendJson(res, 200, { combinations: pickCombinations(pool, { count: body.count, locked }) });
       return true;
     }
@@ -439,6 +470,28 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     sendJson(res, 200, { description, prompt });
     return true;
   }
+  if (pathname === "/api/prompt-library" || pathname.startsWith("/api/prompt-library/")) {
+    // The prompt library (data/prompt-library.json): prompts sorted into image/video x Local/API, each with an optional thumbnail.
+    const file = path.join(dataDir, "prompt-library.json");
+    const rest = pathname.slice("/api/prompt-library".length).replace(/^\//, "");
+    if (rest === "import") {
+      if (method !== "POST") methodNotAllowed();
+      const body = requireObject(await readJsonBody(req));
+      sendJson(res, 200, await importFolder({ dir: body.dir, file, ask: askWith((await settings.get()).llm) }));
+    } else if (rest === "") {
+      if (method === "GET") sendJson(res, 200, { groups: PROMPT_GROUPS, items: (await readLibrary(file)).items, defaultDir: path.join(os.homedir(), "Documents", "ComfyUI", "user", "default", "Prompt", "Default") });
+      else if (method === "POST") sendJson(res, 200, await addItems(file, [requireObject(await readJsonBody(req))]));
+      else methodNotAllowed();
+    } else if (method === "PUT") {
+      sendJson(res, 200, { item: await updateItem(file, rest, requireObject(await readJsonBody(req))) });
+    } else if (method === "DELETE") {
+      await deleteItem(file, rest);
+      sendJson(res, 200, { ok: true });
+    } else {
+      methodNotAllowed();
+    }
+    return true;
+  }
   if (pathname === "/api/prompts/default") {
     if (method !== "GET") methodNotAllowed();
     sendJson(res, 200, { sheet: await defaultSheetPrompt() });
@@ -469,6 +522,31 @@ export async function handleApi(req, res, url, { settings, projects, events, job
     const info = await stat(target).catch(() => null);
     if (!info?.isFile() || info.size > 100 * 1024 * 1024) throw new HttpError(404, "그림 파일을 찾을 수 없습니다.");
     await streamMedia(req, res, { target, size: info.size, mime });
+    return true;
+  }
+  if (pathname === "/api/fs/text") {
+    // A text file from any folder (the prompt picker of the image menu reads its prompt file this way).
+    if (method !== "GET") methodNotAllowed();
+    const target = url.searchParams.get("path") ?? "";
+    if (!TEXT_ENDINGS.has(path.extname(target).toLowerCase()) || target.includes("\0") || !path.isAbsolute(target)) throw new HttpError(400, "텍스트 파일(.txt, .md, .json)이 아닙니다.");
+    const info = await stat(target).catch(() => null);
+    if (!info?.isFile()) throw new HttpError(404, "파일을 찾을 수 없습니다.");
+    if (info.size > 30 * 1024 * 1024) throw new HttpError(400, "파일이 너무 큽니다(30MB까지).");
+    sendJson(res, 200, { name: path.basename(target), text: (await readFile(target, "utf8")).replace(/^\uFEFF/, "") });
+    return true;
+  }
+  if (pathname === "/api/fs/thumb") {
+    // The first picture of a video from any folder (a small JPEG), for the thumbnails of the file browser.
+    if (method !== "GET") methodNotAllowed();
+    const target = url.searchParams.get("path") ?? "";
+    if (!VIDEO_ENDINGS.has(path.extname(target).toLowerCase()) || target.includes("\0") || !path.isAbsolute(target)) throw new HttpError(400, "동영상 파일이 아닙니다.");
+    const info = await stat(target).catch(() => null);
+    if (!info?.isFile()) throw new HttpError(404, "동영상 파일을 찾을 수 없습니다.");
+    const picture = await videoThumb((await settings.get()).connections.ffmpegPath, target, info).catch((e) => {
+      throw e instanceof HttpError ? e : new HttpError(404, "영상에서 장면을 꺼내지 못했습니다.");
+    });
+    res.writeHead(200, { "content-type": "image/jpeg", "content-length": picture.length, "cache-control": "private, max-age=300" });
+    res.end(picture);
     return true;
   }
   if (pathname === "/api/fs") {
@@ -543,8 +621,10 @@ export async function handleApi(req, res, url, { settings, projects, events, job
   } else if (match[2] === "import") {
     if (method !== "POST") methodNotAllowed();
     const body = requireObject(await readJsonBody(req));
-    if (body.as !== undefined) sendJson(res, 200, { path: await importPicture(id, body) });
-    else sendJson(res, 200, { path: await (body.kind === "audio" ? projects.importAudio(id, body.from) : projects.importImage(id, body.from)) });
+    // A video of another project: copied by its project id and path (the screen does not know the folders).
+    if (body.kind === "video" && typeof body.fromProject === "string") sendJson(res, 200, { path: await projects.importVideo(id, (await projects.statMedia(body.fromProject, String(body.path ?? ""))).target) });
+    else if (body.as !== undefined) sendJson(res, 200, { path: await importPicture(id, body) });
+    else sendJson(res, 200, { path: await (body.kind === "audio" ? projects.importAudio(id, body.from) : body.kind === "video" ? projects.importVideo(id, body.from) : projects.importImage(id, body.from)) });
   } else if (match[2] === "concat") {
     if (method !== "POST") methodNotAllowed();
     sendJson(res, 200, await joinMedia(id, requireObject(await readJsonBody(req))));

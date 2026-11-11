@@ -1,4 +1,5 @@
 import { Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useState } from "react";
 import { ApiError } from "../api";
 import PromptLog from "../components/PromptLog";
@@ -188,7 +189,7 @@ export default function ScriptSection({ project, onChanged, notify }: SectionPro
                     <label>
                       <span>소리 종류</span>
                       <select value={audioKindOf(kinds.data, part.id)} onChange={(event) => setKind(part.id, event.target.value)}>
-                        {AUDIO_KINDS.map((kind) => (
+                        {ascending(AUDIO_KINDS, (kind) => kind.label).map((kind) => (
                           <option key={kind.id} value={kind.id}>
                             {kind.label}
                           </option>

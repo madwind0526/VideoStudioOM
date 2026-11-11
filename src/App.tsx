@@ -1,5 +1,5 @@
-import { ChevronRight, Film, FolderOpen, Heart, Image as ImageIcon, Library, Moon, Plus, Settings as SettingsIcon, Sparkles, Sun, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, Clapperboard, FileText, Film, FolderOpen, Heart, Image as ImageIcon, Library, Moon, Plus, Settings as SettingsIcon, Sparkles, Sun, Wrench, type LucideIcon } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, ApiError, mediaUrl, type ProjectSettingsView, type ProjectSummary } from "./api";
 import { BRAND } from "./brand";
 import Logo from "./components/Logo";
@@ -9,17 +9,58 @@ import VideoPlayer from "./components/VideoPlayer";
 import ResourceBar from "./components/ResourceBar";
 import { setIn } from "./fields";
 import ImagesPage from "./pages/ImagesPage";
+import LibraryImages from "./pages/LibraryImages";
 import { LibraryPage, LikesPage } from "./pages/LibraryPage";
+import PromptLibrary from "./pages/PromptLibrary";
 import ProjectsScreen, { SECTIONS } from "./pages/ProjectWorkspace";
 import SettingsPage from "./pages/SettingsPage";
+import { sendHandoff, type Handoff } from "./handoff";
+import ClipsPage, { type ClipKind } from "./pages/ClipsPage";
+import ToolsPage, { type ToolKind } from "./pages/ToolsPage";
 import StartPage from "./pages/StartPage";
 import type { SectionId } from "./sections/types";
 import { useEvents } from "./useEvents";
 
-// #/create  #/projects  #/projects/<id>/<section>  #/images  #/library  #/likes  #/settings
-type Route = { page: "create" } | { page: "projects" } | { page: "project"; id: string; section: SectionId } | { page: "images" } | { page: "library" } | { page: "likes" } | { page: "settings" };
+// #/create  #/projects  #/projects/<id>/<section>  #/images  #/clips/<t2v|fl2v|animate|swap>  #/library/<images|videos|prompts>[/<prompt group>]  #/likes  #/settings
+type Route = { page: "create" } | { page: "projects" } | { page: "project"; id: string; section: SectionId } | { page: "images"; tab: ImageTab } | { page: "clips"; kind: ClipKind } | { page: "tools"; tool: ToolKind } | { page: "library"; tab: LibraryTab; group: string } | { page: "likes" } | { page: "settings" };
 
 const SECTION_IDS = SECTIONS.map((section) => section.id);
+
+/** The shelves of the library menu: pictures, finished videos, and the prompt library in four groups (what is made x where). */
+type LibraryTab = "images" | "videos" | "prompts";
+const LIBRARY_TABS: { tab: LibraryTab; label: string; icon: LucideIcon }[] = [
+  { tab: "images", label: "이미지", icon: ImageIcon },
+  { tab: "videos", label: "동영상", icon: Film },
+  { tab: "prompts", label: "프롬프트", icon: FileText },
+];
+/** The image menu: four ways to make a picture. */
+type ImageTab = "make" | "vary" | "ref" | "sheet";
+const IMAGE_TABS: { tab: ImageTab; label: string }[] = [
+  { tab: "make", label: "이미지 생성 (T2I)" },
+  { tab: "vary", label: "이미지 편집 (I2I)" },
+  { tab: "ref", label: "참조후 재생성 (R2I)" },
+  { tab: "sheet", label: "캐릭터 시트" },
+];
+/** The short-clip menu: three ways to make a clip without a scenario. */
+const CLIP_KINDS: { kind: ClipKind; label: string }[] = [
+  { kind: "t2v", label: "글로 만들기 (T2V)" },
+  { kind: "fl2v", label: "첫·끝 프레임 (FL2V)" },
+  { kind: "animate", label: "동작 따라하기" },
+  { kind: "swap", label: "얼굴 바꾸기" },
+];
+/** The TOOLS menu: file type changes and side by side comparisons. */
+const TOOL_KINDS: { tool: ToolKind; label: string }[] = [
+  { tool: "image-convert", label: "이미지 type 변경" },
+  { tool: "video-convert", label: "동영상 type 변경" },
+  { tool: "image-compare", label: "이미지 비교" },
+  { tool: "video-compare", label: "동영상 비교" },
+];
+const PROMPT_GROUPS = [
+  { id: "image-local", label: "이미지-Local" },
+  { id: "video-local", label: "동영상-Local" },
+  { id: "image-api", label: "이미지-API" },
+  { id: "video-api", label: "동영상-API" },
+];
 
 function parseRoute(): Route {
   let parts: string[];
@@ -30,25 +71,35 @@ function parseRoute(): Route {
   }
   const [head, id, section] = parts;
   if (head === "projects") return id ? { page: "project", id, section: SECTION_IDS.includes(section as SectionId) ? (section as SectionId) : "title" } : { page: "projects" };
-  if (head === "images" || head === "library" || head === "likes" || head === "settings") return { page: head };
+  if (head === "library") return { page: "library", tab: LIBRARY_TABS.some((item) => item.tab === id) ? (id as LibraryTab) : "videos", group: PROMPT_GROUPS.some((item) => item.id === section) ? section : PROMPT_GROUPS[0].id };
+  if (head === "tools") return { page: "tools", tool: TOOL_KINDS.some((item) => item.tool === id) ? (id as ToolKind) : "image-convert" };
+  if (head === "clips") return { page: "clips", kind: CLIP_KINDS.some((item) => item.kind === id) ? (id as ClipKind) : "fl2v" };
+  if (head === "images") return { page: "images", tab: IMAGE_TABS.some((item) => item.tab === id) ? (id as ImageTab) : "make" };
+  if (head === "likes" || head === "settings") return { page: head };
   return { page: "create" };
 }
 
 function hashOf(route: Route): string {
   if (route.page === "project") return `#/projects/${encodeURIComponent(route.id)}/${route.section}`;
+  if (route.page === "clips") return `#/clips/${route.kind}`;
+  if (route.page === "images") return `#/images/${route.tab}`;
+  if (route.page === "tools") return `#/tools/${route.tool}`;
+  if (route.page === "library") return `#/library/${route.tab}${route.tab === "prompts" ? `/${route.group}` : ""}`;
   return `#/${route.page}`;
 }
 
-type NavKey = "create" | "projects" | "images" | "library" | "likes";
+type NavKey = "create" | "projects" | "images" | "clips" | "library" | "tools" | "likes";
 const NAV: { key: NavKey; label: string; icon: LucideIcon }[] = [
   { key: "create", label: "만들기", icon: Sparkles },
   { key: "projects", label: "프로젝트", icon: FolderOpen },
-  { key: "images", label: "이미지", icon: ImageIcon },
-  { key: "library", label: "라이브러리", icon: Library },
   { key: "likes", label: "좋아요", icon: Heart },
+  { key: "images", label: "이미지", icon: ImageIcon },
+  { key: "clips", label: "영상 clip", icon: Clapperboard },
+  { key: "library", label: "라이브러리", icon: Library },
+  { key: "tools", label: "TOOLS", icon: Wrench },
 ];
 
-const PAGE_LABELS: Record<Route["page"], string> = { create: "만들기", projects: "프로젝트", project: "프로젝트", images: "이미지", library: "라이브러리", likes: "좋아요", settings: "설정" };
+const PAGE_LABELS: Record<Route["page"], string> = { create: "만들기", projects: "프로젝트", project: "프로젝트", images: "이미지", clips: "영상 clip", tools: "TOOLS", library: "라이브러리", likes: "좋아요", settings: "설정" };
 const RECENT_LIMIT = 6;
 
 // localStorage can throw (private window, blocked site data); the app must work without it.
@@ -87,6 +138,11 @@ export default function App() {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [projectView, setProjectView] = useState<ProjectSettingsView | null>(null);
   const [message, setMessage] = useState("준비됨");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [clipsOpen, setClipsOpen] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false);
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [jobTick, setJobTick] = useState(0);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -213,6 +269,14 @@ export default function App() {
     const opened = recentIds.map((id) => byId.get(id)).filter((project): project is ProjectSummary => Boolean(project));
     return (opened.length > 0 ? opened : [...projects].sort((a, b) => b.updatedAt - a.updatedAt)).slice(0, 5);
   })();
+  /** Sends a library prompt (and picture) to the image menu, or a video prompt to the open project. */
+  const sendFromLibrary = (handoff: Handoff) => {
+    if (handoff.kind === "image") go({ page: "images", tab: handoff.tab });
+    else if (handoff.kind === "clip") go({ page: "clips", kind: "t2v" });
+    else if (currentId) openProject(currentId, "videos");
+    else return setMessage("먼저 프로젝트를 열어 주세요.");
+    sendHandoff(handoff);
+  };
   const activeNav: NavKey | null = route.page === "project" ? "projects" : route.page === "settings" ? null : route.page;
   const openedProject = route.page === "project" ? projects.find((project) => project.id === route.id) : undefined;
 
@@ -230,11 +294,70 @@ export default function App() {
         </div>
         <nav className="nav" aria-label="메뉴">
           {NAV.map(({ key, label, icon: Icon }) => (
-            <button key={key} className="nav-item" type="button" aria-current={key === activeNav ? "page" : undefined} onClick={() => go({ page: key })}>
-              <Icon size={18} />
-              <span className="nav-text">{label}</span>
-              {key === "create" && <Plus size={15} className="nav-plus" />}
-            </button>
+            <Fragment key={key}>
+              {key === "images" && <div className="nav-divider" role="separator" />}
+              <button
+                className="nav-item"
+                type="button"
+                aria-current={key === activeNav && !(key === "library" && libraryOpen) && !(key === "images" && imagesOpen) && !(key === "clips" && clipsOpen) && !(key === "tools" && toolsOpen) ? "page" : undefined}
+                aria-expanded={key === "library" ? libraryOpen : key === "images" ? imagesOpen : key === "clips" ? clipsOpen : key === "tools" ? toolsOpen : undefined}
+                onClick={() => (key === "library" ? setLibraryOpen(!libraryOpen) : key === "images" ? setImagesOpen(!imagesOpen) : key === "clips" ? setClipsOpen(!clipsOpen) : key === "tools" ? setToolsOpen(!toolsOpen) : go({ page: key }))}
+              >
+                <Icon size={18} />
+                <span className="nav-text">{label}</span>
+                {key === "create" && <Plus size={15} className="nav-plus" />}
+                {(key === "library" || key === "images" || key === "clips" || key === "tools") && ((key === "library" ? libraryOpen : key === "images" ? imagesOpen : key === "clips" ? clipsOpen : toolsOpen) ? <ChevronDown size={15} className="nav-plus" /> : <ChevronRight size={15} className="nav-plus" />)}
+              </button>
+              {key === "tools" && toolsOpen && (
+                <div className="nav-sub">
+                  {TOOL_KINDS.map((item) => (
+                    <button key={item.tool} className="nav-sub-item" type="button" aria-current={route.page === "tools" && route.tool === item.tool ? "page" : undefined} onClick={() => go({ page: "tools", tool: item.tool })}>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {key === "images" && imagesOpen && (
+                <div className="nav-sub">
+                  {IMAGE_TABS.map((item) => (
+                    <button key={item.tab} className="nav-sub-item" type="button" aria-current={route.page === "images" && route.tab === item.tab ? "page" : undefined} onClick={() => go({ page: "images", tab: item.tab })}>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {key === "clips" && clipsOpen && (
+                <div className="nav-sub">
+                  {CLIP_KINDS.map((item) => (
+                    <button key={item.kind} className="nav-sub-item" type="button" aria-current={route.page === "clips" && route.kind === item.kind ? "page" : undefined} onClick={() => go({ page: "clips", kind: item.kind })}>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {key === "library" && libraryOpen && (
+                <div className="nav-sub">
+                  {LIBRARY_TABS.map(({ tab, label: tabLabel, icon: TabIcon }) => (
+                    <Fragment key={tab}>
+                      <button className="nav-sub-item" type="button" aria-current={route.page === "library" && route.tab === tab && tab !== "prompts" ? "page" : undefined} onClick={() => {
+                        if (tab === "prompts") setPromptsOpen(route.page === "library" && route.tab === "prompts" ? !promptsOpen : true);
+                        go({ page: "library", tab, group: route.page === "library" ? route.group : PROMPT_GROUPS[0].id });
+                      }}>
+                        <TabIcon size={15} />
+                        <span>{tabLabel}</span>
+                        {tab === "prompts" && (promptsOpen ? <ChevronDown size={14} className="nav-plus" /> : <ChevronRight size={14} className="nav-plus" />)}
+                      </button>
+                      {tab === "prompts" && promptsOpen &&
+                        PROMPT_GROUPS.map((group) => (
+                          <button key={group.id} className="nav-sub-item deep" type="button" aria-current={route.page === "library" && route.tab === "prompts" && route.group === group.id ? "page" : undefined} onClick={() => go({ page: "library", tab: "prompts", group: group.id })}>
+                            <span>{group.label}</span>
+                          </button>
+                        ))}
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </Fragment>
           ))}
           <div className="nav-divider" role="separator" />
           <div className="nav-label">최근 프로젝트</div>
@@ -314,8 +437,17 @@ export default function App() {
             notify={setMessage}
           />
         )}
-        {route.page === "images" && <ImagesPage jobTick={jobTick} notify={setMessage} />}
-        {route.page === "library" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} onNew={() => go({ page: "create" })} />}
+        {route.page === "tools" && <ToolsPage key={route.tool} tool={route.tool} jobTick={jobTick} notify={setMessage} />}
+        {route.page === "clips" && <ClipsPage key={route.kind} kind={route.kind} jobTick={jobTick} notify={setMessage} />}
+        {route.page === "images" && <ImagesPage key={route.tab} tab={route.tab} jobTick={jobTick} notify={setMessage} />}
+        {route.page === "library" && route.tab === "images" && <LibraryImages jobTick={jobTick} notify={setMessage} onSend={sendFromLibrary} />}
+        {route.page === "library" && route.tab === "prompts" && <PromptLibrary
+            key={route.group}
+            group={route.group}
+            notify={setMessage}
+            onSend={sendFromLibrary}
+          />}
+        {route.page === "library" && route.tab === "videos" && <LibraryPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} onNew={() => go({ page: "create" })} />}
         {route.page === "likes" && <LikesPage projects={projects} currentId={currentId} onOpen={(id) => openProject(id, "videos")} onOpenDetail={setDetailId} onFavorite={onFavorite} onDelete={deleteProject} onPlay={setPlayerId} />}
         {route.page === "settings" && <SettingsPage notify={setMessage} onSaved={reload} />}
         </ErrorBoundary>

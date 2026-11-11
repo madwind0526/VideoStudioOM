@@ -4,8 +4,8 @@ import { HttpError } from "./http.mjs";
 import { resolveInside } from "./paths.mjs";
 
 // Only the free local tools this app drives; the bridge would run any registered tool otherwise.
-export const ALLOWED_TOOLS = new Set(["comfyui_krea_image", "comfyui_t2i", "comfyui_krea_control", "comfyui_edit_model", "comfyui_image_edit", "image_upscale", "h3_local_video", "h3_reference_video", "character_sheet", "qwen3_tts", "songyue_music", "songyue_sfx"]);
-const OUTPUT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".wav", ".mp3", ".flac"]);
+export const ALLOWED_TOOLS = new Set(["comfyui_krea_image", "comfyui_t2i", "comfyui_krea_control", "comfyui_controlnet", "comfyui_edit_model", "comfyui_image_edit", "image_upscale", "h3_still", "media_convert", "h3_character_sheet", "wan_animate", "h3_local_video", "h3_reference_video", "character_sheet", "qwen3_tts", "songyue_music", "songyue_sfx"]);
+const OUTPUT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov", ".wav", ".mp3", ".flac"]);
 
 /**
  * Turns a browser request into tool inputs: every *_path value is a path relative to the project and

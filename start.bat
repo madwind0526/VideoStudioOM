@@ -44,6 +44,7 @@ if /i "%MODE%"=="dev" (
     echo Starting VideoStudioOM in dev mode ^(API :%API_PORT%, UI :%WEB_PORT%^)...
     start "VideoStudioOM" /min cmd /c "npm run dev"
     echo Done. Open http://127.0.0.1:%WEB_PORT%
+    start "" /min C:\Claude\open-url.bat http://127.0.0.1:%WEB_PORT%
 ) else (
     echo Building VideoStudioOM...
     call npm run build
@@ -55,6 +56,7 @@ if /i "%MODE%"=="dev" (
     echo Starting VideoStudioOM ^(http://127.0.0.1:%API_PORT%^)...
     start "VideoStudioOM" /min cmd /c "npm start"
     echo Done. Open http://127.0.0.1:%API_PORT%
+    start "" /min C:\Claude\open-url.bat http://127.0.0.1:%API_PORT%
 )
 
 if /i not "%NOPAUSE%"=="nopause" pause

@@ -1,7 +1,11 @@
 import { Sparkles, UserRound, Wand2 } from "lucide-react";
+import VideoMethodPicker from "./VideoMethodPicker";
+import type { VideoMethod } from "../sections/mediaJobs";
 import { useEffect, useState } from "react";
 import { resolveSize } from "../../shared/settings.mjs";
 import { ApiError, type MediaFile, type ProjectSettingsView } from "../api";
+import { ascending } from "../sortOptions";
+import { clearHandoff, peekHandoff } from "../handoff";
 import PromptLog from "./PromptLog";
 import { charactersIn, describeReference, referencesFor, sheetPath, type Bible } from "../bible";
 import { makeItem, makePrompt, startItems, stamp, type MakeItem, type MakeKind } from "../sections/mediaJobs";
@@ -17,6 +21,7 @@ const KINDS: Record<Kind, { label: string; hint: string }> = {
   sfx: { label: "효과음", hint: "SongYUE2(Stable Audio SFX)로 효과음을 만듭니다. 소리는 영어로 설명해야 잘 만들어져요." },
   instrumental: { label: "연주곡", hint: "SongYUE2로 가사 없는 연주곡을 만듭니다. 장르, 악기, 분위기를 적어 주세요." },
   vocal: { label: "보컬", hint: "SongYUE2로 가사를 부르는 노래를 만듭니다. 스타일과 가사를 따로 적어 주세요." },
+  t2v: { label: "T2V", hint: "그림 없이 글만으로 영상을 만듭니다." },
   i2v: { label: "I2V", hint: "고른 이미지를 첫 장면으로 영상을 만듭니다." },
   fl2v: { label: "FL2V", hint: "첫 이미지에서 마지막 이미지로 이어지는 영상을 만듭니다." },
   s2v: { label: "S2V", hint: "Sound → Video: 얼굴 이미지와 음성을 고르면 입이 음성을 따라 움직이는 영상을 만듭니다." },
@@ -36,8 +41,11 @@ interface Props {
 
 /** Starts a generation job for the free local tools; the result is saved in the project's assets. */
 export default function GenerateForm({ projectId, kinds, view, media, bible, running, notify, onStarted }: Props) {
-  const [kind, setKind] = useState<Kind>(kinds[0]);
-  const [prompt, setPrompt] = useState("");
+  // A video prompt sent from the prompt library opens as R2V with the prompt filled in.
+  const [sent] = useState(() => (kinds.includes("r2v") ? peekHandoff("video") : null));
+  useEffect(clearHandoff, []);
+  const [kind, setKind] = useState<Kind>(sent ? "r2v" : kinds[0]);
+  const [prompt, setPrompt] = useState(sent?.prompt ?? "");
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [audio, setAudio] = useState("");
@@ -46,6 +54,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
   const [refVideo, setRefVideo] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [duration, setDuration] = useState("5");
+  const [method, setMethod] = useState<VideoMethod>({});
   const [drafting, setDrafting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -80,7 +89,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
     const output = resolved === "image" ? `assets/images/gen-${id}.png` : audioPrefix[resolved] ? `assets/audio/${audioPrefix[resolved]}-${id}.wav` : `assets/video/clip-${id}.mp4`;
     return makeItem(
       settings,
-      { kind: resolved, prompt, lyrics: resolved === "vocal" ? lyrics : undefined, first: first || undefined, last: resolved === "fl2v" ? last || undefined : undefined, audio: resolved === "s2v" ? audio || undefined : undefined, refs: resolved === "r2v" ? refList : undefined, refVideo: resolved === "r2v" ? refVideo || undefined : undefined, duration: Number(duration) },
+      { kind: resolved, prompt, lyrics: resolved === "vocal" ? lyrics : undefined, first: first || undefined, last: resolved === "fl2v" ? last || undefined : undefined, audio: resolved === "s2v" ? audio || undefined : undefined, refs: resolved === "r2v" ? refList : undefined, refVideo: resolved === "r2v" ? refVideo || undefined : undefined, duration: Number(duration), video: isVideo ? method : undefined },
       output,
     );
   }
@@ -148,7 +157,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
         ) : (
           <>
             {optional && <option value="">(없음)</option>}
-            {files.map((file) => (
+            {ascending(files, (file) => file.path).map((file) => (
               <option key={file.path} value={file.path}>
                 {file.path.replace(/^assets\//, "")}
               </option>
@@ -234,6 +243,7 @@ export default function GenerateForm({ projectId, kinds, view, media, bible, run
           <div className="field">
             <label htmlFor="gen-duration">길이(초)</label>
             <input id="gen-duration" type="number" min={kind === "sfx" ? 1 : 2} max={kind === "sfx" ? 30 : 15} step={0.5} value={duration} onChange={(event) => setDuration(event.target.value)} />
+            {isVideo && <VideoMethodPicker value={method} fallback={settings?.video.tiled ?? false} onChange={setMethod} />}
             {isVideo && <span className="hint">{size && `영상 크기 ${size.generate.join("×")}. 5초 영상은 약 1분 걸립니다.`}</span>}
           </div>
         )}

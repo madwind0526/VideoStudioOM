@@ -26,6 +26,19 @@ test("image prompt: the LLM gets the idea and the project context, quotes are st
   assert.match(seen.user, /Project title: Bike/);
 });
 
+test("image prompt: the system prompt follows the model that will draw it", async () => {
+  const systemOf = async (imageModel) => {
+    let system = "";
+    await makePrompt({ target: "image", imageModel, text: "x" }, async (text) => ((system = text), "p"));
+    return system;
+  };
+  assert.match(await systemOf("zimage-turbo"), /Z-Image Turbo/);
+  assert.match(await systemOf("qwen-image-2512"), /Qwen-Image/);
+  assert.match(await systemOf("flux2-klein"), /FLUX\.2/);
+  assert.match(await systemOf("krea2-turbo"), /Krea 2/);
+  assert.match(await systemOf(undefined), /Krea 2/);
+});
+
 test("video prompt: alignment line is added by code and the clip length snaps to the frame grid", async () => {
   let user = "";
   const ask = async (_system, text) => {

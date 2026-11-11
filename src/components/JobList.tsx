@@ -2,7 +2,7 @@ import { Square, X } from "lucide-react";
 import { api, type Job } from "../api";
 import { formatTime } from "../format";
 
-const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", comfyui_t2i: "이미지", comfyui_krea_control: "이미지(제어)", comfyui_edit_model: "이미지 편집", comfyui_image_edit: "이미지 편집", image_upscale: "확대",qwen3_tts: "음성", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악", songyue_sfx: "효과음" };
+const TOOL_LABELS: Record<string, string> = { comfyui_krea_image: "이미지", comfyui_t2i: "이미지", comfyui_krea_control: "이미지(제어)", comfyui_controlnet: "이미지(제어)", comfyui_edit_model: "이미지 편집", comfyui_image_edit: "이미지 편집", image_upscale: "확대",qwen3_tts: "음성", h3_still: "이미지(H3)", media_convert: "형식 변환", h3_character_sheet: "캐릭터 시트", wan_animate: "영상(동작)", h3_local_video: "영상", h3_reference_video: "영상(R2V)", comfyui_workflow: "워크플로", songyue_music: "음악", songyue_sfx: "효과음" };
 const STATUS_LABELS: Record<Job["status"], string> = { running: "만드는 중", done: "완료", failed: "실패", cancelled: "취소됨", interrupted: "중단됨" };
 
 interface Props {

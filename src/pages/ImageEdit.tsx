@@ -2,18 +2,19 @@ import { Languages, Sparkles } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { api, ApiError, type MediaFile } from "../api";
 import ImageSlot from "../components/ImageSlot";
+import { loraFields } from "../components/LoraPicker";
 import type { Favorites, SortOrder } from "../components/LibraryBrowser";
 import PromptLog from "../components/PromptLog";
 import { samplingInputs, useModelChoice } from "../components/ModelPicker";
-import { startItems, stamp, withUpscale, type MakeItem, type UpscaleHow } from "../sections/mediaJobs";
+import { startItems, stamp, withUpscale, type MakeItem, type SceneLora, type UpscaleHow } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 
 /** Several pictures and a sentence that points at them ("그림1의 사람이 그림2의 옷을 입고 그림3의 포즈를 취한다"): Qwen Image Edit. */
-export default function ImageEdit({ props, images, upscale, count, options, favorites, order, onOrder }: { props: SectionProps; images: MediaFile[]; upscale: UpscaleHow | null; count: string; options: ReactNode; favorites: Favorites; order: SortOrder; onOrder: (order: SortOrder) => void }) {
+export default function ImageEdit({ initial, props, images, loras, upscale, count, options, favorites, order, onOrder }: { initial?: { prompt: string; image?: string }; props: SectionProps; images: MediaFile[]; loras: SceneLora[]; upscale: UpscaleHow | null; count: string; options: ReactNode; favorites: Favorites; order: SortOrder; onOrder: (order: SortOrder) => void }) {
   const { project, jobs, notify, onJobsChanged } = props;
   const model = useModelChoice("i2i");
-  const [sources, setSources] = useState<string[]>([]);
-  const [request, setRequest] = useState("");
+  const [sources, setSources] = useState<string[]>(initial?.image ? [initial.image] : []);
+  const [request, setRequest] = useState(initial?.prompt ?? "");
   const [english, setEnglish] = useState("");
   // The request the English text was made from: when the request changes, the English is made again.
   const [madeFrom, setMadeFrom] = useState("");
@@ -60,8 +61,8 @@ export default function ImageEdit({ props, images, upscale, count, options, favo
     const items: MakeItem[] = Array.from({ length: number }, (_, index) => ({
       tool: model.tool,
       label: request.trim(),
-      record: { kind: "image", prompt: text, idea: request.trim(), editFrom: sources, imageModel: model.id, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
-      inputs: { prompt: text, reference_image_path: sources[0], reference_image_paths: sources.slice(1), ...samplingInputs(model, index), output_path: `assets/images/edit-${id}-${String(index + 1).padStart(2, "0")}.png` },
+      record: { kind: "image", prompt: text, idea: request.trim(), editFrom: sources, imageModel: model.id, ...loraFields(loras).recipe, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
+      inputs: { prompt: text, reference_image_path: sources[0], reference_image_paths: sources.slice(1), ...(loraFields(loras).recipe.loras ? { loras: loraFields(loras).recipe.loras } : {}), ...samplingInputs(model, index), output_path: `assets/images/edit-${id}-${String(index + 1).padStart(2, "0")}.png` },
     }));
     setWorking("make");
     try {
@@ -78,7 +79,7 @@ export default function ImageEdit({ props, images, upscale, count, options, favo
   return (
     <section className="gen-card">
       <h3>그림 편집 (여러 그림)</h3>
-      <span className="hint">그림을 여러 장 고르고 그림1, 그림2처럼 번호로 가리키며 바꿀 내용을 적습니다. 예: "그림1의 사람이 그림2의 옷을 입고 그림3의 포즈를 취하고 있다". 결과는 그림1과 같은 모양이고, 크기와 LoRA 설정은 쓰지 않습니다.</span>
+      <span className="hint">그림을 여러 장 고르고 그림1, 그림2처럼 번호로 가리키며 바꿀 내용을 적습니다. 예: "그림1의 사람이 그림2의 옷을 입고 그림3의 포즈를 취하고 있다". 결과는 그림1과 같은 크기가 되어 아래 이미지 크기는 쓰지 않습니다(회색). LoRA는 모델에 더해 적용됩니다. 그림 장수 제한은 모델마다 정해져 있습니다 (Qwen: 10, Flux: 4, Krea: 2).</span>
 
       {model.picker}
       <ImageSlot props={props} images={images} favorites={favorites} order={order} onOrder={onOrder} label={`1. 그림 고르기 (${sources.length}/${model.maxPictures}장, 첫 그림이 편집되고 나머지는 참조)`} value={sources} max={model.maxPictures} numbered onChange={setSources} />

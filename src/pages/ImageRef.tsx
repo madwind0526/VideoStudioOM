@@ -18,13 +18,13 @@ const MODES: { id: RefMode; label: string; hint: string }[] = [
 ];
 
 /** R2I: a new picture drawn with reference pictures (and a pose picture); unlike the edit of "분석해서 변주" nothing of the references is copied but what is asked for. */
-export default function ImageRef({ props, images, loras, upscale, size, count, options, favorites, order, onOrder }: { props: SectionProps; images: MediaFile[]; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; options: ReactNode; favorites: Favorites; order: SortOrder; onOrder: (order: SortOrder) => void }) {
+export default function ImageRef({ initial, props, images, loras, upscale, size, count, options, favorites, order, onOrder }: { initial?: { prompt: string; image?: string }; props: SectionProps; images: MediaFile[]; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; options: ReactNode; favorites: Favorites; order: SortOrder; onOrder: (order: SortOrder) => void }) {
   const { project, jobs, notify, onJobsChanged } = props;
   const model = useModelChoice("r2i");
-  const [refs, setRefs] = useState<string[]>([]);
+  const [refs, setRefs] = useState<string[]>(initial?.image ? [initial.image] : []);
   const [pose, setPose] = useState<string[]>([]);
   const [mode, setMode] = useState<RefMode>("person");
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initial?.prompt ?? "");
   const [drafting, setDrafting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -37,7 +37,7 @@ export default function ImageRef({ props, images, loras, upscale, size, count, o
     if (!prompt.trim()) return setError("만들고 싶은 그림을 간단히 적은 뒤 눌러 주세요.");
     setDrafting(true);
     try {
-      setPrompt(await makePrompt(project.id, { target: "image", text: prompt }));
+      setPrompt(await makePrompt(project.id, { target: "image", imageModel: model.id, text: prompt }));
     } catch (e) {
       fail(e, "프롬프트를 만들지 못했습니다.");
     } finally {
@@ -51,8 +51,8 @@ export default function ImageRef({ props, images, loras, upscale, size, count, o
     const number = Number(count);
     // Krea 2 + Pose follows the pose picture, Krea 2 + Depth the first reference picture (nothing of the others is used).
     const control = model.inputs.control;
-    const source = control === "pose" ? pose[0] : control === "depth" ? refs[0] : undefined;
-    if (control && !source) return setError(control === "pose" ? "포즈 그림을 고르세요." : "깊이를 따라갈 참조 그림을 하나 이상 고르세요.");
+    const source = control === "pose" ? pose[0] : control ? refs[0] : undefined;
+    if (control && !source) return setError(control === "pose" ? "포즈 그림을 고르세요." : "구도를 따라갈 참조 그림을 하나 이상 고르세요.");
     if (!control && refs.length === 0) return setError("참조할 그림을 하나 이상 고르세요.");
     if (!text) return setError("새로 그릴 그림을 설명해 주세요.");
     if (!Number.isInteger(number) || number < 1 || number > 24) return setError("장수는 1~24 사이로 입력하세요.");
@@ -112,7 +112,7 @@ export default function ImageRef({ props, images, loras, upscale, size, count, o
       {model.picker}
       {model.tool === "comfyui_edit_model" && <span className="hint">참조 그림(과 포즈 그림)이 편집 모델의 입력 그림이 됩니다. 첫 그림이 기준이고 설명에서 "첫 번째 그림", "두 번째 그림"처럼 영어로 가리킬 수 있습니다. 결과 크기는 위에서 고른 크기입니다.</span>}
       {model.inputs.control === "pose" && <span className="hint">이 모델은 아래 "포즈 그림"의 자세만 따라 그립니다. 참조 그림은 쓰지 않고, 모습은 설명으로 정합니다.</span>}
-      {model.inputs.control === "depth" && <span className="hint">이 모델은 첫 번째 참조 그림의 깊이(구도와 입체감)를 따라 그립니다. 나머지 그림과 포즈 그림은 쓰지 않습니다.</span>}
+      {(model.inputs.control === "depth" || model.inputs.control === "canny") && <span className="hint">이 모델은 첫 번째 참조 그림의 {model.inputs.control === "depth" ? "깊이(구도와 입체감)" : "윤곽선"}을 따라 그립니다. 나머지 그림과 포즈 그림은 쓰지 않습니다.</span>}
       <ImageSlot props={props} images={images} favorites={favorites} order={order} onOrder={onOrder} label={`1. 참조 그림 (${refs.length}/${MAX_REFS}장)`} value={refs} max={MAX_REFS} onChange={setRefs} />
       <ImageSlot props={props} images={images} favorites={favorites} order={order} onOrder={onOrder} label="2. 포즈 그림 (선택 — 이 그림의 자세만 따라 그립니다)" value={pose} max={1} onChange={setPose} />
 
@@ -132,7 +132,7 @@ export default function ImageRef({ props, images, loras, upscale, size, count, o
           <label htmlFor="ref-prompt">4. 새로 그릴 그림 설명</label>
           <textarea id="ref-prompt" rows={4} value={prompt} maxLength={7000} onChange={(event) => setPrompt(event.target.value)} placeholder="예: 비 오는 밤 네온 거리에서 우산을 든 모습" />
           <div>
-            <button className="btn" type="button" disabled={drafting} onClick={() => void draft()} title="간단한 설명을 영어 프롬프트로 바꿔 줍니다.">
+            <button className="btn" type="button" disabled={drafting} onClick={() => void draft()} title={`간단한 설명을 고른 모델(${model.label})에 맞는 영어 프롬프트로 바꿔 줍니다.`}>
               <Wand2 size={15} /> {drafting ? "만드는 중..." : "프롬프트 만들기"}
             </button>
           </div>

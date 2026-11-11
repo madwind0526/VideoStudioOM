@@ -19,7 +19,7 @@ export const POOL_CATEGORIES = [
 ];
 const MAX_CATEGORIES = 30;
 const MAX_PHRASES = 300;
-const MAX_LENGTH = 200;
+const MAX_LENGTH = 1000;
 
 /** Used while the user has no data/image-pools.json; a saved file replaces it whole. */
 export const DEFAULT_POOL = {
@@ -158,7 +158,9 @@ function clean(list) {
     const weight = typeof item === "string" || item.weight === undefined ? 1 : Number(item.weight);
     if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT) throw new HttpError(400, `가중치는 0~${MAX_WEIGHT} 사이여야 합니다: ${text.trim().slice(0, 30)}`);
     seen.add(text.trim());
-    out.push({ text: text.trim(), weight });
+    // `for` (optional): the phrase is only for this gender (the text of a phrase of the "gender" category); without it it fits every one.
+    const gender = typeof item === "object" && typeof item.for === "string" ? item.for.trim().slice(0, 20) : "";
+    out.push({ text: text.trim(), weight, ...(gender ? { for: gender } : {}) });
   }
   return out;
 }
@@ -208,6 +210,9 @@ export async function writePool(file, input) {
   return pool;
 }
 
+/** Whether a phrase may be used with this gender ("" = no gender known: every phrase fits). */
+const fits = (phrase, gender) => !gender || !phrase.for || phrase.for === gender;
+
 /** One phrase by weight (a weight of 0 is never drawn); null when nothing can be drawn. */
 function draw(phrases, random) {
   const total = phrases.reduce((sum, phrase) => sum + phrase.weight, 0);
@@ -227,23 +232,27 @@ function draw(phrases, random) {
 export function pickCombinations(pool, { count = 1, locked = {}, random = Math.random } = {}) {
   const wanted = Math.min(24, Math.max(1, Math.floor(Number(count)) || 1));
   const left = Object.fromEntries(pool.categories.map(({ id, phrases }) => [id, [...phrases]]));
-  const take = ({ id, phrases }) => {
-    if (!left[id].some((phrase) => phrase.weight > 0)) left[id] = [...phrases];
-    const phrase = draw(left[id], random);
+  const take = ({ id, phrases }, gender) => {
+    if (!left[id].some((phrase) => phrase.weight > 0 && fits(phrase, gender))) left[id] = [...phrases];
+    const phrase = draw(left[id].filter((item) => fits(item, gender)), random);
     if (!phrase) return null;
     left[id] = left[id].filter((item) => item !== phrase);
     return phrase.text;
   };
-  return Array.from({ length: wanted }, () =>
-    Object.fromEntries(pool.categories.map((category) => [category.id, locked[category.id] || take(category)]).filter(([, text]) => text)),
-  );
+  const genderCategory = pool.categories.find((category) => category.id === "gender");
+  return Array.from({ length: wanted }, () => {
+    // The gender is drawn first: phrases made for the other gender are left out of the rest of the combination.
+    const gender = locked.gender || (genderCategory ? take(genderCategory, "") : "");
+    return Object.fromEntries(pool.categories.map((category) => [category.id, category.id === "gender" ? gender : locked[category.id] || take(category, gender)]).filter(([, text]) => text));
+  });
 }
 
 /** One category of one combination again (the screen's dice button), by weight. */
-export function pickOne(pool, id, { avoid = "", random = Math.random } = {}) {
+export function pickOne(pool, id, { avoid = "", gender = "", random = Math.random } = {}) {
   const category = pool.categories.find((item) => item.id === id);
   if (!category) throw new HttpError(400, "알 수 없는 항목입니다.");
-  const phrase = draw(category.phrases.filter((item) => item.text !== avoid), random) ?? draw(category.phrases, random);
+  const usable = category.phrases.filter((item) => fits(item, gender));
+  const phrase = draw(usable.filter((item) => item.text !== avoid), random) ?? draw(usable, random);
   if (!phrase) throw new HttpError(400, "이 항목에는 뽑을 문구가 없습니다.");
   return phrase.text;
 }

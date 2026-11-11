@@ -20,7 +20,7 @@ export const ORIENTATIONS = ["landscape", "portrait"];
 export const CUSTOM_SIZE_ID = "custom";
 export const VIDEO_MODES = ["T2V", "I2V", "FL2V", "R2V"];
 export const AUDIO_SOURCES = ["input", "songyue", "h3", "s2v"];
-export const IMAGE_MODELS = ["krea2-turbo", "h3-still"];
+export const IMAGE_MODELS = ["krea2-turbo", "zimage-turbo", "qwen-image-2512", "flux2-klein", "h3-still"];
 export const UPSCALES = ["rtx-2pass", "none", "lanczos"];
 // Same ids as server/codecs.mjs (a test keeps them equal).
 export const VIDEO_CODECS = ["h264", "h265", "nvenc_h264", "nvenc_h265", "nvenc_av1"];
@@ -41,7 +41,7 @@ export const DEFAULTS = {
     songFile: "",
     imageModel: "krea2-turbo",
   },
-  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3, codec: "h264", freeVramWhenIdle: true, continueMode: "frame" },
+  video: { model: "minimax-h3-turbo", upscale: "rtx-2pass", finalFps: 24, seamRampSeconds: 3, codec: "h264", freeVramWhenIdle: true, continueMode: "frame", tiled: false },
   audio: { musicFormat: "flac", voice: { tool: "qwen3_tts", name: "Sohee", language: "ko" } },
   llm: {
     provider: "claude-cli",
@@ -154,6 +154,7 @@ const RULES = {
   "video.codec": oneOf("영상 저장 방식", VIDEO_CODECS),
   "video.freeVramWhenIdle": bool("작업이 끝나면 VRAM 비우기"),
   "video.continueMode": oneOf("이어붙이기 방식", ["frame", "motion"]),
+  "video.tiled": bool("타일 방식으로 만들기"),
   "audio.musicFormat": oneOf("노래 저장 형식", MUSIC_FORMATS),
   "audio.voice.tool": text("음성 도구", 60),
   "audio.voice.name": text("음성 이름", 60),

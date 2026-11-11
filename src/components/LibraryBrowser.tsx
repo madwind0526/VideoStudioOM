@@ -75,11 +75,11 @@ export function SortButtons({ order, onChange }: { order: SortOrder; onChange: (
 }
 
 /** A square card of a picture: star at the top left, the tools (if any) at the top right. */
-export function LibraryCard({ projectId, file, favorites, picked, onClick, tools }: { projectId: string; file: MediaFile; favorites: Favorites; picked?: boolean; onClick: () => void; tools?: ReactNode }) {
+export function LibraryCard({ projectId, file, favorites, picked, onClick, onDoubleClick, tools }: { projectId: string; file: MediaFile; favorites: Favorites; picked?: boolean; onClick: () => void; onDoubleClick?: () => void; tools?: ReactNode }) {
   const starred = favorites.has(file.path);
   return (
     <div className="media-item">
-      <button type="button" title={file.path} aria-pressed={picked} className={picked ? "picked" : undefined} onClick={onClick}>
+      <button type="button" title={file.path} aria-pressed={picked} className={picked ? "picked" : undefined} onClick={onClick} onDoubleClick={onDoubleClick}>
         <img src={mediaUrl(projectId, file.path, file.mtimeMs)} alt={file.path} loading="lazy" />
       </button>
       <button className={`fav-star${starred ? " on" : ""}`} type="button" aria-label={starred ? "즐겨찾기 빼기" : "즐겨찾기"} aria-pressed={starred} title={starred ? "즐겨찾기 빼기" : "즐겨찾기"} onClick={() => favorites.toggle(file.path)}>
@@ -148,6 +148,15 @@ export default function LibraryBrowser({ projectId, images, favorites, order, on
                   favorites={favorites}
                   picked={pick ? chosen.includes(file.path) : undefined}
                   onClick={() => (pick ? toggle(file.path) : onOpen?.(file.path))}
+                  onDoubleClick={
+                    pick
+                      ? () => {
+                          // Double click takes this picture alone (plus the ones already chosen when several are allowed).
+                          pick.onPick(pick.max === 1 ? [file.path] : [...new Set([...chosen, file.path])].slice(0, pick.max));
+                          onClose();
+                        }
+                      : undefined
+                  }
                   tools={tools?.(file)}
                 />
               ))}

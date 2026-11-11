@@ -1,15 +1,15 @@
-import { Dices, Download, Plus, Save, Shuffle, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { Dices, Download, Plus, Save, Shuffle, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
+import FileNavigator from "../components/FileNavigator";
 import PromptLog from "../components/PromptLog";
-import { loraFields } from "../components/LoraPicker";
-import { samplingInputs, type ModelChoice } from "../components/ModelPicker";
-import { startItems, stamp, withUpscale, type MakeItem, type SceneLora, type UpscaleHow } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 
 interface Phrase {
   text: string;
   weight: number;
+  /** Only for this gender (the text of a phrase of the gender category); missing: for every one. */
+  for?: string;
 }
 interface Category {
   /** Empty for a category added on the screen: the server gives it one when the pool is saved. */
@@ -23,12 +23,19 @@ type Combination = Record<string, string>;
 const RANDOM = "";
 const SKIP = "__skip__";
 
+/** A long phrase is shown cut short with "..."; the whole text is in the tooltip. */
+const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max).trimEnd()}...` : text);
+
+/** With gender, age and hair categories the "인물" category (a whole person in one phrase) would contradict them: it starts as "쓰지 않음". */
+const startChoice = (categories: Category[]): Record<string, string> => (categories.some((category) => category.id === "gender") && categories.some((category) => category.id === "person") ? { person: SKIP } : {});
+
 /**
- * Pop-up of the make screen: pictures from random mixes of person, outfit, style, place, action and prop (the pool is a
- * file the user edits). The number and the size of the pictures are the ones of the make screen.
+ * Pop-up of the make screen: prompts from random mixes of person, outfit, style, place, action and prop (the pool is a
+ * file the user edits). The number of prompts is the number of pictures of the make screen. "저장" hands the prompts to the make
+ * screen, where the LoRAs and the upscale are chosen and the pictures are made.
  */
-export default function ImageRandom({ props, loras, upscale, size, count, model, onClose }: { props: SectionProps; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; model: ModelChoice; onClose: () => void }) {
-  const { project, jobs, notify, onJobsChanged } = props;
+export default function ImageRandom({ props, count, onSave, onClose }: { props: SectionProps; count: string; onSave: (prompts: string[]) => void; onClose: () => void }) {
+  const { project, notify } = props;
   const [categories, setCategories] = useState<Category[]>([]);
   const [defaults, setDefaults] = useState<Category[]>([]);
   const [draft, setDraft] = useState<Category[]>([]);
@@ -38,20 +45,23 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
   const [prompts, setPrompts] = useState<string[]>([]);
   const [working, setWorking] = useState<"" | "roll" | "compose" | "make" | "pool">("");
   const [error, setError] = useState("");
-  const running = jobs.current !== null;
+  const [browsing, setBrowsing] = useState(false);
 
   const fail = (e: unknown, fallback: string) => setError(e instanceof ApiError ? e.message : fallback);
   const load = (data: { pool: { categories: Category[] }; defaults?: { categories: Category[] } }) => {
     setCategories(data.pool.categories);
     setDraft(data.pool.categories);
     if (data.defaults) setDefaults(data.defaults.categories);
+    return data.pool.categories;
   };
 
   useEffect(() => {
-    api<{ pool: { categories: Category[] }; defaults: { categories: Category[] } }>("GET", "/api/images/pool").then(load).catch((e) => fail(e, "풀을 불러오지 못했습니다."));
+    api<{ pool: { categories: Category[] }; defaults: { categories: Category[] } }>("GET", "/api/images/pool").then((data) => setChoice(startChoice(load(data)))).catch((e) => fail(e, "풀을 불러오지 못했습니다."));
   }, []);
 
   const used = (id: string) => choice[id] !== SKIP;
+  // With a gender chosen by hand the lists only offer the phrases that fit it.
+  const lockedGender = choice.gender && choice.gender !== RANDOM && choice.gender !== SKIP ? choice.gender : "";
   const clip = (combination: Combination): Combination => Object.fromEntries(Object.entries(combination).filter(([id]) => used(id)));
 
   async function roll() {
@@ -72,7 +82,7 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
 
   async function redo(row: number, category: string) {
     try {
-      const { phrase } = await api<{ phrase: string }>("POST", "/api/images/random", { redo: { category, avoid: combinations[row]?.[category] ?? "" } });
+      const { phrase } = await api<{ phrase: string }>("POST", "/api/images/random", { redo: { category, avoid: combinations[row]?.[category] ?? "", gender: combinations[row]?.gender ?? "" } });
       setCombinations((list) => list.map((item, at) => (at === row ? { ...item, [category]: phrase } : item)));
       setPrompts([]);
     } catch (e) {
@@ -97,39 +107,12 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
     }
   }
 
-  async function make() {
-    setError("");
-    const list = prompts.map((text) => text.trim()).filter(Boolean);
-    if (list.length === 0) return setError("만들 프롬프트가 없습니다.");
-    if (loras.some((lora) => lora.name.trim()) && model.id !== "krea2-turbo") return setError("이 모델은 LoRA를 적용하지 않습니다. LoRA를 끄거나 Krea 2 Turbo를 고르세요.");
-    const [width, height] = size;
-    const id = stamp();
-    const extra = loraFields(loras);
-    const items: MakeItem[] = list.map((text, index) => ({
-      tool: model.tool,
-      label: text,
-      record: { kind: "image", prompt: text, ...extra.recipe, imageModel: model.id, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
-      inputs: { prompt: text, width, height, ...extra.inputs, ...samplingInputs(model, index), output_path: `assets/images/mix-${id}-${String(index + 1).padStart(2, "0")}.png` },
-    }));
-    setWorking("make");
-    try {
-      await startItems(project.id, withUpscale(items, upscale));
-      notify(`${items.length}장을 차례로 만듭니다.`);
-      onJobsChanged();
-      onClose();
-    } catch (e) {
-      fail(e, "작업을 시작하지 못했습니다.");
-    } finally {
-      setWorking("");
-    }
-  }
-
   async function savePool(next: unknown = draft) {
     setError("");
     setWorking("pool");
     try {
-      load(await api<{ pool: { categories: Category[] } }>("PUT", "/api/images/pool", { pool: next }));
-      setChoice({});
+      const saved = load(await api<{ pool: { categories: Category[] } }>("PUT", "/api/images/pool", { pool: next }));
+      setChoice(startChoice(saved));
       setCombinations([]);
       setPrompts([]);
       notify("풀을 저장했습니다.");
@@ -148,12 +131,12 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
     URL.revokeObjectURL(link.href);
   }
 
-  async function importPool(file: File | undefined) {
-    if (!file) return;
+  async function importPool(path: string) {
     setError("");
     let parsed: unknown;
     try {
-      parsed = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
+      // The file is read by the server (the app's own file browser picked it).
+      parsed = JSON.parse((await api<{ text: string }>("GET", `/api/fs/text?path=${encodeURIComponent(path)}`)).text);
     } catch {
       return setError("JSON 파일을 읽지 못했습니다.");
     }
@@ -168,13 +151,13 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
     <div className="backdrop" style={{ zIndex: 60 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <div className="modal" style={{ width: "min(900px, 100%)" }} role="dialog" aria-modal="true" aria-label="랜덤으로 만들기">
     <div className="modal-head">
-      <h2>랜덤으로 만들기 ({count}장 · {size[0]}×{size[1]})</h2>
+      <h2>랜덤 프롬프트 만들기 ({count}개)</h2>
       <button className="icon-btn" type="button" title="닫기" aria-label="닫기" onClick={onClose}>
         <X size={18} />
       </button>
     </div>
     <div className="modal-body">
-      <span className="hint">인물, 의상, 표정, 동작, 배경, 구도, 조명 같은 항목을 무작위로 섞어 그림을 만듭니다. 항목마다 "무작위", "쓰지 않음", 또는 늘 같은 문구로 정할 수 있습니다. 장수와 크기는 만들기 화면의 값을 씁니다.</span>
+      <span className="hint">인물, 의상, 표정, 동작, 배경, 구도, 조명 같은 항목을 무작위로 섞어 그림을 만듭니다. 항목마다 "무작위", "쓰지 않음", 또는 늘 같은 문구로 정할 수 있습니다. 장수와 크기는 만들기 화면의 값을 씁니다. 성별·나이·머리 항목이 있으면 "인물" 항목은 처음에 "쓰지 않음"으로 시작합니다(서로 어긋나지 않게).</span>
 
       <div className="fields" style={{ marginTop: 14 }}>
         {categories.map(({ id, label: name, phrases }) => (
@@ -183,9 +166,9 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
             <select id={`mix-${id}`} value={choice[id] ?? RANDOM} onChange={(event) => setChoice((current) => ({ ...current, [id]: event.target.value }))}>
               <option value={RANDOM}>무작위</option>
               <option value={SKIP}>쓰지 않음</option>
-              {phrases.map((phrase) => (
-                <option key={phrase.text} value={phrase.text}>
-                  {phrase.text}
+              {phrases.filter((phrase) => !lockedGender || !phrase.for || phrase.for === lockedGender).map((phrase) => (
+                <option key={phrase.text} value={phrase.text} title={phrase.text}>
+                  {shorten(phrase.text, 40)}
                 </option>
               ))}
             </select>
@@ -212,8 +195,10 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
               <strong>{row + 1}.</strong>
               <div className="combo-chips">
                 {Object.entries(clip(combination)).map(([id, phrase]) => (
-                  <button key={id} type="button" className="chip-btn" title={`${label(id)}만 다시 뽑기`} onClick={() => void redo(row, id)}>
-                    {label(id)}: {phrase}
+                  <button key={id} type="button" className="chip-btn" title={`${phrase}
+
+(누르면 ${label(id)}만 다시 뽑습니다)`} onClick={() => void redo(row, id)}>
+                    {label(id)}: {shorten(phrase, 60)}
                   </button>
                 ))}
               </div>
@@ -229,11 +214,7 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
           {prompts.map((text, index) => (
             <textarea key={index} rows={3} value={text} maxLength={7000} aria-label={`조합 ${index + 1}`} onChange={(event) => setPrompts((list) => list.map((item, at) => (at === index ? event.target.value : item)))} />
           ))}
-          <div>
-            <button className="btn primary" type="button" disabled={working !== "" || running} onClick={() => void make()} title={running ? "다른 작업이 끝난 뒤에 시작할 수 있습니다." : undefined}>
-              <Sparkles size={16} /> {running ? "다른 작업 진행 중" : "만들기"}
-            </button>
-          </div>
+          <span className="hint">마음에 들면 "저장"을 누르세요. 저장하면 창이 닫히고, 이미지 생성 화면에서 LoRA나 업스케일을 고른 뒤 "만들기"를 누릅니다.</span>
         </div>
       )}
       {error && <p className="error" style={{ marginTop: 10 }}>{error}</p>}
@@ -251,7 +232,12 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
             </div>
             {category.phrases.map((phrase, row) => (
               <div className="lora-row" key={row}>
-                <input type="text" aria-label="문구" value={phrase.text} maxLength={200} onChange={(event) => setPhrase(index, row, { text: event.target.value })} style={{ flex: 1, minWidth: 0 }} />
+                <input type="text" aria-label="문구" value={phrase.text} maxLength={1000} onChange={(event) => setPhrase(index, row, { text: event.target.value })} style={{ flex: 1, minWidth: 0 }} />
+                <select aria-label="어울리는 성별" title="어울리는 성별 (성별 항목을 쓸 때, 다른 성별의 조합에는 이 문구를 쓰지 않습니다)" value={phrase.for ?? ""} onChange={(event) => setPhrase(index, row, { for: event.target.value || undefined })} style={{ width: 76 }}>
+                  <option value="">공통</option>
+                  <option value="woman">여성</option>
+                  <option value="man">남성</option>
+                </select>
                 <input type="number" aria-label="가중치" title="가중치" min={0} max={100} step={0.5} value={phrase.weight} onChange={(event) => setPhrase(index, row, { weight: Number(event.target.value) })} />
                 <button className="icon-btn" type="button" aria-label="문구 지우기" onClick={() => setCategory(index, { phrases: category.phrases.filter((_, at) => at !== row) })}>
                   <Trash2 size={15} />
@@ -278,19 +264,32 @@ export default function ImageRandom({ props, loras, upscale, size, count, model,
           <button className="btn" type="button" onClick={exportPool} title="저장된 풀을 JSON 파일로 내려받습니다.">
             <Download size={15} /> 내보내기
           </button>
-          <label className="btn" title="JSON 파일로 풀을 통째로 바꿉니다.">
+          <button className="btn" type="button" title="JSON 파일로 풀을 통째로 바꿉니다." onClick={() => setBrowsing(true)}>
             <Upload size={15} /> 가져오기
-            <input type="file" accept=".json,application/json" hidden onChange={(event) => { void importPool(event.target.files?.[0]); event.target.value = ""; }} />
-          </label>
+          </button>
         </div>
       </details>
     </div>
     <div className="modal-foot">
       <button className="btn" type="button" onClick={onClose}>
-        닫기
+        취소
+      </button>
+      <button className="btn primary" type="button" disabled={working !== "" || prompts.filter((text) => text.trim()).length === 0} title={prompts.length === 0 ? "먼저 조합을 뽑고 프롬프트 만들기를 누르세요." : undefined} onClick={() => onSave(prompts.map((text) => text.trim()).filter(Boolean))}>
+        <Save size={15} /> 저장
       </button>
     </div>
     </div>
+    {browsing && (
+      <FileNavigator
+        title="풀 가져오기"
+        accept={[".json"]}
+        onClose={() => setBrowsing(false)}
+        onPick={(path) => {
+          setBrowsing(false);
+          void importPool(path);
+        }}
+      />
+    )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { Save, Wand2 } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useState } from "react";
 import { DIRECTION_PRESETS } from "../../shared/presets.mjs";
 import { ApiError } from "../api";
@@ -51,7 +52,7 @@ export default function SynopsisSection({ project, onChanged, notify }: SectionP
             <label htmlFor="story-preset">연출 스타일</label>
             <select id="story-preset" value={chosenPreset} onChange={(event) => setPreset(event.target.value)}>
               <option value="">(정하지 않음)</option>
-              {DIRECTION_PRESETS.map((item) => (
+              {ascending(DIRECTION_PRESETS, (item) => item.label).map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.label}
                 </option>

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { QWENVL, H3, h3Frames, h3Graph, h3Prompt, h3RefGraph, kreaGraph, pickKreaModels } from "../server/engine/graphs.mjs";
+import { QWENVL, H3, flux2EditGraph, h3Frames, h3Graph, h3Prompt, h3RefGraph, kreaGraph, kreaIdentityGraph, pickKreaModels } from "../server/engine/graphs.mjs";
 import { outsideRoots, promptsOf, runTool, splitSpeech } from "../server/engine/tools.mjs";
 import { applyOverrides, loadApiWorkflow, missingModels, missingNodes, outputNode, patchWorkflow, WorkflowError } from "../server/engine/workflow-patch.mjs";
 import { fakeComfy } from "./helpers/fake-comfy.mjs";
@@ -325,6 +325,46 @@ test("Krea 2 + Pose: the skeleton picture goes through the pose LoRA nodes, a mi
   }
 });
 
+test("ControlNet with Z-Image Turbo or Qwen Image 2512: the control map and the patch are wired in, a missing patch file is reported", async () => {
+  const nodes = {
+    UNETLoader: loader("unet_name", ["z_image_turbo_bf16.safetensors", "qwen_image_2512_fp8_e4m3fn.safetensors"]),
+    CLIPLoader: loader("clip_name", ["qwen_3_4b.safetensors", "qwen_2.5_vl_7b_fp8_scaled.safetensors"]),
+    VAELoader: loader("vae_name", ["ae.safetensors", "qwen_image_vae.safetensors"]),
+    LoraLoaderModelOnly: loader("lora_name", ["Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors"]),
+    ModelPatchLoader: loader("name", ["Z-Image-Turbo-Fun-Controlnet-Union-2.1.safetensors", "qwen_image_depth_diffsynth_controlnet-fp8.safetensors"]),
+    ZImageFunControlnet: { input: { required: {} } },
+    QwenImageDiffsynthControlnet: { input: { required: {} } },
+    DWPreprocessor: { input: { required: {} } },
+    DepthAnythingV2Preprocessor: { input: { required: {} } },
+    Canny: { input: { required: {} } },
+  };
+  const comfy = await fakeComfy({ nodes, outputs: { 10: { images: [{ filename: "c.png", type: "temp" }] } }, files: { "c.png": Buffer.from("CN") } });
+  const dir = await tmp();
+  try {
+    const source = path.join(dir, "s.png");
+    const out = path.join(dir, "assets", "images", "c.png");
+    await writeFile(source, "IMG");
+    const z = await run("comfyui_controlnet", { model: "zimage-turbo", control: "pose", control_image_path: source, prompt: "a knight", output_path: out, seed: 1 }, comfy);
+    assert.equal(z.ok, true, JSON.stringify(z));
+    const zg = comfy.seen.prompts[0];
+    assert.equal(zg[42].class_type, "DWPreprocessor");
+    assert.equal(zg[45].class_type, "ZImageFunControlnet");
+    assert.equal(zg[45].inputs.strength, 1);
+    assert.deepEqual(zg[8].inputs.model, ["45", 0], "the sampler uses the patched model");
+    const q = await run("comfyui_controlnet", { model: "qwen-image-2512", control: "depth", control_image_path: source, prompt: "a knight", output_path: out }, comfy);
+    assert.equal(q.ok, true, JSON.stringify(q));
+    const qg = comfy.seen.prompts[1];
+    assert.equal(qg[44].inputs.name, "qwen_image_depth_diffsynth_controlnet-fp8.safetensors");
+    assert.equal(qg[45].inputs.strength, 0.6);
+    assert.deepEqual(qg[9].inputs.model, ["45", 0]);
+    assert.equal((await run("comfyui_controlnet", { model: "qwen-image-2512", control: "pose", control_image_path: source, prompt: "x", output_path: out }, comfy)).code, "unavailable", "Qwen has no pose ControlNet file");
+    assert.equal((await run("comfyui_controlnet", { model: "nope", control: "depth", control_image_path: source, prompt: "x", output_path: out }, comfy)).code, "bad_input");
+  } finally {
+    comfy.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("Krea image: models are picked from ComfyUI, overrides add a LoRA, the result is saved", async () => {
   const comfy = await fakeComfy({
     nodes: { UNETLoader: loader("unet_name", ["Krea\\krea2_turbo_nvfp4.safetensors"]), CLIPLoader: loader("clip_name", ["Qwen\\qwen3vl_4b_fp8_scaled.safetensors"]), VAELoader: loader("vae_name", ["qwen\\qwen_image_vae.safetensors"]) },
@@ -382,8 +422,8 @@ test("H3 video: pictures are crop-fitted and uploaded, first/last/audio reach th
     // The temporary files next to the result are gone.
     await assert.rejects(stat(path.join(dir, "assets", "video", "c.lo.mp4")));
     await assert.rejects(stat(path.join(dir, "assets", "video", "c.first.png")));
-    // Without a first image there is nothing to animate.
-    const missing = await run("h3_local_video", { prompt: "x", output_path: out }, { url: "http://127.0.0.1:9" });
+    // A first image that is named but missing is rejected (without any picture the clip is plain text to video).
+    const missing = await run("h3_local_video", { prompt: "x", reference_image_path: path.join(dir, "nope.png"), output_path: out }, { url: "http://127.0.0.1:9" });
     assert.equal(missing.code, "bad_input");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -809,4 +849,61 @@ test("H3 video: a chained clip starts from the last frame of the clip before; a 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("ref graph, tiled profile: Pika LoRA for the small steps, the last DMD step in tiles on the upscaled latent, guides at the final size", () => {
+  const graph = h3RefGraph({ prompt: "p", seed: 1, model: "deno", twoStage: true, tiled: true, width: 640, height: 352, first: "a.png", firstFull: "a-full.png" });
+  assert.equal(graph[22].inputs.lora_name, H3.pikaLora);
+  assert.equal(graph[86].inputs.lora_name, H3.denoLora);
+  assert.equal(graph[83].inputs.width, 1280);
+  assert.equal(graph[53].class_type, "DenoMiniMaxH3TiledSampler");
+  assert.deepEqual(graph[53].inputs.latent, ["83", 0]);
+  assert.deepEqual(graph[67].inputs.latent, ["83", 0]);
+  assert.deepEqual(graph[12].inputs.samples, ["89", 0]);
+  assert.equal(h3RefGraph({ prompt: "p", seed: 1, model: "deno" })[22].inputs.lora_name, H3.denoLora);
+});
+
+test("video graphs: extra LoRAs are chained after the model's own, the tile values reach the tiled sampler", () => {
+  const loras = [{ name: "a.safetensors", strength: 0.5 }, { name: "b.safetensors" }];
+  const local = h3Graph({ prompt: "p", seed: 1, loras });
+  assert.deepEqual(local[9200].inputs.model, ["16", 0]);
+  assert.equal(local[9201].inputs.strength_model, 1);
+  assert.deepEqual(local[10].inputs.model, ["9201", 0]);
+  assert.deepEqual(h3Graph({ prompt: "p", seed: 1 })[10].inputs.model, ["16", 0]);
+  const tiled = h3RefGraph({ prompt: "p", seed: 1, model: "deno", twoStage: true, tiled: true, loras, tile: { width: 640, overlapY: 128 } });
+  assert.deepEqual(tiled[23].inputs.model, ["9201", 0]);
+  assert.deepEqual(tiled[87].inputs.model, ["9301", 0]);
+  assert.equal(tiled[53].inputs.tile_width, 640);
+  assert.equal(tiled[53].inputs.tile_height, 704);
+  assert.equal(tiled[53].inputs.overlap_y, 128);
+});
+
+test("tiled graph: the steps of both stages follow the inputs, motion context is added to both stages", () => {
+  const graph = h3RefGraph({ prompt: "p", seed: 1, model: "deno", twoStage: true, tiled: true, steps: 4, finalSteps: 2, width: 640, height: 352, saveLatent: "vsom_latents/x", motion: { video: "prev.mp4", total: 100, latent: "lo.safetensors", latentFull: "full.safetensors" } });
+  assert.equal(graph[81].inputs.sigmas.split(",").length, 5);
+  assert.equal(graph[81].inputs.sigmas.split(",").at(-1).trim(), "0");
+  assert.equal(h3RefGraph({ prompt: "p", seed: 1, model: "deno", twoStage: true, tiled: true })[81].inputs.sigmas, H3.tiledSigmas);
+  assert.equal(graph[50].inputs.step, 6);
+  assert.equal(graph[74].inputs.latent_path, "lo.safetensors");
+  assert.equal(graph[104].inputs.latent_path, "full.safetensors");
+  assert.deepEqual(graph[105].inputs.latent, ["83", 0]);
+  assert.equal(graph[102].inputs.width, 1280);
+  assert.deepEqual(graph[53].inputs.positive, ["105", 0]);
+  assert.deepEqual(graph[76].inputs.trim_frames, ["105", 1]);
+  assert.deepEqual(graph[90].inputs.latent, ["11", 1]);
+  assert.equal(graph[79].class_type, "DenoTextEncoderUnload");
+  assert.equal(graph[80].class_type, "MiniMaxH3MotionContextSaveLatent");
+  assert.equal(graph[90].inputs.filename_prefix, "vsom_latents/x_lo");
+});
+
+test("edit graphs: LoRAs of the screen are chained after the model's own", () => {
+  const loras = [{ name: "a.safetensors", strength: 0.6 }, { name: "b.safetensors" }];
+  const krea = kreaIdentityGraph({ images: ["a.png"], prompt: "p", seed: 1, models: { unet: "u", clip: "c", vae: "v" }, lora: "identity.safetensors", loras });
+  assert.deepEqual(krea[9200].inputs.model, ["10", 0]);
+  assert.deepEqual(krea[11].inputs.model, ["9201", 0]);
+  assert.equal(krea[9200].inputs.strength_model, 0.6);
+  assert.deepEqual(kreaIdentityGraph({ images: ["a.png"], prompt: "p", seed: 1, models: { unet: "u", clip: "c", vae: "v" }, lora: "i" })[11].inputs.model, ["10", 0]);
+  const flux = flux2EditGraph({ images: ["a.png"], prompt: "p", seed: 1, models: { unet: "u", clip: "c", vae: "v" }, loras });
+  assert.deepEqual(flux[6].inputs.model, ["9201", 0]);
+  assert.deepEqual(flux2EditGraph({ images: ["a.png"], prompt: "p", seed: 1, models: { unet: "u", clip: "c", vae: "v" } })[6].inputs.model, ["1", 0]);
 });

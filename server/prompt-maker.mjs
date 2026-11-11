@@ -6,8 +6,28 @@ import { askLlm } from "./llm.mjs";
 
 const read = (name) => readFile(new URL(`./prompts/${name}`, import.meta.url), "utf8");
 
+/**
+ * A system prompt followed by the user's prompt guides (server/prompts/guides, copied from the ComfyUI "Prompt Guide" folder), so
+ * every prompt of that model is written with them. The guides are reference material: the rules and output format above them win.
+ */
+const withGuides = async (name, guides) => {
+  const texts = await Promise.all(guides.map((guide) => read(`guides/${guide}`)));
+  return `${await read(name)}\n\n---\nREFERENCE GUIDES (the user's own notes on this model; follow their advice, but the rules and the output format above win, and never copy their example text):\n\n${texts.join("\n\n---\n\n")}`;
+};
+const KREA_GUIDES = ["krea2-guide.md"];
+const H3_GUIDES = ["h3-prompt-spec.md", "h3-no-chinese-speech.md"];
+
 /** The bundled system prompt of the character-sheet maker (used while the setting `llm.sheetPrompt` is empty). */
 export const defaultSheetPrompt = () => read("character-sheet.md");
+
+/** The system prompt of an image prompt by the model that will draw it (ids of shared/imageModels.mjs); Krea 2 (with its guide) when unknown. */
+const imageSystem = (model) => {
+  const id = String(model ?? "");
+  if (id.startsWith("zimage")) return read("image-zimage.md");
+  if (id.startsWith("qwen")) return read("image-qwen.md");
+  if (id.startsWith("flux2")) return read("image-flux2.md");
+  return withGuides("krea-image.md", KREA_GUIDES);
+};
 
 export const TARGETS = ["image", "video", "sfx", "sheet"];
 export const VIDEO_MODES = ["t2v", "i2v", "fl2v", "s2v", "r2v"];
@@ -38,7 +58,7 @@ const serial = (job) => {
  * Writes the prompt for one image, video clip or sound effect from the user's short idea.
  * `ask(system, user)` returns the LLM text (the server passes askLlm bound to the settings; tests pass a fake).
  */
-export async function makePrompt({ target, mode, text, duration, title, firstPrompt, lastPrompt, refs = [], seen = {}, bible = "", sheetSystem = "" }, ask) {
+export async function makePrompt({ target, mode, imageModel, text, duration, title, firstPrompt, lastPrompt, refs = [], seen = {}, bible = "", sheetSystem = "" }, ask) {
   if (!TARGETS.includes(target)) throw new HttpError(400, "만들 대상이 올바르지 않습니다.");
   if (typeof text !== "string" || !text.trim() || text.length > 4000) throw new HttpError(400, "설명은 1~4000자로 입력하세요.");
   // `seen` is what a vision model sees in the real pictures; it beats the prompt a picture was made from (an imported picture has none).
@@ -51,7 +71,7 @@ export async function makePrompt({ target, mode, text, duration, title, firstPro
   ].join("\n");
 
   if (target === "image") {
-    const answer = await serial(async () => ask(await read("krea-image.md"), `IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`));
+    const answer = await serial(async () => ask(await imageSystem(imageModel), `IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`));
     // One paragraph is asked for; anything after a blank line is a remark.
     return answer.split(/\n\s*\n/)[0].trim().replace(/^["“]|["”]$/g, "");
   }
@@ -64,8 +84,8 @@ export async function makePrompt({ target, mode, text, duration, title, firstPro
   const videoMode = VIDEO_MODES.includes(mode) ? mode : "i2v";
   const seconds = snapFrames(Number(duration) > 0 ? Number(duration) : 5).seconds;
   const user = `${MODE_TASKS[videoMode]}\nCLIP LENGTH: ${seconds.toFixed(2)} seconds (24 fps)\n\n${refLines ? `REFERENCES (in this order):\n${refLines}\n\n` : ""}IDEA:\n${text.trim()}${context ? `\n\nCONTEXT:\n${context}` : ""}`;
-  if (videoMode === "r2v") return referenceVideoPrompt(await serial(async () => ask(await read("h3-ref-video.md"), user)));
-  const answer = await serial(async () => ask(await read("h3-video.md"), user));
+  if (videoMode === "r2v") return referenceVideoPrompt(await serial(async () => ask(await withGuides("h3-ref-video.md", H3_GUIDES), user)));
+  const answer = await serial(async () => ask(await withGuides("h3-video.md", H3_GUIDES), user));
   // The music field is the last one; a remark after its paragraph is dropped.
   const start = Math.max(0, answer.indexOf("integrated_multimodal_description:"));
   const music = answer.indexOf("non_diegetic_music:", start);

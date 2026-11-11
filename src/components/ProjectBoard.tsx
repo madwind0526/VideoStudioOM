@@ -50,35 +50,47 @@ export default function ProjectBoard({ kicker, title, subtitle, action, projects
     return [...list].sort(compareProjects(sort));
   }, [projects, tab, sort, query]);
 
+  const toolbar = (
+    <>
+      <label className="search">
+        <Search size={14} />
+        <input value={query} placeholder="프로젝트 검색" aria-label="프로젝트 검색" onChange={(event) => setQuery(event.target.value)} />
+      </label>
+      <SortBar options={sortOptions(sort)} value={sort.group} onChange={(group) => setSort((current) => nextSort(current, group))} />
+    </>
+  );
+  // Without tabs the search and the sort buttons share the row of the subtitle; with tabs they stay at the end of the tab row.
+  const inHead = tabs.length <= 1;
+
   return (
     <>
-      <div className="page-head">
+      <div className="page-head tight">
         <div>
           <div className="kicker">{kicker}</div>
           <h1>
             {title}
             <span className="count">{projects.length}</span>
           </h1>
-          <p className="sub">{subtitle}</p>
         </div>
         {action}
       </div>
+      <div className="sub-row">
+        <p className="sub">{subtitle}</p>
+        {inHead && <div className="sub-tools">{toolbar}</div>}
+      </div>
 
-      <div className="tabs" role="tablist">
-        {tabs.length > 1 &&
-          tabs.map(({ id, label }) => (
+      {!inHead && (
+        <div className="tabs" role="tablist">
+          {tabs.map(({ id, label }) => (
             <button key={id} className="tab" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
               {label}
               <span className="count">{counts[id]}</span>
             </button>
           ))}
-        <span className="spacer" />
-        <label className="search">
-          <Search size={14} />
-          <input value={query} placeholder="프로젝트 검색" aria-label="프로젝트 검색" onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <SortBar options={sortOptions(sort)} value={sort.group} onChange={(group) => setSort((current) => nextSort(current, group))} />
-      </div>
+          <span className="spacer" />
+          {toolbar}
+        </div>
+      )}
 
       {visible.length === 0 ? (
         <div className="empty">

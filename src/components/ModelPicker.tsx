@@ -2,6 +2,7 @@ import { SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { changedSampling, IMAGE_MODELS, modelsFor, SAMPLING_FIELDS } from "../../shared/imageModels.mjs";
 import { api } from "../api";
+import { ascending } from "../sortOptions";
 
 export type Kind = "t2i" | "i2i" | "r2i";
 type Values = Record<string, number | string>;
@@ -40,8 +41,9 @@ const write = (state: ReturnType<typeof read>) => {
 };
 
 /** The model list of one tab ("모델 [목록] [고급]") and what it chose; the choice is remembered per tab and model. */
-export function useModelChoice(kind: Kind): ModelChoice {
-  const models = modelsFor(kind) as typeof IMAGE_MODELS;
+export function useModelChoice(kind: Kind, accept?: (model: { tool: string; input?: unknown }) => boolean): ModelChoice {
+  const listed = modelsFor(kind) as typeof IMAGE_MODELS;
+  const models = (accept ? listed.filter(accept) : listed) as typeof IMAGE_MODELS;
   const [state, setState] = useState(read);
   const [open, setOpen] = useState(false);
   const model = models.find((item) => item.id === state.model[kind]) ?? models[0];
@@ -56,10 +58,10 @@ export function useModelChoice(kind: Kind): ModelChoice {
 
   const picker = (
     <div className="field" style={{ marginTop: 14 }}>
-      <label htmlFor={`model-${kind}`}>모델</label>
+      <label htmlFor={`model-${kind}${accept ? "-sheet" : ""}`}>모델</label>
       <div className="row" style={{ gap: 8 }}>
-        <select id={`model-${kind}`} value={model.id} onChange={(event) => save({ ...state, model: { ...state.model, [kind]: event.target.value } })} style={{ flex: 1, minWidth: 0 }}>
-          {models.map((item) => (
+        <select id={`model-${kind}${accept ? "-sheet" : ""}`} value={model.id} onChange={(event) => save({ ...state, model: { ...state.model, [kind]: event.target.value } })} style={{ flex: 1, minWidth: 0 }}>
+          {ascending(models, (item) => item.label).map((item) => (
             <option key={item.id} value={item.id}>
               {item.label}
             </option>
@@ -109,7 +111,7 @@ function AdvancedDialog({ model, values, onChange, onClose }: { model: (typeof I
                   <input id={`adv-${field.key}`} type="number" min={field.min} max={field.max} step={field.step} value={show(field.key)} onChange={(event) => set(field.key, event.target.value === "" ? defaults[field.key] : Number(event.target.value))} />
                 ) : (
                   <select id={`adv-${field.key}`} value={String(show(field.key))} onChange={(event) => set(field.key, event.target.value)}>
-                    {[...new Set([String(defaults[field.key]), ...(field.type === "sampler" ? lists.samplers : lists.schedulers)])].map((name) => (
+                    {ascending([...new Set([String(defaults[field.key]), ...(field.type === "sampler" ? lists.samplers : lists.schedulers)])], (name) => name).map((name) => (
                       <option key={name} value={name}>
                         {name}
                       </option>

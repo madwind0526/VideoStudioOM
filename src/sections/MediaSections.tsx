@@ -5,6 +5,7 @@ import { ApiError, mediaUrl, type MediaFile } from "../api";
 import VersionDialog from "../components/VersionDialog";
 import VideoPlayer from "../components/VideoPlayer";
 import GenerateForm from "../components/GenerateForm";
+import { peekHandoff } from "../handoff";
 import JobList from "../components/JobList";
 import JoinDialog from "../components/JoinDialog";
 import Lightbox from "../components/Lightbox";
@@ -410,7 +411,7 @@ export function AudioSection(props: SectionProps) {
 
 /** The project's videos: clips made from consecutive image pairs, joined into the finished video. */
 export function VideosSection(props: SectionProps) {
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(() => peekHandoff("video") !== null);
   const [joining, setJoining] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
   const [playing, setPlaying] = useState<string | null>(null);

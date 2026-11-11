@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { LLM_PROVIDERS } from "../../shared/settings.mjs";
 import type { FieldDef } from "../fields";
 
@@ -41,7 +42,7 @@ function ChainEditor({ value, onChange }: { value: string[]; onChange: (next: st
       {unused.length > 0 && (
         <select aria-label="LLM 추가" value="" onChange={(event) => event.target.value && onChange([...value, event.target.value])}>
           <option value="">+ 추가</option>
-          {unused.map((provider) => (
+          {ascending(unused, (provider) => provider).map((provider) => (
             <option key={provider} value={provider}>
               {provider}
             </option>
@@ -59,7 +60,7 @@ export default function SettingField({ field, value, onChange, error, badge, onR
     case "select":
       control = (
         <select id={id} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
-          {field.options?.map((option) => (
+          {field.options && ascending(field.options, (option) => (option.value === "" ? "" : option.label)).map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>

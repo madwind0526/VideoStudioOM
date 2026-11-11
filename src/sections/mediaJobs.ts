@@ -1,7 +1,7 @@
 import { resolveSize } from "../../shared/settings.mjs";
 import { api, type Settings } from "../api";
 
-export type MakeKind = "image" | "sheet" | "voice" | "sfx" | "instrumental" | "vocal" | "i2v" | "fl2v" | "s2v" | "r2v";
+export type MakeKind = "image" | "sheet" | "voice" | "sfx" | "instrumental" | "vocal" | "t2v" | "i2v" | "fl2v" | "s2v" | "r2v";
 
 /** What a script section sounds like. Dialogue is read by TTS; the other three are made by SongYUE2. */
 export type AudioKind = "dialogue" | "sfx" | "instrumental" | "vocal";
@@ -72,6 +72,8 @@ export interface Recipe {
   imageModel?: string;
   /** The sampling values that differ from the model's defaults (steps, cfg, sampler_name, scheduler), kept so that making it again uses them. */
   sampling?: Record<string, number | string>;
+  /** How a video is made: the method (tiled R2V or local, the settings say when missing) and its advanced options. */
+  video?: VideoMethod;
   /** With editRefs: keep the people of the references ("person", default) or only take their style, colours and mood ("style"). */
   refMode?: RefMode;
   /** A picture whose pose the new picture follows (used with editRefs). */
@@ -79,6 +81,20 @@ export interface Recipe {
 }
 
 export type RefMode = "person" | "style";
+
+/** The way a video is made and the advanced options of it; every value is optional (the workflow defaults apply). */
+export interface VideoMethod {
+  tiled?: boolean;
+  /** Local only: sampling steps. */
+  steps?: number;
+  /** Tiled only: the steps of the small first stage (6) and of the last stage in tiles (1). */
+  tiledSteps?: number;
+  finalSteps?: number;
+  seed?: number;
+  /** Tiled only: the size and the overlap of the tiles of the last step. */
+  tile?: { width?: number; height?: number; overlapX?: number; overlapY?: number };
+  loras?: SceneLora[];
+}
 
 export interface MakeItem {
   tool: string;
@@ -96,7 +112,7 @@ export const stamp = () => new Date().toISOString().replace(/\D/g, "").slice(2, 
 /** Reads a stored record back as a recipe, or null when it is missing or from another version. */
 export function recipeOf(record: Record<string, unknown> | null | undefined): Recipe | null {
   if (!record || typeof record.prompt !== "string") return null;
-  return ["image", "sheet", "voice", "sfx", "instrumental", "vocal", "i2v", "fl2v", "s2v", "r2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
+  return ["image", "sheet", "voice", "sfx", "instrumental", "vocal", "t2v", "i2v", "fl2v", "s2v", "r2v"].includes(String(record.kind)) ? (record as unknown as Recipe) : null;
 }
 
 /** The prompt of a picture made from reference pictures: <image1> is the empty canvas, the references follow. */
@@ -110,8 +126,42 @@ export const editPrompt = (text: string, count: number, mode: RefMode = "person"
   return `Fill <image1> with a completely new picture. ${keep}${posing} ${text}`;
 };
 
+/** The project image models that the shared T2I tool makes (the ids of shared/imageModels.mjs). */
+const T2I_MODELS: string[] = ["zimage-turbo", "qwen-image-2512", "flux2-klein"];
+
 /** The job for one recipe, built from the current settings. The result goes to `output` (a project-relative path). */
 export function makeItem(settings: Settings, recipe: Recipe, output: string): MakeItem | string {
+  const item = buildItem(settings, recipe, output);
+  if (typeof item === "string" || (item.tool !== "h3_local_video" && item.tool !== "h3_reference_video")) return item;
+  const method = recipe.video ?? {};
+  const tiled = method.tiled ?? settings.video.tiled;
+  const made = tiled ? tiledItem(item, resolveSize(settings)) : item;
+  const inputs: Record<string, unknown> = { ...made.inputs };
+  if (!tiled && method.steps) inputs.steps = method.steps;
+  if (tiled && method.tiledSteps) inputs.steps = method.tiledSteps;
+  if (tiled && method.finalSteps) inputs.final_steps = method.finalSteps;
+  if (method.seed !== undefined) inputs.seed = method.seed;
+  if (tiled && method.tile && Object.keys(method.tile).length > 0) inputs.tile = method.tile;
+  const loras = (method.loras ?? []).filter((lora) => lora.name.trim());
+  if (loras.length > 0) inputs.loras = loras;
+  return { ...made, inputs, record: { ...made.record, video: { ...method, tiled } } };
+}
+
+/**
+ * The same clip made with the tiled R2V workflow (h3_reference_video, tiled): width and height are the FINAL size, the tool makes it in
+ * two stages and no RTX pass is needed. Motion continuation works there too (the tool saves the latents of both stages next to the clip).
+ */
+function tiledItem(item: MakeItem, size: ReturnType<typeof resolveSize>): MakeItem {
+  const { reference_image_path: first, upscale: _upscale, upscale_scale: _scale, ...rest } = item.inputs;
+  const inputs: Record<string, unknown> = { ...rest, tiled: true, width: size.final[0], height: size.final[1], final_size: size.final };
+  if (item.tool === "h3_local_video") {
+    if (first) inputs.first_frame_path = first;
+    else if (!inputs.first_frame_video_path) inputs.text_only = true;
+  }
+  return { ...item, tool: "h3_reference_video", inputs };
+}
+
+function buildItem(settings: Settings, recipe: Recipe, output: string): MakeItem | string {
   const size = resolveSize(settings);
   const text = recipe.prompt.trim();
   if (!text) return recipe.kind === "voice" ? "읽을 대사를 입력하세요." : "내용을 입력하세요.";
@@ -133,11 +183,21 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
       inputs: { prompt: editPrompt(text, refs.length, recipe.refMode, Boolean(recipe.pose)), blank_canvas: true, reference_image_paths: recipe.pose ? [...refs, recipe.pose] : refs, width: size.image[0], height: size.image[1], ...(recipe.sampling ?? {}), output_path: output },
     };
   }
+  const netMatch = recipe.imageModel ? /^(zimage|qwen)-(pose|depth|canny)$/.exec(recipe.imageModel) : null;
+  if (recipe.kind === "image" && recipe.controlFrom && netMatch) {
+    return { tool: "comfyui_controlnet", label: text, record: recipe, inputs: { model: netMatch[1] === "zimage" ? "zimage-turbo" : "qwen-image-2512", control: netMatch[2], prompt: text, control_image_path: recipe.controlFrom, ...(recipe.sampling ?? {}), output_path: output } };
+  }
   if (recipe.kind === "image" && recipe.controlFrom && (recipe.imageModel === "krea2-pose" || recipe.imageModel === "krea2-depth")) {
     return { tool: "comfyui_krea_control", label: text, record: recipe, inputs: { control: recipe.imageModel === "krea2-pose" ? "pose" : "depth", prompt: text, control_image_path: recipe.controlFrom, ...(recipe.sampling ?? {}), output_path: output } };
   }
-  if (recipe.kind === "image" && recipe.imageModel && recipe.imageModel !== "krea2-turbo") {
-    return { tool: "comfyui_t2i", label: text, record: recipe, inputs: { model: recipe.imageModel, prompt: text, width: size.image[0], height: size.image[1], ...(recipe.sampling ?? {}), output_path: output } };
+  // A picture without a model of its own is made with the project's image model (Krea 2 Turbo has its own tool and LoRAs).
+  const imageModel = recipe.imageModel ?? (T2I_MODELS.includes(settings.defaults.imageModel) || settings.defaults.imageModel === "h3-still" ? settings.defaults.imageModel : undefined);
+  // H3 still: a 5-frame H3 clip of which the first frame is kept.
+  if (recipe.kind === "image" && imageModel === "h3-still") {
+    return { tool: "h3_still", label: text, record: { ...recipe, imageModel }, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, output_path: output } };
+  }
+  if (recipe.kind === "image" && imageModel && imageModel !== "krea2-turbo") {
+    return { tool: "comfyui_t2i", label: text, record: { ...recipe, imageModel }, inputs: { model: imageModel, prompt: text, width: size.image[0], height: size.image[1], ...(recipe.sampling ?? {}), output_path: output } };
   }
   if (recipe.kind === "image") {
     return { tool: "comfyui_krea_image", label: text, record: recipe, inputs: { prompt: text, width: size.image[0], height: size.image[1], ...sceneLoras, ...(recipe.sampling ?? {}), output_path: output } };
@@ -159,15 +219,17 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     if (!lyrics) return "가사를 입력하세요.";
     return { tool: "songyue_music", label: text, record: recipe, inputs: { prompt: text, lyrics, output_path: output } };
   }
+  // A clip made from a reference video without a length of its own takes the length and the shape of that video.
+  const fromVideo = recipe.kind === "r2v" && Boolean(recipe.refVideo) && recipe.duration === undefined;
   const duration = recipe.duration ?? 5;
-  if (!(duration >= 2 && duration <= 15)) return "길이는 2~15초로 입력하세요.";
+  if (!fromVideo && !(duration >= 2 && duration <= 15)) return "길이는 2~15초로 입력하세요.";
   // Only the RTX pass is wired to the tool; other settings mean "no enlargement" for now.
   const upscale = settings.video.upscale === "rtx-2pass" && size.final[0] > size.generate[0];
   const inputs: Record<string, unknown> = {
     prompt: text,
     width: size.generate[0],
     height: size.generate[1],
-    duration_seconds: duration,
+    ...(fromVideo ? { fit_video_size: true } : { duration_seconds: duration }),
     upscale,
     upscale_scale: size.final[0] / size.generate[0],
     // The upscale rounds to multiples of 32; the finished clip is cut to exactly the chosen size.
@@ -191,6 +253,8 @@ export function makeItem(settings: Settings, recipe: Recipe, output: string): Ma
     if (recipe.continuedFrom) inputs.first_frame_video_path = recipe.continuedFrom;
     return { tool: "h3_reference_video", label: text, record: recipe, inputs };
   }
+  // Text only: no first picture, the clip is drawn from the prompt.
+  if (recipe.kind === "t2v") return { tool: "h3_local_video", label: text, record: recipe, inputs };
   // A clip that continues the one before starts from its last frame instead of a picture of its own (not fl2v: that one shares a picture).
   const motion = settings.video.continueMode === "motion" && recipe.kind !== "fl2v";
   if (!recipe.first && !(recipe.continuedFrom && recipe.kind !== "fl2v")) return "첫 이미지를 고르세요. 이미지가 없으면 이미지 화면에서 먼저 만드세요.";
@@ -235,13 +299,15 @@ export async function startItems(projectId: string, items: MakeItem[]): Promise<
 }
 
 /** Asks the LLM to write a model-ready prompt (Krea 2 for images, MiniMax H3 for video, English for sound effects). */
-export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx" | "sheet"; mode?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string; refs?: string[]; refPaths?: string[]; refVideo?: string }): Promise<string> {
+export async function makePrompt(projectId: string, body: { target: "image" | "video" | "sfx" | "sheet"; mode?: string; imageModel?: string; text: string; duration?: number; hasAudio?: boolean; first?: string; last?: string; refs?: string[]; refPaths?: string[]; refVideo?: string }): Promise<string> {
   const { prompt } = await api<{ prompt: string }>("POST", "/api/prompt", { project: projectId, ...body });
   return prompt;
 }
 
 /** Copies a picture picked in the file browser into the project (assets/images) and returns its project path. */
 export const importImage = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from }).then((data) => data.path);
+/** Copies a video picked in the file browser into the project (assets/video) and returns its project path. */
+export const importVideo = (projectId: string, from: string) => api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, kind: "video" }).then((data) => data.path);
 /** Puts a picture from the file browser at a fixed name of the project (clip number-1 / -2), cut to `size` without stretching. */
 export const importPicture = (projectId: string, from: string, as: string, size: [number, number]) =>
   api<{ path: string }>("POST", `/api/projects/${encodeURIComponent(projectId)}/import`, { from, as, fit: size }).then((data) => data.path);
@@ -283,7 +349,7 @@ export const listCodecs = () => api<{ codecs: { id: string; label: string }[] }>
 /** Rewrites an item's prompt with the prompt maker (images, video clips, non-English sound effects). Items it cannot improve come back unchanged. */
 export async function refineItem(projectId: string, settings: Settings, item: MakeItem, describeRef?: (path: string) => string): Promise<MakeItem> {
   const recipe = item.record;
-  const target = recipe.kind === "image" ? "image" : recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" || recipe.kind === "r2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
+  const target = recipe.kind === "image" ? "image" : recipe.kind === "t2v" || recipe.kind === "fl2v" || recipe.kind === "i2v" || recipe.kind === "s2v" || recipe.kind === "r2v" ? "video" : recipe.kind === "sfx" && /[^\x00-\x7F]/.test(recipe.prompt) ? "sfx" : null;
   if (!target) return item;
   const prompt = await makePrompt(projectId, { target, mode: recipe.kind, text: recipe.prompt, duration: recipe.duration, first: recipe.first ?? recipe.continuedFrom, last: recipe.last, refs: recipe.refs && describeRef ? recipe.refs.map(describeRef) : undefined, refPaths: recipe.refs, refVideo: recipe.refVideo });
   const next = makeItem(settings, { ...recipe, prompt, idea: recipe.prompt }, String(item.inputs.output_path));

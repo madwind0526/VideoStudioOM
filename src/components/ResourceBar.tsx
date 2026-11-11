@@ -9,6 +9,7 @@ const TOOL_LABELS: Record<string, string> = {
   comfyui_krea_image: "이미지 생성 중",
   comfyui_t2i: "이미지 생성 중",
   comfyui_krea_control: "이미지 생성 중",
+  comfyui_controlnet: "이미지 생성 중",
   comfyui_edit_model: "이미지 편집 중",
   comfyui_image_edit: "이미지 편집 중",
   h3_local_video: "영상 생성 중",

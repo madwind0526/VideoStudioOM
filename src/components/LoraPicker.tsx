@@ -1,4 +1,5 @@
 import { Plus, X } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { SceneLora } from "../sections/mediaJobs";
@@ -12,7 +13,7 @@ export function loraFields(loras: SceneLora[]): { recipe: { loras?: SceneLora[] 
 }
 
 /** A check box; checked, rows of LoRA (chosen from the installed ones) and strength, each with + (a row below) and X (remove). Added after the LoRAs of the settings. */
-export default function LoraPicker({ value, onChange }: { value: SceneLora[]; onChange: (next: SceneLora[]) => void }) {
+export default function LoraPicker({ value, onChange, button = false }: { value: SceneLora[]; onChange: (next: SceneLora[]) => void; button?: boolean }) {
   const [names, setNames] = useState<string[]>([]);
   useEffect(() => {
     api<{ loras: string[] }>("GET", "/api/comfy/models").then((data) => setNames(data.loras)).catch(() => {});
@@ -22,16 +23,25 @@ export default function LoraPicker({ value, onChange }: { value: SceneLora[]; on
 
   return (
     <div className="field wide">
-      <label className="row" style={{ gap: 6 }}>
-        <input type="checkbox" checked={value.length > 0} onChange={(event) => onChange(event.target.checked ? [{ name: "", strength: 1 }] : [])} />
-        LoRA 사용 (설정의 LoRA에 더해 적용, 최대 {MAX_LORAS}개)
-      </label>
+      {button ? (
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <button className="btn" type="button" disabled={value.length >= MAX_LORAS} onClick={() => add(value.length - 1)}>
+            <Plus size={14} /> LoRA 추가
+          </button>
+          <span className="hint">최대 {MAX_LORAS}개, 이름을 고르지 않은 줄은 쓰지 않습니다.</span>
+        </div>
+      ) : (
+        <label className="row" style={{ gap: 6 }}>
+          <input type="checkbox" checked={value.length > 0} onChange={(event) => onChange(event.target.checked ? [{ name: "", strength: 1 }] : [])} />
+          LoRA 사용 (설정의 LoRA에 더해 적용, 최대 {MAX_LORAS}개)
+        </label>
+      )}
       {value.map((lora, index) => (
         <div className="lora-row" key={index}>
           <select aria-label="LoRA 이름" value={lora.name} onChange={(event) => update(index, { name: event.target.value })} style={{ flex: 1, minWidth: 0 }}>
             <option value="">LoRA를 고르세요</option>
             {lora.name && !names.includes(lora.name) && <option value={lora.name}>{lora.name}</option>}
-            {names.map((name) => (
+            {ascending(names, (name) => name).map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>

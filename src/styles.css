@@ -429,6 +429,50 @@ p {
   font-size: 13px;
 }
 
+/* The subtitle with the search and the sort buttons of a library page at the end of the same row. */
+.page-head > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The head of a library page whose subtitle row follows below it. */
+.page-head.tight {
+  margin-bottom: 0;
+}
+
+.sub-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 28px;
+}
+
+.sub-row .sub {
+  margin: 0;
+  color: var(--muted-fg);
+  font-size: 13px;
+}
+
+.sub-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-tools .search {
+  margin-bottom: 0;
+}
+
+.sub-tools .search input {
+  width: 170px;
+}
+
+.sub-tools .sortbar {
+  margin: 0;
+}
+
 .count {
   display: inline-block;
   margin-left: 10px;
@@ -3112,6 +3156,7 @@ button.scene-slot:hover .slot-thumb {
 }
 
 .file-navigator-thumb {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3184,4 +3229,170 @@ button.scene-slot:hover .slot-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---------- library menu: sub-items of the sidebar and the prompt library ---------- */
+.nav-sub {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 4px 22px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.nav-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.nav-sub-item.deep {
+  height: 28px;
+  margin-left: 22px;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+
+.nav-sub-item:hover {
+  background: var(--muted);
+}
+
+.nav-sub-item[aria-current="page"] {
+  background: var(--nav-active);
+  color: var(--nav-active-fg);
+  font-weight: 650;
+}
+
+.pl-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.pl-card {
+  position: relative;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--fg);
+  text-align: left;
+}
+
+.pl-main {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pl-tools {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+}
+
+.pl-tools.left {
+  right: auto;
+  left: 16px;
+}
+
+.pl-tools button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.pl-tools button:hover {
+  background: var(--primary);
+}
+
+.pl-card:hover {
+  border-color: var(--primary);
+}
+
+.pl-card strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-fg);
+}
+
+.pl-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pl-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted-fg);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.pl-text {
+  width: 100%;
+  margin-top: 10px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* The image library and the prompt library show their pictures at the same size (200px wide, 4:3). */
+.thumbs.square.lib-grid {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.thumbs.square.lib-grid .media-item > button {
+  aspect-ratio: 4 / 3;
+}
+
+.thumbs.square.lib-grid .media-item img {
+  object-fit: cover;
+}
+
+.pl-tools button.on {
+  color: #facc15;
 }

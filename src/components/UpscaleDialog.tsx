@@ -1,4 +1,5 @@
 import { Maximize2, Square, X } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useEffect, useState } from "react";
 import { api, ApiError, type Job, type MediaFile } from "../api";
 import { defaultUpscaleModel, UPSCALE_WORKFLOWS } from "../../shared/upscale.mjs";
@@ -105,7 +106,7 @@ export default function UpscaleDialog({ projectId = "", file, jobs = NO_JOBS, no
                   setModel(defaultUpscaleModel(event.target.value, choices[event.target.value] ?? []));
                 }}
               >
-                {UPSCALE_WORKFLOWS.map((item) => (
+                {ascending(UPSCALE_WORKFLOWS, (item) => item.label).map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label}
                   </option>
@@ -121,7 +122,7 @@ export default function UpscaleDialog({ projectId = "", file, jobs = NO_JOBS, no
               ) : (
                 <select id="up-model" value={model} disabled={state !== "form"} onChange={(event) => setModel(event.target.value)}>
                   {names.length === 0 && <option value="">(모델 없음)</option>}
-                  {names.map((name) => (
+                  {ascending(names, (name) => name).map((name) => (
                     <option key={name} value={name}>
                       {name}
                     </option>

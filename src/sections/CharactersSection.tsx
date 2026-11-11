@@ -1,4 +1,5 @@
 import { ImagePlus, Plus, RotateCcw, Save, Trash2, UserRound, Wand2, X } from "lucide-react";
+import { ascending } from "../sortOptions";
 import { useState } from "react";
 import { DIRECTION_PRESETS } from "../../shared/presets.mjs";
 import { ApiError, mediaUrl } from "../api";
@@ -141,7 +142,7 @@ export default function CharactersSection({ project, detail, view, jobs, onJobsC
               <span>연출 스타일 (영상 전체)</span>
               <select value={bible.preset ?? ""} onChange={(event) => set({ preset: event.target.value })}>
                 <option value="">(정하지 않음)</option>
-                {DIRECTION_PRESETS.map((item) => (
+                {ascending(DIRECTION_PRESETS, (item) => item.label).map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label}
                   </option>

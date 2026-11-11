@@ -1,4 +1,4 @@
-import { Dices, Images, Sparkles, Wand2 } from "lucide-react";
+import { Dices, FileText, Images, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError, mediaUrl, type MediaFile, type ProjectSettingsView, type ProjectSummary } from "../api";
 import JobList from "../components/JobList";
@@ -9,28 +9,35 @@ import SizePicker from "../components/SizePicker";
 import UpscaleDialog from "../components/UpscaleDialog";
 import { samplingInputs, useModelChoice } from "../components/ModelPicker";
 import { UPSCALE_WORKFLOWS } from "../../shared/upscale.mjs";
-import { useImageSize } from "../imageSizes";
+import { clearHandoff, peekHandoff } from "../handoff";
+import { sizeFromPrompt, useImageSize } from "../imageSizes";
 import { ItemTools, useVersionDialog } from "../sections/MediaSections";
 import LoraPicker, { loraFields } from "../components/LoraPicker";
 import { makePrompt, startItems, stamp, withUpscale, type MakeItem, type SceneLora, type UpscaleHow } from "../sections/mediaJobs";
 import type { SectionProps } from "../sections/types";
 import { useJobs, useProjectDetail } from "../useProject";
 import ImageRandom from "./ImageRandom";
+import PromptPick from "./PromptPick";
 import ImageEdit from "./ImageEdit";
 import ImageRef from "./ImageRef";
+import ImageSheet from "./ImageSheet";
 import ImageVary from "./ImageVary";
 
 /** The id of the image library: a hidden project (see server/projects.mjs ensureHidden), so jobs, versions and records work as in any project. */
 const LIBRARY = "_images";
 
 
+type Tab = "make" | "vary" | "ref" | "sheet";
+const TITLES: Record<Tab, string> = { make: "이미지 생성", vary: "이미지 편집", ref: "참조후 재생성", sheet: "캐릭터 시트" };
+
 interface Props {
+  tab: Tab;
   jobTick: number;
   notify: (text: string) => void;
 }
 
 /** The image menu: pictures that belong to no project, made N at a time (more ways to make them follow, see todo.md). */
-export default function ImagesPage({ jobTick, notify }: Props) {
+export default function ImagesPage({ tab, jobTick, notify }: Props) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [view, setView] = useState<ProjectSettingsView | null>(null);
   const [error, setError] = useState("");
@@ -53,14 +60,15 @@ export default function ImagesPage({ jobTick, notify }: Props) {
 
   if (error) return <p className="error" style={{ padding: 24 }}>{error}</p>;
   if (!project) return <p className="muted" style={{ padding: 24 }}>이미지 보관함을 여는 중입니다...</p>;
-  return <Library project={project} view={view} jobTick={jobTick} notify={notify} />;
+  return <Library tab={tab} project={project} view={view} jobTick={jobTick} notify={notify} />;
 }
 
-function Library({ project, view, jobTick, notify }: { project: ProjectSummary; view: ProjectSettingsView | null; jobTick: number; notify: (text: string) => void }) {
+function Library({ tab, project, view, jobTick, notify }: { tab: Tab; project: ProjectSummary; view: ProjectSettingsView | null; jobTick: number; notify: (text: string) => void }) {
   const { detail, reload } = useProjectDetail(project.id, jobTick);
   const jobs = useJobs(jobTick);
   const [open, setOpen] = useState<string | null>(null);
-  const [tab, setTab] = useState<"make" | "vary" | "ref">("make");
+  // A prompt sent from the prompt library opens its tab filled in and sets the size; nothing starts until the make button is pressed.
+  const [draft] = useState(() => peekHandoff("image"));
   // R2I has two ways: draw with reference pictures (Qwen) or look at one picture and draw it again from a prompt (Krea).
   const [r2i, setR2i] = useState<"refs" | "analyze">("refs");
   const [loras, setLoras] = useState<SceneLora[]>([]);
@@ -69,15 +77,21 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
   const [enlarging, setEnlarging] = useState<string | null>(null);
   const [count, setCount] = useState("4");
   const imageSize = useImageSize();
+  useEffect(() => {
+    if (draft) imageSize.setValue(sizeFromPrompt(draft.prompt));
+    clearHandoff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const favorites = useFavorites(project.id);
   const [order, setOrder] = useState<SortOrder>("time");
   const [browsing, setBrowsing] = useState(false);
 
-  // Size, LoRAs and the upscale: shown just above the make button of every tab.
-  const options = (
+  // Size, LoRAs and the upscale: shown just above the make button of every tab. `sizeOff`: the result takes the size of a picture (image edit).
+  const optionsFor = (sizeOff: boolean) => (
     <div className="gen-options">
         <SizePicker
-        label="이미지 크기"
+        label={sizeOff ? "이미지 크기 (그림1을 따름)" : "이미지 크기"}
+        disabled={sizeOff}
         megapixels={imageSize.value.megapixels}
         aspect={imageSize.value.aspect}
         orientation={imageSize.value.orientation}
@@ -120,6 +134,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
       </div>
     </div>
   );
+  const options = optionsFor(false);
   const images = detail?.media.images ?? [];
   const sorted = sortImages(images, favorites, order);
 
@@ -145,24 +160,16 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
     <div className="page">
       <div className="section">
       <h2>
-        이미지 보관함 <span className="count">{images.length}</span>
+        {TITLES[tab]}
       </h2>
       <span className="hint">프로젝트와 상관없이 만든 그림입니다. 마음에 드는 그림은 나중에 프로젝트의 장면 그림으로 보낼 수 있습니다.</span>
-      <div className="tabs" role="tablist" aria-label="이미지 만들기 방식" style={{ margin: "14px 0" }}>
-        <button className="tab" role="tab" aria-selected={tab === "make"} onClick={() => setTab("make")}>
-          만들기 (T2I)
-        </button>
-        <button className="tab" role="tab" aria-selected={tab === "vary"} onClick={() => setTab("vary")}>
-          분석해서 변주 (I2I)
-        </button>
-        <button className="tab" role="tab" aria-selected={tab === "ref"} onClick={() => setTab("ref")}>
-          참조로 만들기 (R2I)
-        </button>
-      </div>
+      <div style={{ height: 14 }} />
       {tab === "make" ? (
-        <Maker props={props} loras={loras} upscale={upscale} size={imageSize.size} count={count} options={options} />
+        <Maker initial={draft?.prompt} props={props} loras={loras} upscale={upscale} size={imageSize.size} count={count} options={options} />
+      ) : tab === "sheet" ? (
+        <ImageSheet props={props} images={images} favorites={favorites} order={order} onOrder={setOrder} />
       ) : tab === "vary" ? (
-        <ImageEdit props={props} images={images} upscale={upscale} count={count} options={options} favorites={favorites} order={order} onOrder={setOrder} />
+        <ImageEdit initial={draft ? { prompt: draft.prompt, image: draft.image } : undefined} props={props} images={images} loras={loras} upscale={upscale} count={count} options={optionsFor(true)} favorites={favorites} order={order} onOrder={setOrder} />
       ) : (
         <>
           <div className="row" style={{ gap: 8, marginBottom: 10 }} role="group" aria-label="R2I 방식">
@@ -174,7 +181,7 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
             </button>
           </div>
           {r2i === "refs" ? (
-            <ImageRef props={props} images={images} loras={loras} upscale={upscale} size={imageSize.size} count={count} options={options} favorites={favorites} order={order} onOrder={setOrder} />
+            <ImageRef initial={draft ? { prompt: draft.prompt, image: draft.image } : undefined} props={props} images={images} loras={loras} upscale={upscale} size={imageSize.size} count={count} options={options} favorites={favorites} order={order} onOrder={setOrder} />
           ) : (
             <ImageVary props={props} images={images} loras={loras} upscale={upscale} size={imageSize.size} count={count} options={options} favorites={favorites} order={order} onOrder={setOrder} />
           )}
@@ -211,11 +218,32 @@ function Library({ project, view, jobTick, notify }: { project: ProjectSummary; 
   );
 }
 
-/** Description, size and count: starts that many jobs (each picks its own seed). */
-function Maker({ props, loras, upscale, size, count, options }: { props: SectionProps; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; options: ReactNode }) {
+const MIX_KEY = "imageMixPrompts";
+const savedMix = (): string[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MIX_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Description, size and count: starts that many jobs (each picks its own seed). With saved random prompts: one picture of each of them. */
+function Maker({ initial, props, loras, upscale, size, count, options }: { initial?: string; props: SectionProps; loras: SceneLora[]; upscale: UpscaleHow | null; size: [number, number]; count: string; options: ReactNode }) {
   const { project, view, jobs, notify, onJobsChanged } = props;
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initial ?? "");
   const [randomOpen, setRandomOpen] = useState(false);
+  const [pickOpen, setPickOpen] = useState(false);
+  // The prompts saved from the random pop-up wait here (remembered in this browser) until "만들기".
+  const [mix, setMixState] = useState<string[]>(savedMix);
+  const setMix = (next: string[]) => {
+    setMixState(next);
+    try {
+      localStorage.setItem(MIX_KEY, JSON.stringify(next));
+    } catch {
+      // Only remembered when the browser lets it.
+    }
+  };
   const model = useModelChoice("t2i");
   const [drafting, setDrafting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -226,7 +254,7 @@ function Maker({ props, loras, upscale, size, count, options }: { props: Section
     if (!prompt.trim()) return setError("만들고 싶은 그림을 간단히 적은 뒤 눌러 주세요.");
     setDrafting(true);
     try {
-      setPrompt(await makePrompt(project.id, { target: "image", text: prompt }));
+      setPrompt(await makePrompt(project.id, { target: "image", imageModel: model.id, text: prompt }));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "프롬프트를 만들지 못했습니다.");
     } finally {
@@ -236,21 +264,26 @@ function Maker({ props, loras, upscale, size, count, options }: { props: Section
 
   async function submit() {
     setError("");
+    const mixed = mix.map((item) => item.trim()).filter(Boolean);
     const text = prompt.trim();
     const number = Number(count);
-    if (!text) return setError("그림 설명을 적어 주세요.");
+    if (mixed.length === 0 && !text) return setError("그림 설명을 적어 주세요.");
     if (!view) return setError("설정을 불러오는 중입니다.");
     if (!Number.isInteger(number) || number < 1 || number > 24) return setError("장수는 1~24 사이로 입력하세요.");
     if (loras.some((lora) => lora.name.trim()) && model.id !== "krea2-turbo") return setError("이 모델은 LoRA를 적용하지 않습니다. LoRA를 끄거나 Krea 2 Turbo를 고르세요.");
     const [width, height] = size;
     const id = stamp();
     const extra = loraFields(loras);
-    const items: MakeItem[] = Array.from({ length: number }, (_, index) => ({
-      tool: model.tool,
-      label: text,
-      record: { kind: "image", prompt: text, ...extra.recipe, imageModel: model.id, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
-      inputs: { prompt: text, width, height, ...extra.inputs, ...samplingInputs(model, index), output_path: `assets/images/img-${id}-${String(index + 1).padStart(2, "0")}.png` },
-    }));
+    const items: MakeItem[] = Array.from({ length: number }, (_, index) => {
+      // Saved prompts are used in turn: more pictures than prompts start over from the first one (every picture has its own seed).
+      const own = mixed.length > 0 ? mixed[index % mixed.length] : text;
+      return {
+        tool: model.tool,
+        label: own,
+        record: { kind: "image", prompt: own, ...extra.recipe, imageModel: model.id, ...(Object.keys(model.sampling).length ? { sampling: model.sampling } : {}) },
+        inputs: { prompt: own, width, height, ...extra.inputs, ...samplingInputs(model, index), output_path: `assets/images/${mixed.length > 0 ? "mix" : "img"}-${id}-${String(index + 1).padStart(2, "0")}.png` },
+      };
+    });
     setBusy(true);
     try {
       await startItems(project.id, withUpscale(items, upscale));
@@ -274,24 +307,62 @@ function Maker({ props, loras, upscale, size, count, options }: { props: Section
           <label htmlFor="img-prompt">그림 설명</label>
           <textarea id="img-prompt" rows={5} value={prompt} maxLength={7000} onChange={(event) => setPrompt(event.target.value)} placeholder="예: 아침 햇살 속 데이지 꽃에 앉은 꿀벌" />
           <div>
-            <button className="btn" type="button" disabled={drafting} onClick={() => void draft()} title="간단한 설명을 Krea 2 Turbo에 맞는 영어 프롬프트로 바꿔 줍니다.">
+            <button className="btn" type="button" disabled={drafting} onClick={() => void draft()} title={`간단한 설명을 고른 모델(${model.label})에 맞는 영어 프롬프트로 바꿔 줍니다.`}>
               <Wand2 size={15} /> {drafting ? "만드는 중..." : "프롬프트 만들기"}
             </button>{" "}
             <button className="btn" type="button" onClick={() => setRandomOpen(true)} title="인물, 의상, 배경, 구도, 조명 등을 항목별로 골라 무작위로 섞어 만듭니다.">
               <Dices size={15} /> 랜덤으로 만들기
+            </button>{" "}
+            <button className="btn" type="button" onClick={() => setPickOpen(true)} title="프롬프트가 들어 있는 파일에서 하나를 골라(임의로 또는 직접) 그 프롬프트로 정해진 장수만큼 만듭니다.">
+              <FileText size={15} /> 프롬프트에서 임의로 골라서 만들기
             </button>
           </div>
           <PromptLog projectId={project.id} stages={["prompt-image"]} refreshKey={drafting ? 1 : 0} />
         </div>
+        {mix.length > 0 && (
+          <div className="field wide">
+            <label>랜덤으로 저장한 프롬프트 ({mix.length}개, 각각 고칠 수 있습니다)</label>
+            {mix.map((text, index) => (
+              <textarea key={index} rows={3} value={text} maxLength={7000} aria-label={`랜덤 프롬프트 ${index + 1}`} onChange={(event) => setMix(mix.map((item, at) => (at === index ? event.target.value : item)))} />
+            ))}
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <button className="btn" type="button" style={{ whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setMix([])}>
+                <Trash2 size={15} /> 저장한 프롬프트 지우기
+              </button>
+              <span className="hint">아래 "만들기"를 누르면 위의 그림 설명 대신 이 프롬프트들로 장수만큼 만듭니다. 장수가 프롬프트 수보다 많으면 처음 프롬프트부터 다시 돌려 쓰고, 적으면 앞의 프롬프트만 씁니다.</span>
+            </div>
+          </div>
+        )}
       </div>
       {error && <p className="error" style={{ marginTop: 10 }}>{error}</p>}
       {options}
       <div className="row" style={{ marginTop: 14 }}>
         <button className="btn primary" type="button" disabled={busy || running} onClick={() => void submit()} title={running ? "다른 작업이 끝난 뒤에 시작할 수 있습니다." : undefined}>
-          <Sparkles size={16} /> {running ? "다른 작업 진행 중" : "만들기"}
+          <Sparkles size={16} /> {running ? "다른 작업 진행 중" : mix.length > 0 ? `랜덤 프롬프트 ${mix.length}개로 ${count}장 만들기` : "만들기"}
         </button>
       </div>
-      {randomOpen && <ImageRandom props={props} loras={loras} upscale={upscale} size={size} count={count} model={model} onClose={() => setRandomOpen(false)} />}
+      {pickOpen && (
+        <PromptPick
+          onSave={(prompts) => {
+            setMix(prompts);
+            setPickOpen(false);
+            notify("고른 프롬프트를 저장했습니다. LoRA나 업스케일을 고른 뒤 만들기를 누르세요.");
+          }}
+          onClose={() => setPickOpen(false)}
+        />
+      )}
+      {randomOpen && (
+        <ImageRandom
+          props={props}
+          count={count}
+          onSave={(prompts) => {
+            setMix(prompts);
+            setRandomOpen(false);
+            notify(`랜덤 프롬프트 ${prompts.length}개를 저장했습니다. LoRA나 업스케일을 고른 뒤 만들기를 누르세요.`);
+          }}
+          onClose={() => setRandomOpen(false)}
+        />
+      )}
     </section>
   );
 }

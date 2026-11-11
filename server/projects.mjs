@@ -20,6 +20,7 @@ const MEDIA_TYPES = {
   ".gif": "image/gif",
   ".mp4": "video/mp4",
   ".webm": "video/webm",
+  ".mov": "video/quicktime",
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
   ".flac": "audio/flac",
@@ -201,7 +202,7 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     };
     return {
       images: await list("assets/images", IMAGE_PATTERN),
-      videos: [...(await list("renders", /\.(mp4|webm)$/i)), ...(await list("assets/video", /\.(mp4|webm)$/i))],
+      videos: [...(await list("renders", /\.(mp4|webm)$/i)), ...(await list("assets/video", /\.(mp4|webm|mov)$/i))],
       audio: [...(await list("assets/audio", /\.(wav|mp3|flac|ogg)$/i)), ...(await list("assets/music", /\.(wav|mp3|flac|ogg)$/i))],
     };
   }
@@ -389,6 +390,11 @@ export function createProjectStore({ getRoot, probeDuration = async () => null }
     /** Copies a song or voice file into assets/audio. Returns its project path. */
     importAudio(id, from) {
       return importFile(id, from, { exts: [".wav", ".mp3", ".flac", ".ogg", ".m4a"], dir: "assets/audio", prefix: "song", fallback: "audio", maxBytes: 200_000_000, what: "오디오", allowed: "wav, mp3, flac, ogg, m4a" });
+    },
+
+    /** Copies a video from anywhere on this PC into assets/video (a source clip for the short-clip menu). Returns its project path. */
+    importVideo(id, from) {
+      return importFile(id, from, { exts: [".mp4", ".mov", ".webm", ".mkv"], dir: "assets/video", prefix: "source", fallback: "video", maxBytes: 2_000_000_000, what: "영상", allowed: "mp4, mov, webm, mkv" });
     },
 
     /** Deletes one media file under assets/ together with its record. */

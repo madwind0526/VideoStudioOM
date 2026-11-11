@@ -88,6 +88,23 @@ export default function ImageSlot({ props, images, favorites, order, onOrder, la
           accept={[".png", ".jpg", ".jpeg", ".webp"]}
           projectId={project.id}
           onClose={() => setFiles(false)}
+          multiple={max > 1}
+          onPickMany={(froms) => {
+            setFiles(false);
+            // One after the other (each is copied into the library); only as many as the slot still has room for.
+            const room = Math.max(0, max - value.length);
+            void (async () => {
+              const added: string[] = [];
+              try {
+                for (const from of froms.slice(0, room)) added.push(await importImage(project.id, from));
+                onChange([...value, ...added.filter((path) => !value.includes(path))]);
+                onJobsChanged();
+                notify(froms.length > room ? `그림 ${added.length}장을 가져왔습니다 (${max}장까지입니다).` : `그림 ${added.length}장을 보관함에 가져왔습니다.`);
+              } catch (e) {
+                notify(e instanceof ApiError ? e.message : "그림을 가져오지 못했습니다.");
+              }
+            })();
+          }}
           onPick={(from) => {
             setFiles(false);
             importImage(project.id, from)

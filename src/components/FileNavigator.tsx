@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Folder, LayoutGrid, List, X } from "lucide-react";
+import { ArrowUp, File as FileIcon, Film, Folder, LayoutGrid, List, Play, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 
@@ -24,28 +24,46 @@ interface Props {
   /** The open project: its folder becomes a shortcut. */
   projectId?: string;
   onPick: (file: string) => void;
+  /** With `multiple` several files can be ticked (a click ticks or unticks one); they come back together here instead of through onPick. */
+  multiple?: boolean;
+  onPickMany?: (files: string[]) => void;
   onClose: () => void;
 }
 
 const PICTURE_ENDINGS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 const isPicture = (name: string) => PICTURE_ENDINGS.some((ending) => name.toLowerCase().endsWith(ending));
+const VIDEO_ENDINGS = [".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"];
+const isVideo = (name: string) => VIDEO_ENDINGS.some((ending) => name.toLowerCase().endsWith(ending));
 const VIEW_KEY = "fileNavigatorView";
 const savedView = (): "list" | "thumbs" => {
   try {
-    return localStorage.getItem(VIEW_KEY) === "thumbs" ? "thumbs" : "list";
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "thumbs";
   } catch {
-    return "list";
+    return "thumbs";
   }
 };
 
 const joinPath = (dir: string, name: string) => `${dir}${/[\\/]$/.test(dir) ? "" : dir.includes("\\") ? "\\" : "/"}${name}`;
 const matches = (name: string, accept?: string[]) => !accept || accept.length === 0 || accept.some((ending) => name.toLowerCase().endsWith(ending.toLowerCase()));
 
+/** The first picture of a video (made by the server); the film icon stays when no picture can be made. */
+function VideoThumb({ path, name }: { path: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <Film size={28} />;
+  return (
+    <>
+      <img src={`/api/fs/thumb?path=${encodeURIComponent(path)}`} alt={name} loading="lazy" onError={() => setFailed(true)} />
+      <Play size={14} fill="currentColor" style={{ position: "absolute", right: 6, bottom: 6, color: "#fff", filter: "drop-shadow(0 0 2px rgba(0,0,0,0.8))" }} />
+    </>
+  );
+}
+
 /** The app's own file browser (same layout as MeetingNote's): shortcuts, path bar, list, selected file, cancel/open. */
-export default function FileNavigator({ title, accept, start, projectId, onPick, onClose }: Props) {
+export default function FileNavigator({ title, accept, start, projectId, onPick, multiple, onPickMany, onClose }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [pathInput, setPathInput] = useState("");
   const [selected, setSelected] = useState("");
+  const [ticked, setTicked] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [view, setView] = useState<"list" | "thumbs">(savedView);
@@ -86,8 +104,15 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
     if (!listing) return;
     const full = joinPath(listing.path, entry.name);
     if (entry.isDirectory) void load(full);
-    else if (matches(entry.name, accept)) setSelected(full);
+    else if (matches(entry.name, accept)) {
+      if (multiple) setTicked((list) => (list.includes(full) ? list.filter((item) => item !== full) : [...list, full]));
+      else setSelected(full);
+    }
   }
+
+  /** A double click takes the file at once (with the ticked ones when several are allowed). */
+  const pickNow = (full: string) => (multiple ? onPickMany?.([...ticked.filter((item) => item !== full), full]) : onPick(full));
+  const isActive = (full: string) => (multiple ? ticked.includes(full) : selected === full);
 
   return (
     <div className="backdrop" role="dialog" aria-modal="true" aria-label={title} style={{ zIndex: 80 }}>
@@ -143,11 +168,11 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
                     listing?.entries.map((entry) => {
                       const full = joinPath(listing.path, entry.name);
                       const disabled = !entry.isDirectory && !matches(entry.name, accept);
-                      const active = !entry.isDirectory && selected === full;
+                      const active = !entry.isDirectory && isActive(full);
                       return (
-                        <button className={`file-navigator-tile${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" title={entry.name} onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && onPick(full)}>
+                        <button className={`file-navigator-tile${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" title={entry.name} onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && pickNow(full)}>
                           <span className="file-navigator-thumb">
-                            {entry.isDirectory ? <Folder size={28} /> : isPicture(entry.name) ? <img src={`/api/fs/image?path=${encodeURIComponent(full)}`} alt={entry.name} loading="lazy" /> : <FileIcon size={28} />}
+                            {entry.isDirectory ? <Folder size={28} /> : isPicture(entry.name) ? <img src={`/api/fs/image?path=${encodeURIComponent(full)}`} alt={entry.name} loading="lazy" /> : isVideo(entry.name) ? <VideoThumb path={full} name={entry.name} /> : <FileIcon size={28} />}
                           </span>
                           <span className="file-navigator-name">{entry.name}</span>
                         </button>
@@ -173,9 +198,9 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
                   ) : (
                     listing?.entries.map((entry) => {
                       const disabled = !entry.isDirectory && !matches(entry.name, accept);
-                      const active = !entry.isDirectory && selected === joinPath(listing.path, entry.name);
+                      const active = !entry.isDirectory && isActive(joinPath(listing.path, entry.name));
                       return (
-                        <button className={`file-navigator-row${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && onPick(joinPath(listing.path, entry.name))}>
+                        <button className={`file-navigator-row${active ? " active" : ""}${disabled ? " disabled" : ""}`} disabled={disabled} key={entry.name} type="button" onClick={() => click(entry)} onDoubleClick={() => !entry.isDirectory && !disabled && pickNow(joinPath(listing.path, entry.name))}>
                           {entry.isDirectory ? <Folder size={15} /> : <FileIcon size={15} />} {entry.name}
                         </button>
                       );
@@ -188,8 +213,8 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
           )}
 
           <div className="field">
-            <label>선택한 파일</label>
-            <input readOnly placeholder="목록에서 파일을 선택하세요" value={selected} />
+            <label>{multiple ? "선택한 파일 (눌러서 고르고 다시 누르면 뺍니다)" : "선택한 파일"}</label>
+            <input readOnly placeholder="목록에서 파일을 선택하세요" value={multiple ? (ticked.length > 0 ? `${ticked.length}개: ${ticked.map((item) => item.split(/[\\/]/).pop()).join(", ")}` : "") : selected} />
           </div>
           {error && <p className="error">{error}</p>}
         </div>
@@ -197,8 +222,8 @@ export default function FileNavigator({ title, accept, start, projectId, onPick,
           <button className="btn" type="button" onClick={onClose}>
             취소
           </button>
-          <button className="btn primary" type="button" disabled={!selected} onClick={() => onPick(selected)}>
-            열기
+          <button className="btn primary" type="button" disabled={multiple ? ticked.length === 0 : !selected} onClick={() => (multiple ? onPickMany?.(ticked) : onPick(selected))}>
+            {multiple && ticked.length > 0 ? `${ticked.length}장 ` : ""}열기
           </button>
         </div>
       </div>

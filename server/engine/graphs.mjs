@@ -14,12 +14,16 @@ export const H3 = {
   refUnets: {
     turbo: "MiniMaxH3\\10Eros_Max_h3_TURBO_ref2va_beta2_int8_convrot.safetensors",
     official: "MiniMaxH3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-    // The model of the Deno R2V workflow (Singularity ref2va v1.3), run with its 8-step DMD LoRA and sigma shift 12/3.
-    deno: "MiniMaxH3\\Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+    // The model of the Deno R2V workflow (DenoMix v3 since 2026-11-08, before: Singularity ref2va v1.3), run with its 8-step DMD LoRA and sigma shift 12/3.
+    deno: "MiniMaxH3\\MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors",
   },
   denoClip: "MiniMaxH3\\qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
   latentUpscaler: "MiniMaxH3\\minimax_h3_latent_upscaler_3d_fp16.safetensors",
   denoLora: "MiniMaxH3\\minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors",
+  // The tiled profile (Deno R2V 16GB Tiled Sampler workflow): the Pika LoRA for the six small steps, its latent upscaler model and sigmas.
+  pikaLora: "MiniMaxH3\\pika_h3_flex_ref2va_v1_avg_rank_55_bf16.safetensors",
+  tiledUpscaler: "MiniMaxH3\\minimax_h3_latent_upscaler_3d_bf16.safetensors",
+  tiledSigmas: "1, 0.972972972973, 0.923076923077, 0.8, 0.571428571429, 0.333333333333, 0",
 };
 export const NEGATIVE_SUFFIX = " No text, no subtitles, no watermark.";
 
@@ -198,11 +202,45 @@ export function kreaDepthGraph({ image, prompt, steps = 8, cfg = 1, sampler = "e
 }
 
 /**
+ * Z-Image Turbo ("zimage", Fun ControlNet Union) or Qwen Image 2512 ("qwen", DiffSynth ControlNet) drawn along a control map made of
+ * `image` (scaled to about 1 megapixel): the skeleton of the people (DWPose), the depth (Depth Anything V2) or the edges (Canny).
+ * The picture has the shape of the scaled `image`; the sampling values are those of the text-to-image graphs. The default strength is 0.6 for
+ * Qwen (at 1 its depth map outweighs the prompt) and 1 for Z-Image (1.5 breaks the picture). The result is PreviewImage "10".
+ */
+export function controlnetGraph({ family, control, image, prompt, strength = family === "qwen" ? 0.6 : 1, patch, depthModel = "depth_anything_v2_vitl.pth", ...rest }) {
+  const qwen = family === "qwen";
+  const base = (qwen ? qwenImageGraph : zimageGraph)({ prompt, ...rest });
+  const [sampling, latent, sampler] = qwen ? ["7", "8", "9"] : ["6", "7", "8"];
+  const maps = {
+    pose: { class_type: "DWPreprocessor", inputs: { image: ["41", 0], detect_hand: "enable", detect_body: "enable", detect_face: "enable", resolution: 512, bbox_detector: "yolox_l.onnx", pose_estimator: "dw-ll_ucoco_384.onnx", scale_stick_for_xinsr_cn: "disable" } },
+    depth: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: ["41", 0], ckpt_name: depthModel, resolution: 512 } },
+    canny: { class_type: "Canny", inputs: { image: ["41", 0], low_threshold: 0.4, high_threshold: 0.8 } },
+  };
+  return {
+    ...base,
+    40: { class_type: "LoadImage", inputs: { image } },
+    41: { class_type: "ImageScaleToTotalPixels", inputs: { image: ["40", 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 16 } },
+    42: maps[control],
+    43: { class_type: "GetImageSize", inputs: { image: ["41", 0] } },
+    44: { class_type: "ModelPatchLoader", inputs: { name: patch } },
+    45: { class_type: qwen ? "QwenImageDiffsynthControlnet" : "ZImageFunControlnet", inputs: { model: [sampling, 0], model_patch: ["44", 0], vae: ["3", 0], image: ["42", 0], strength } },
+    [latent]: { class_type: "EmptySD3LatentImage", inputs: { width: ["43", 0], height: ["43", 1], batch_size: 1 } },
+    [sampler]: { ...base[sampler], inputs: { ...base[sampler].inputs, model: ["45", 0] } },
+  };
+}
+
+/** The ControlNet file ("model patch") of a family and control, or null: Z-Image has one union file, Qwen one file per control. */
+export function pickControlPatch(patches, family, control) {
+  const patterns = family === "qwen" ? (control === "depth" || control === "canny" ? [new RegExp(`qwen_image_${control}_diffsynth_controlnet-fp8`, "i"), new RegExp(`qwen_image_${control}_diffsynth_controlnet`, "i")] : []) : [/Z-Image-Turbo-Fun-Controlnet-Union-2\.1/i, /Z-Image-Turbo-Fun-Controlnet-Union-2\.0/i, /Z-Image-Turbo-Fun-Controlnet-Union/i];
+  return patterns.map((pattern) => patches.find((name) => pattern.test(name))).find(Boolean) ?? null;
+}
+
+/**
  * Flux.2 klein picture edit (the user's Flux2_klein_I2I workflow): every picture is scaled to 1 megapixel, VAE-encoded and attached
  * to the prompt as a reference latent, one after the other. The result has the shape of the first picture (or `width` x `height`
  * when given). The result is PreviewImage "30".
  */
-export function flux2EditGraph({ images, prompt, width, height, steps = 4, cfg = 1.3, sampler = "euler", seed, models }) {
+export function flux2EditGraph({ images, prompt, width, height, steps = 4, cfg = 1.3, sampler = "euler", seed, models, loras = [] }) {
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "flux2", device: "default" } },
@@ -210,6 +248,7 @@ export function flux2EditGraph({ images, prompt, width, height, steps = 4, cfg =
     4: { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["2", 0] } },
     6: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3 } },
   };
+  wf[6].inputs.model = chainLoras(wf, ["1", 0], loras, 9200);
   let conditioning = ["4", 0];
   images.forEach((image, index) => {
     wf[20 + index * 3] = { class_type: "LoadImage", inputs: { image } };
@@ -243,7 +282,7 @@ export function flux2EditGraph({ images, prompt, width, height, steps = 4, cfg =
  * text encoder together with the pictures. The result has the shape of the first picture (about 1 megapixel) or `width` x `height`
  * when given. The result is PreviewImage "30".
  */
-export function kreaIdentityGraph({ images, prompt, width, height, steps = 8, cfg = 1, sampler = "euler", scheduler = "simple", seed, models, lora }) {
+export function kreaIdentityGraph({ images, prompt, width, height, steps = 8, cfg = 1, sampler = "euler", scheduler = "simple", seed, models, lora, loras = [] }) {
   const [first, second] = images;
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
@@ -260,7 +299,8 @@ export function kreaIdentityGraph({ images, prompt, width, height, steps = 8, cf
     wf[7] = { class_type: "GetImageSize", inputs: { image: ["5", 0] } };
     wf[9] = { class_type: "EmptyLatentImage", inputs: { width: ["7", 0], height: ["7", 1], batch_size: 1 } };
   }
-  const patch = { model: ["10", 0], source_latent: ["8", 0], vae: ["3", 0], source_image: ["5", 0], target_latent: ["9", 0], fit_mode: "fit", ref_boost: 1 };
+  // Extra LoRAs come after the Identity Edit LoRA, before the edit patch.
+  const patch = { model: chainLoras(wf, ["10", 0], loras, 9200), source_latent: ["8", 0], vae: ["3", 0], source_image: ["5", 0], target_latent: ["9", 0], fit_mode: "fit", ref_boost: 1 };
   const encode = { clip: ["2", 0], image: ["5", 0], grounding_px: 768 };
   if (second) {
     wf[14] = { class_type: "LoadImage", inputs: { image: second } };
@@ -325,13 +365,20 @@ export function pickQwenEditModels({ unets, clips, vaes }) {
  * `images` are uploaded file names, the first is the picture to edit (the result has its shape), the others are references;
  * the prompt names them <image1>, <image2>, ... The result is the PreviewImage node "10".
  */
-export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25, cfg = 1, sampler = "euler", scheduler = "simple", resolution = 1024, models }) {
+export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25, cfg = 1, sampler = "euler", scheduler = "simple", resolution = 1024, models, loras = [] }) {
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: models.unet, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: models.clip, type: "qwen_image", device: "default" } },
     3: { class_type: "VAELoader", inputs: { vae_name: models.vae } },
     4: { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
   };
+  // LoRAs of this model (e.g. the Krea film texture one) sit between the loader and the cache, one after the other.
+  let model = ["1", 0];
+  loras.forEach((lora, index) => {
+    wf[9100 + index] = { class_type: "LoraLoaderModelOnly", inputs: { model, lora_name: lora.name, strength_model: Number(lora.strength ?? 1) } };
+    model = [String(9100 + index), 0];
+  });
+  wf[4].inputs.model = model;
   const encode = { clip: ["2", 0], vae: ["3", 0], prompt, negative_prompt: negative, resolution };
   images.forEach((image, index) => {
     wf[20 + index] = { class_type: "LoadImage", inputs: { image } };
@@ -344,11 +391,20 @@ export function qwenEditGraph({ prompt, negative = "", images, seed, steps = 25,
   return wf;
 }
 
+/** LoRAs chained one after the other onto `model` (nodes from `base` up); returns the model that comes out. */
+function chainLoras(wf, model, loras = [], base) {
+  loras.forEach((lora, index) => {
+    wf[base + index] = { class_type: "LoraLoaderModelOnly", inputs: { model, lora_name: lora.name, strength_model: Number(lora.strength ?? 1) } };
+    model = [String(base + index), 0];
+  });
+  return model;
+}
+
 /**
  * H3 image to video. `image` is the first frame, `last` an optional last frame (FL2V) and `audio` an optional sound pinned
  * at frame 0 so the mouth follows it (S2V, MiniMaxH3AddGuide). The result is the SaveVideo node "15".
  */
-export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps = 4, seed, image, last, audio, motion, saveLatent }) {
+export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps = 4, seed, image, last, audio, motion, saveLatent, loras = [] }) {
   const cond = { clip: ["2", 0], vae: ["3", 0], prompt: h3Prompt(prompt), width, height, length: h3Frames(seconds) };
   const wf = {
     1: { class_type: "UNETLoader", inputs: { unet_name: H3.unet, weight_dtype: "default" } },
@@ -365,6 +421,7 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
     wf[17] = { class_type: "LoadImage", inputs: { image: last } };
     cond.last_frame = ["17", 0];
   }
+  const model = chainLoras(wf, ["16", 0], loras, 9200);
   let positive = ["6", 0];
   if (audio) {
     wf[18] = { class_type: "LoadAudio", inputs: { audio } };
@@ -375,9 +432,9 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
   Object.assign(wf, {
     6: { class_type: "MiniMaxH3ImageToVideo", inputs: cond },
     7: { class_type: "KSamplerSelect", inputs: { sampler_name: "res_multistep" } },
-    8: { class_type: "BasicScheduler", inputs: { model: ["16", 0], scheduler: "simple", steps, denoise: 1.0 } },
+    8: { class_type: "BasicScheduler", inputs: { model, scheduler: "simple", steps, denoise: 1.0 } },
     9: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
-    10: { class_type: "BasicGuider", inputs: { model: ["16", 0], conditioning: positive } },
+    10: { class_type: "BasicGuider", inputs: { model, conditioning: positive } },
     11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["10", 0], sampler: ["7", 0], sigmas: ["8", 0], latent_image: ["6", 1] } },
     12: { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } },
     13: { class_type: "VAEDecodeAudio", inputs: { samples: ["11", 0], vae: ["4", 0] } },
@@ -394,20 +451,21 @@ export function h3Graph({ prompt, width = 736, height = 416, seconds = 5, steps 
  * Adds nodes 70-75 to `wf` and returns the conditioning to sample with. The pinned frames lead the new clip and are cut off
  * after decoding (see cutMotion), so the clip starts where the other one ended.
  */
-function addMotion(wf, motion, positive, width, height) {
+function addMotion(wf, motion, positive, width, height, { base = 70, latent = ["6", 1], contextLatent = motion.latent } = {}) {
   const length = motion.length ?? 39;
-  wf[70] = { class_type: "LoadVideo", inputs: { file: motion.video } };
-  wf[71] = { class_type: "GetVideoComponents", inputs: { video: ["70", 0] } };
-  wf[72] = { class_type: "ImageScale", inputs: { image: ["71", 0], upscale_method: "lanczos", width, height, crop: "center" } };
-  wf[73] = { class_type: "ImageFromBatch", inputs: { image: ["72", 0], batch_index: Math.max(0, motion.total - length), length } };
-  const inputs = { conditioning: positive, vae: ["3", 0], latent: ["6", 1], context_frames: ["73", 0], context_length: length, encode_mode: "video", anchor_mode: "head", crop: "center", audio_context_length: length, audio_mode: "timeline", target_start: 0 };
+  const id = (offset) => String(base + offset);
+  wf[id(0)] = { class_type: "LoadVideo", inputs: { file: motion.video } };
+  wf[id(1)] = { class_type: "GetVideoComponents", inputs: { video: [id(0), 0] } };
+  wf[id(2)] = { class_type: "ImageScale", inputs: { image: [id(1), 0], upscale_method: "lanczos", width, height, crop: "center" } };
+  wf[id(3)] = { class_type: "ImageFromBatch", inputs: { image: [id(2), 0], batch_index: Math.max(0, motion.total - length), length } };
+  const inputs = { conditioning: positive, vae: ["3", 0], latent, context_frames: [id(3), 0], context_length: length, encode_mode: "video", anchor_mode: "head", crop: "center", audio_context_length: length, audio_mode: "timeline", target_start: 0 };
   // Without a saved latent only the pictures are pinned (a clip that has its own sound, see h3Graph's audio guide).
-  if (motion.latent) {
-    wf[74] = { class_type: "MiniMaxH3MotionContextLoadLatent", inputs: { latent_path: motion.latent, clip_index: 0 } };
-    inputs.context_latent = ["74", 0];
+  if (contextLatent) {
+    wf[id(4)] = { class_type: "MiniMaxH3MotionContextLoadLatent", inputs: { latent_path: contextLatent, clip_index: 0 } };
+    inputs.context_latent = [id(4), 0];
   }
-  wf[75] = { class_type: "MiniMaxH3MotionContext", inputs };
-  return ["75", 0];
+  wf[id(5)] = { class_type: "MiniMaxH3MotionContext", inputs };
+  return [id(5), 0];
 }
 
 /** Cuts the pinned frames off the decoded clip (node 76 feeds CreateVideo "14") and saves the final latent (node 80) for the next clip. */
@@ -420,13 +478,27 @@ function finishMotion(wf, { motion, saveLatent, latent }) {
   if (saveLatent) wf[80] = { class_type: "MiniMaxH3MotionContextSaveLatent", inputs: { latent, filename_prefix: saveLatent, clip_index: 1 } };
 }
 
+/** The sigmas of the six small steps of the tiled workflow; another number of steps follows the same curve (linear in between). */
+function stageSigmas(steps) {
+  const base = H3.tiledSigmas.split(",").map(Number);
+  const n = base.length - 1;
+  if (steps === n) return H3.tiledSigmas;
+  const out = Array.from({ length: steps + 1 }, (_, i) => {
+    const at = (i * n) / steps;
+    const low = Math.min(n - 1, Math.floor(at));
+    return base[low] + (base[low + 1] - base[low]) * (at - low);
+  });
+  out[steps] = 0;
+  return out.map((value) => Number(value.toFixed(12))).join(", ");
+}
+
 const REF_SAMPLERS = { turbo: ["euler", 8], official: ["res_multistep", 20], deno: ["euler", 8] };
 
 /**
  * H3 reference to video: up to 9 reference pictures, a reference video (edit or restyle a clip) and reference audio.
  * Reference nodes use ids from 40 up so they never collide with the fixed ids below. The result is node "15".
  */
-export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false, first, last, guideAudio, motion, saveLatent }) {
+export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, steps, seed, model = "turbo", twoStage = false, images = [], video, audio, useVideoAudio = false, first, last, firstFull, lastFull, guideAudio, motion, saveLatent, tiled = false, tile = {}, finalSteps = 1, loras = [] }) {
   const frames = h3Frames(seconds);
   const [sampler, defaultSteps] = REF_SAMPLERS[model];
   const cond = { clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0], prompt: h3Prompt(prompt), width, height, length: frames, ref_image_size: "match" };
@@ -440,10 +512,12 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
   // The Deno workflow's model chain (single stage): quantised attention, the 8-step DMD LoRA, then the H3 sigma shift 12/3.
   if (deno) {
     wf[21] = { class_type: "ModelAttentionBackend", inputs: { model: ["1", 0], attention: "comfy kitchen attention" } };
-    wf[22] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["21", 0], lora_name: H3.denoLora, strength_model: 1.0 } };
+    wf[22] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["21", 0], lora_name: tiled ? H3.pikaLora : H3.denoLora, strength_model: 1.0 } };
     wf[23] = { class_type: "MiniMaxH3SigmaShift", inputs: { model: ["22", 0], shift_video: 12, shift_audio: 3 } };
   }
-  const sampled = deno ? ["23", 0] : ["1", 0];
+  // Extra LoRAs sit between the model's own LoRA and the sigma shift (the Deno workflow puts its shift after all LoRAs).
+  if (deno) wf[23].inputs.model = chainLoras(wf, ["22", 0], loras, 9200);
+  const sampled = deno ? ["23", 0] : chainLoras(wf, ["1", 0], loras, 9200);
   images.forEach((image, index) => {
     wf[String(40 + index)] = { class_type: "LoadImage", inputs: { image } };
     // Dynamic inputs of this node are named "<group>.<prefix><index>" in the API graph.
@@ -463,15 +537,18 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
     cond["ref_audios.ref_audio_0"] = ["34", 0];
   }
   // Pinned frames next to the references: the first picture (and a song segment the mouth follows) at frame 0, the last picture at the end.
-  let positive = ["6", 0];
+  // Tiled: the text encoder is unloaded once the prompt is encoded, which leaves its memory to the sampler.
+  if (tiled) wf[79] = { class_type: "DenoTextEncoderUnload", inputs: { positive_conditioning: ["6", 0], text_encoder: ["2", 0] } };
+  let positive = tiled ? ["79", 0] : ["6", 0];
   // The song gets its own guide node, the way the image-to-video graph pins it; one node for picture and sound did not lip-sync.
   if (guideAudio) {
     wf[61] = { class_type: "LoadAudio", inputs: { audio: guideAudio } };
     wf[62] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: 0, audio_vae: ["4", 0], audio: ["61", 0] } };
     positive = ["62", 0];
   }
+  const unpinned = positive;
   if (first) {
-    wf[60] = { class_type: "LoadImage", inputs: { image: first } };
+    wf[60] ={ class_type: "LoadImage", inputs: { image: first } };
     wf[65] = { class_type: "MiniMaxH3AddGuide", inputs: { positive, latent: ["6", 1], frame_idx: 0, vae: ["3", 0], image: ["60", 0] } };
     positive = ["65", 0];
   }
@@ -483,29 +560,67 @@ export function h3RefGraph({ prompt, width = 736, height = 416, seconds = 5, ste
   if (motion) positive = addMotion(wf, motion, positive, width, height);
   // Deno two-stage: sample all but the last step small, enlarge the video latent 2x, then finish the last step at full size.
   let final = ["11", 0];
+  let positive2 = firstFull || lastFull || (tiled && motion) ? unpinned : positive;
   if (twoStage) {
     final = ["53", 0];
-    Object.assign(wf, {
+    const upLatent = tiled ? ["83", 0] : ["54", 0];
+    // The pinned pictures of the first stage are half size; the second stage needs the same pictures at the final size.
+    if (firstFull) {
+      wf[66] = { class_type: "LoadImage", inputs: { image: firstFull } };
+      wf[67] = { class_type: "MiniMaxH3AddGuide", inputs: { positive: positive2, latent: upLatent, frame_idx: 0, vae: ["3", 0], image: ["66", 0] } };
+      positive2 = ["67", 0];
+    }
+    if (lastFull) {
+      wf[68] = { class_type: "LoadImage", inputs: { image: lastFull } };
+      wf[69] = { class_type: "MiniMaxH3AddGuide", inputs: { positive: positive2, latent: upLatent, frame_idx: -1, vae: ["3", 0], image: ["68", 0] } };
+      positive2 = ["69", 0];
+    }
+    if (tiled) {
+      // Deno R2V 16GB Tiled Sampler: Pika LoRA for six small steps, latent upscale 2x with the upscaler model, then the last DMD step in tiles
+      // with sparse attention and memory optimisation. The sampler and sigmas of the first stage are the ones of that workflow.
+      Object.assign(wf, {
+        81: { class_type: "ManualSigmas", inputs: { sigmas: stageSigmas(Math.min(12, Math.max(2, Math.round(steps || 6)))) } },
+        82: { class_type: "LatentUpscaleModelLoader", inputs: { model_name: H3.tiledUpscaler } },
+        83: { class_type: "MiniMaxH3LatentUpscaleWithModel", inputs: { model: ["82", 0], samples: ["11", 1], width: width * 2, height: height * 2 } },
+        84: { class_type: "H3SparseAttentionAdvanced", inputs: { model: ["21", 0], video_budget: 0.15, early_steps: 0, early_kv: 0.5, late_steps: 0, late_kv: 0.35, backend: "Kitchen INT8 64Q x 64KV (Quality)", early_schedule: "Ramp", video_token_order: "1x8x8" } },
+        85: { class_type: "H3MemoryOptimization", inputs: { model: ["84", 0], fused_qkv: "auto", mlp_memory: "auto", chunk_rows: 4096, preserve_precision: true, precision_mode: "Auto", qkv_streaming_mode: "Auto", embedding_memory_mode: "Auto", kitchen_v_memory_mode: "Standard" } },
+        86: { class_type: "LoraLoaderModelOnly", inputs: { model: ["85", 0], lora_name: H3.denoLora, strength_model: 1.0 } },
+        87: { class_type: "MiniMaxH3SigmaShift", inputs: { model: chainLoras(wf, ["86", 0], loras, 9300), shift_video: 12, shift_audio: 3 } },
+        88: { class_type: "BasicScheduler", inputs: { model: ["87", 0], scheduler: "simple", steps: 8, denoise: 1.0 } },
+        50: { class_type: "SplitSigmas", inputs: { sigmas: ["88", 0], step: 8 - finalSteps } },
+        53: { class_type: "DenoMiniMaxH3TiledSampler", inputs: { model: ["87", 0], positive: positive2, latent: ["83", 0], sigmas: ["50", 1], seed, tile_width: tile.width ?? 896, tile_height: tile.height ?? 704, overlap_x: tile.overlapX ?? 256, overlap_y: tile.overlapY ?? 320 } },
+        89: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["53", 0] } },
+      });
+      // The clip before gives the second stage its last frames and latent at the final size (the first stage got them at the small size).
+      if (motion) {
+        positive2 = addMotion(wf, motion, positive2, width * 2, height * 2, { base: 100, latent: ["83", 0], contextLatent: motion.latentFull });
+        wf[53].inputs.positive = positive2;
+      }
+    } else Object.assign(wf, {
+      25: { class_type: "BasicGuider", inputs: { model: sampled, conditioning: positive2 } },
       50: { class_type: "SplitSigmas", inputs: { sigmas: ["8", 0], step: (steps || defaultSteps) - 1 } },
       51: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["11", 1] } },
       52: { class_type: "MinimaxH3LatentUpscaler3D", inputs: { latent: ["51", 0], model_name: H3.latentUpscaler, mode: "scale by multiplier", "mode.scale": 2, align: 32, enable_temporal_chunking: true, force_unload: true, device: "cuda", precision: "fp16" } },
       54: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["52", 0], audio_latent: ["51", 1] } },
-      53: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: ["50", 1], latent_image: ["54", 0] } },
+      53: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["25", 0], sampler: ["7", 0], sigmas: ["50", 1], latent_image: ["54", 0] } },
     });
   }
   Object.assign(wf, {
     6: { class_type: "MiniMaxH3ReferenceToVideo", inputs: cond },
-    7: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
+    7: { class_type: "KSamplerSelect", inputs: { sampler_name: tiled ? "lcm" : sampler } },
     8: { class_type: "BasicScheduler", inputs: { model: sampled, scheduler: "simple", steps: steps || defaultSteps, denoise: 1.0 } },
     9: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     20: { class_type: "BasicGuider", inputs: { model: sampled, conditioning: positive } },
-    11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: twoStage ? ["50", 0] : ["8", 0], latent_image: ["6", 1] } },
-    12: { class_type: "VAEDecode", inputs: { samples: final, vae: ["3", 0] } },
-    13: { class_type: "VAEDecodeAudio", inputs: { samples: final, vae: ["4", 0] } },
+    11: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["20", 0], sampler: ["7", 0], sigmas: tiled ? ["81", 0] : twoStage ? ["50", 0] : ["8", 0], latent_image: ["6", 1] } },
+    12: { class_type: "VAEDecode", inputs: { samples: tiled ? ["89", 0] : final, vae: ["3", 0] } },
+    13: { class_type: "VAEDecodeAudio", inputs: { samples: tiled ? ["89", 1] : final, vae: ["4", 0] } },
     14: { class_type: "CreateVideo", inputs: { images: ["12", 0], audio: ["13", 0], fps: 24 } },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: "video/vsom_h3_ref", format: "mp4", codec: "h264" } },
   });
   finishMotion(wf, { motion, saveLatent, latent: final });
+  if (tiled && motion) wf[76].inputs.trim_frames = ["105", 1];
+  // The next clip also needs the latent of the small stage for its own first stage.
+  if (tiled && saveLatent) wf[90] = { class_type: "MiniMaxH3MotionContextSaveLatent", inputs: { latent: ["11", 1], filename_prefix: `${saveLatent}_lo`, clip_index: 1 } };
   return wf;
 }
 
@@ -601,5 +716,56 @@ export function rtxGraph({ video, scale, prefix }) {
       class_type: "VHS_VideoCombine",
       inputs: { images: ["2", 0], audio: ["1", 2], frame_rate: 24, loop_count: 0, filename_prefix: prefix, format: "video/h264-mp4", pix_fmt: "yuv420p", crf: 15, save_metadata: false, trim_to_audio: false, pingpong: false, save_output: true },
     },
+  };
+}
+
+/** The model files of Wan Animate 2 (the Deno workflow; the paths are relative to the model folders of ComfyUI). */
+export const WAN_ANIMATE = {
+  unet: "Wan2.2\\wan_animate_2_int8_convrot.safetensors",
+  lora: "Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+  clip: "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+  clipVision: "clip_vision_h.safetensors",
+  vae: "flux\\wan_2.1_vae.safetensors",
+};
+export const WAN_NEGATIVE = "low quality, blurry, out of focus, overexposed, underexposed, frozen frame, static, still image, distorted, deformed, extra limbs, bad anatomy, watermark, text, subtitles";
+
+/**
+ * Wan Animate 2 (motion transfer, from the Deno workflow): the person of `image` moves like the person of `video` (both uploaded
+ * file names). `appearance` describes the picture, `motion` the movement. The picture is cut to `megapixels` at the ratio of the
+ * image; the clip keeps the length and the sound of the video. Needs the toobusy node pack. The result is SaveVideo "22".
+ */
+export function wanAnimateGraph({ image, video, appearance, motion, seed, megapixels = 0.5, framesPerSampler = 81, steps = 6 }) {
+  const text = (value, clip) => ({ class_type: "CLIPTextEncode", inputs: { text: value, clip } });
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: WAN_ANIMATE.unet, weight_dtype: "default" } },
+    2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: WAN_ANIMATE.lora, strength_model: 1 } },
+    3: { class_type: "VAELoader", inputs: { vae_name: WAN_ANIMATE.vae } },
+    4: { class_type: "CLIPVisionLoader", inputs: { clip_name: WAN_ANIMATE.clipVision } },
+    5: { class_type: "CLIPLoader", inputs: { clip_name: WAN_ANIMATE.clip, type: "wan", device: "default" } },
+    6: { class_type: "LoadImage", inputs: { image } },
+    7: { class_type: "VHS_LoadVideo", inputs: { video, force_rate: 24, custom_width: 0, custom_height: 0, frame_load_cap: 800, skip_first_frames: 0, select_every_nth: 1, format: "AnimateDiff" } },
+    8: { class_type: "VHS_VideoInfo", inputs: { video_info: ["7", 3] } },
+    9: { class_type: "DenoResolutionSetup", inputs: { mode: "Keep Input Ratio", ratio_preset: "16:9", megapixels, width: 1024, height: 1024, divisible_by: "32", resize_method: "Center Crop (Fill)", interpolation: "lanczos", image: ["6", 0], crop_x: 0.5, crop_y: 0.5, crop_zoom: 1 } },
+    10: { class_type: "WanAnimate2Cache", inputs: { model: ["2", 0], device: "cpu", dtype: "int8" } },
+    11: { class_type: "ModelSamplingSD3", inputs: { model: ["10", 0], shift: 5 } },
+    12: { class_type: "KSamplerSelect", inputs: { sampler_name: "lcm" } },
+    13: { class_type: "BasicScheduler", inputs: { model: ["11", 0], scheduler: "simple", steps, denoise: 1 } },
+    14: text(appearance, ["5", 0]),
+    15: text(WAN_NEGATIVE, ["5", 0]),
+    16: text(`Motion description: ${motion}`, ["5", 0]),
+    17: { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["4", 0], image: ["6", 0], crop: "none" } },
+    18: { class_type: "ImageFromBatch", inputs: { image: ["7", 0], batch_index: 0, length: 1 } },
+    19: { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["4", 0], image: ["18", 0], crop: "none" } },
+    20: {
+      class_type: "ToobusyWanAnimate2LongSampler",
+      inputs: {
+        model: ["11", 0], positive: ["14", 0], negative: ["15", 0], sampler: ["12", 0], sigmas: ["13", 0], vae: ["3", 0],
+        reference_image: ["6", 0], pose_video: ["7", 0], positive_pose: ["16", 0], clip_vision_output: ["17", 0], clip_vision_output_pose: ["19", 0],
+        width: ["9", 1], height: ["9", 2], total_frames: ["8", 6], frames_per_sampler: framesPerSampler, seed, cfg: 1,
+        reference_image_strength: 1, pose_strength: 1, pose_start_percent: 0, pose_end_percent: 1, color_match: false, color_match_strength: 1,
+      },
+    },
+    21: { class_type: "CreateVideo", inputs: { images: ["20", 0], audio: ["7", 2], fps: ["8", 5] } },
+    22: { class_type: "SaveVideo", inputs: { video: ["21", 0], filename_prefix: "video/vsom_wan_animate", format: "mp4", codec: "h264" } },
   };
 }
